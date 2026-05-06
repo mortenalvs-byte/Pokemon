@@ -263,6 +263,8 @@ export const APP_META_KEYS = {
   schemaVersion: 'schemaVersion',
   appVersion: 'appVersion',
   lastSyncAt: 'lastSyncAt',
+  lastSyncStatus: 'lastSyncStatus',
+  lastSyncError: 'lastSyncError',
   lastBackupAt: 'lastBackupAt',
   lastBackupHoldingCount: 'lastBackupHoldingCount',
   persistentStorageGranted: 'persistentStorageGranted',
@@ -270,6 +272,8 @@ export const APP_META_KEYS = {
 } as const;
 
 export type AppMetaKey = (typeof APP_META_KEYS)[keyof typeof APP_META_KEYS];
+
+export type SyncStatus = 'ok' | 'failed';
 
 // -- Reserved settings keys ---------------------------------------------
 
