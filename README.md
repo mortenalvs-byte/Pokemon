@@ -2,7 +2,7 @@
 
 A private, local-first browser app for tracking an English Pokemon TCG collection — physical binders, raw and graded cards, bulk lots, wishlists and missing cards — with safe local backup and restore.
 
-**Status:** Planning / foundation. No application code yet. PR 1 only locks down the requirements, technical decisions, data model, backup format, dashboard, UI specification, and PR workflow.
+**Status:** App shell. Vite + TypeScript + Vitest are set up; the layout, navigation, and view stubs are in place. Database, sync, and feature work begin in PR 3.
 
 ## What this is
 
@@ -37,19 +37,27 @@ User-owned data — holdings, binders, binderSlots, lots, lotItems, wishlist, no
 
 ## Getting started
 
-The application code does not exist yet. The commands below describe the planned developer workflow. They become active in PR 2 when the Vite + TypeScript app shell lands.
-
 ```bash
-# Once PR 2 is merged:
+# Clone and install
+git clone https://github.com/mortenalvs-byte/Pokemon.git
+cd Pokemon
 npm install
-npm run dev          # local dev server with hot reload
+
+# Run the app locally with hot reload (defaults to http://localhost:5173)
+npm run dev
+
+# Type-check, test, and build
+npm run typecheck    # tsc --noEmit (strict mode)
 npm test             # run Vitest once
 npm run test:watch   # watch mode
-npm run typecheck    # tsc --noEmit
-npm run build        # tsc + production build
+npm run test:ui      # interactive Vitest UI in the browser
+npm run build        # tsc + Vite production build into dist/
+npm run preview      # serve the production build locally
 ```
 
-For now, the only files in the repository are foundation documents.
+Node.js 20 LTS or newer is recommended.
+
+The app shell is in place but no database, sync, or features yet. Each navigation entry currently shows a placeholder explaining which PR will fill it in.
 
 ## Project documents
 

@@ -1,0 +1,246 @@
+/*
+ * Pokemon TCG Tracker — base styles.
+ * Design tokens live in :root as CSS variables. The values match the
+ * principles described in UI_DESIGN_SPEC.md (desktop-first, table-heavy,
+ * minimal animation, status badges that always carry text).
+ */
+
+:root {
+  /* Surface and text */
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-fg: #15171c;
+  --color-fg-muted: #5e6473;
+  --color-border: #d8dbe1;
+
+  /* Semantic */
+  --color-accent: #2c5fa8;
+  --color-accent-fg: #ffffff;
+  --color-success: #1f7a3d;
+  --color-warning: #b06600;
+  --color-danger: #a02323;
+  --color-info: #4a5b78;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Radius */
+  --radius-1: 4px;
+  --radius-2: 8px;
+
+  /* Type */
+  --font-system: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-size-base: 14px;
+  --line-height-base: 1.45;
+
+  /* Layout */
+  --sidebar-width: 220px;
+  --topbar-height: 48px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-system);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Topbar */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--topbar-height);
+  padding: 0 var(--space-5);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.topbar__brand {
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.2px;
+}
+
+.topbar__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Layout grid */
+
+.layout {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Sidebar */
+
+.sidebar {
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  padding: var(--space-3) 0;
+  overflow-y: auto;
+}
+
+.sidebar__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar__link {
+  display: block;
+  padding: var(--space-2) var(--space-5);
+  color: var(--color-fg);
+  text-decoration: none;
+  border-left: 3px solid transparent;
+  font-size: 14px;
+}
+
+.sidebar__link:hover {
+  background: var(--color-bg);
+}
+
+.sidebar__link:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.sidebar__link--active {
+  border-left-color: var(--color-accent);
+  background: var(--color-bg);
+  font-weight: 600;
+}
+
+/* Content */
+
+.content {
+  padding: var(--space-5);
+  overflow: auto;
+}
+
+/* Placeholder cards used by the PR 2 view stubs */
+
+.placeholder {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-5);
+  max-width: 720px;
+}
+
+.placeholder h1 {
+  margin: 0 0 var(--space-3);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.placeholder p {
+  margin: 0 0 var(--space-2);
+  color: var(--color-fg-muted);
+}
+
+.placeholder__hint {
+  font-size: 13px;
+  color: var(--color-fg-muted);
+}
+
+/* Status chips and badges (text-first, never colour-only) */
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-fg-muted);
+}
+
+.status-chip--info {
+  color: var(--color-info);
+  border-color: var(--color-border);
+}
+
+.status-chip--success {
+  color: var(--color-success);
+  border-color: var(--color-success);
+  background: #ecf6ef;
+}
+
+.status-chip--warning {
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+  background: #fdf3e2;
+}
+
+.status-chip--danger {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+  background: #fbeaea;
+}
+
+/* Narrow viewports — usable, not optimized */
+
+@media (max-width: 720px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .sidebar__list {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .sidebar__link {
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+  }
+
+  .sidebar__link--active {
+    border-left-color: transparent;
+    border-bottom-color: var(--color-accent);
+  }
+}
