@@ -9,6 +9,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- **PR 6 — Browse + Card Detail views over the cached card database.** First user-facing surface that reads from cache. Read-only over `cards` and `sets`; never reads or writes any user-owned store. Add-to-collection and add-to-wishlist buttons render disabled with a "kommer i PR 7" tooltip.
+  - `src/router.ts` — extended with `#card/<encodedCardId>` sub-route. `getCurrentCardId()` decodes safely (returns `null` on empty or malformed input); `navigateToCard()` encodes via `encodeURIComponent`; `getCurrentRoute()` returns `'card-detail'` only when a non-empty card id is present, otherwise falls back to the default. The bare string `card-detail` is **not** a valid sidebar hash, so a malformed URL does not produce an empty page.
+  - `src/services/browse-service.ts` (new) — joins `cards` and `sets` and returns rows as `{ card, set }` so the view never makes per-row set lookups. Picks the most selective indexed filter as the candidate set (`listBySet` / `listByRarity`) and applies remaining filters in JS. Default sort is set release date desc, with card number ascending tiebreak inside the same set. Search is case-insensitive substring against `name`, with whitespace trimmed.
+  - `src/repositories/cards-repo.ts` — added `listByRarity(rarity)` so the browse service can use the existing `rarity` index.
+  - `src/views/browse.ts` (replaces placeholder) — table-first, search + set / rarity filters + sort + sort-direction + page-size, paginated `<tbody>` re-render only (toolbar input focus is preserved). Search debounces at 150 ms. Empty state when the cache is empty links to Settings. At most `pageSize` rows in the DOM (verified by test). The owned / not-owned / missing / wishlist filters from UI_DESIGN_SPEC are deliberately **not** rendered in this PR — they require user-data joins and land in PR 7.
+  - `src/views/card-detail.ts` (new) — large image, name, set name, number, rarity, supertype, subtypes, types, and safely-extracted TCGplayer / Cardmarket prices. "Legg til i samling" / "Legg til i ønskeliste" buttons disabled with the documented tooltip. The "all user holdings for this card" and "binder locations" sections from UI_DESIGN_SPEC §13 are deferred to PR 7.
+  - `src/domain/price-extractors.ts` (new) — `extractTcgplayerPrices()` and `extractCardmarketPrices()`. Runtime-narrows the `unknown` price fields, returns a flat `PriceRow[]`, falls back to an empty array on unfamiliar shapes (the view shows "Ingen prisdata"). Never assumes the API shape — defence against shape drift.
+  - `src/utils/lazy-image.ts` (new) — `createLazyImage()` builds an `<img loading="lazy" decoding="async">`; on load error swaps for a neutral placeholder so a broken thumbnail does not leave a crossed-out icon in a row.
+  - `src/app.ts` — registers `card-detail` in the view-mounter map; topbar logic unchanged.
+  - `src/styles.css` — browse table, toolbar, pagination, empty state, lazy-image placeholder, card-detail layout.
+  - **Tests (181 / 181 across 24 files):**
+    - `tests/router.test.ts` extended: `getCurrentCardId` for normal routes, `#card/<id>` decoding, `navigateToCard` encoding, malformed hash fallback, `card-detail` as bare hash falls back.
+    - `tests/browse-service.test.ts` (new): join with set, default set-release sort with card-number tiebreak, set / rarity / combined filters, case-insensitive trimmed search, pagination, empty cache.
+    - `tests/browse-view.test.ts` (new): empty state + Settings link, 60 cards → 50 on page 1 / 10 on page 2, debounced case-insensitive search, row click navigates, **clicking a disabled quick-action button does not navigate**, "Vis detaljer" navigates, no more than `pageSize` rows in the DOM with 200 cards.
+    - `tests/card-detail-view.test.ts` (new): metadata + price rendering, "not in cache" state, missing card-id state, back button to `#browse`, **disabled action buttons with PR 7 tooltip**, unfamiliar price shape does not crash, planted `<script>` / `<img onerror>` in card name and set name render as text (not as HTML).
+    - `tests/browse-readonly-invariant.test.ts` (new): seeds every user-owned store, drives Browse and Card Detail through filtering / paging / navigating, asserts every user-owned store is byte-for-byte unchanged.
+  - `tests/backup-roundtrip.test.ts` remains green: PR_RULES §10 contract holds.
+
+### Known limitations (PR 6)
+- Sort by **value** is documented in UI_DESIGN_SPEC §11 but is intentionally not exposed in the toolbar — reliable price extraction lives in `domain/price-extractors.ts` for the detail view, but a "value" sort needs a stable per-card numeric value (manual or live-priced) and lands with the user-data layer.
+- Substring search runs in memory (the cards index supports prefix only). For 20 000 cards this is acceptable; a normalized search index can be added in a later schema PR if profiling shows it is needed.
+- Owned / not-owned / missing / wishlist filters are deferred to PR 7 because they require reading user-owned stores.
+- Filter state is not preserved across navigation in this PR.
+
+### Added
 - **PR 5 — pokemontcg.io API sync + Settings view + topbar sync chip.** First time the app talks to the network. Sync is fetch-all-first-then-write-once: a failed sync leaves the cache, user-owned stores, and `lastSyncAt` untouched. The MVP roundtrip contract (`tests/backup-roundtrip.test.ts`) stays green.
   - `src/api/sanitize.ts` — `sanitizeErrorMessage(error, apiKey)` and `redactApiKey(text, apiKey)`. Used at every boundary that turns an error into UI / audit / appMeta text.
   - `src/api/types.ts` — wire DTOs (`PokemonTcgSetDto`, `PokemonTcgCardDto`, `PokemonTcgPaginatedResponse`) and pure mappers (`mapApiSet`, `mapApiCard`) that normalize optional/null API fields into our strict `SetRecord` / `CardRecord` shape.
