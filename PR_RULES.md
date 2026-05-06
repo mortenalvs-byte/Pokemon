@@ -150,7 +150,31 @@ Squash-merge is the default. The squashed commit message uses the PR title and d
 
 ---
 
-## 9. Branch naming
+## 9. Bootstrap exception
+
+PR 1 is a docs-only foundation PR created before the app shell, `package.json`, npm scripts, Vite, and Vitest exist.
+
+**For PR 1 only**, the merge-rule items in §8 that depend on tooling are not applicable:
+
+- `npm run typecheck` — N/A (no `package.json`, no TypeScript)
+- `npm test` — N/A (no Vitest)
+- `npm run build` — N/A (no Vite)
+- "App starts locally with no console crash" — N/A (no application code)
+
+Docs-only review is sufficient for PR 1. Reviewers verify that the eleven foundation documents exist, are internally consistent, and reflect the agreed scope.
+
+After **PR 2** lands the Vite + TypeScript app shell and the npm scripts, every subsequent PR follows the normal §8 merge rule with no exception:
+
+- `npm run typecheck` is green.
+- `npm test` is green.
+- `npm run build` is green.
+- The app starts locally with no console crash on startup.
+
+This bootstrap exception applies to PR 1 only. It cannot be reused.
+
+---
+
+## 10. Branch naming
 
 | Kind of change | Branch prefix | Example |
 |---|---|---|
@@ -163,7 +187,7 @@ Branches are created from up-to-date `main`.
 
 ---
 
-## 10. Commit message style
+## 11. Commit message style
 
 - Short imperative subject line, ≤ 72 chars.
 - A blank line, then a body explaining **why** when the change isn't obvious.
@@ -173,7 +197,7 @@ There is no enforced commit-message lint in MVP, but reviewers may ask for a cle
 
 ---
 
-## 11. Reviews
+## 12. Reviews
 
 - A PR has at least one reviewer (the project owner, in MVP).
 - The reviewer reads the code, runs the branch locally if it touches the data layer, and verifies that backup/restore still works.
@@ -181,7 +205,7 @@ There is no enforced commit-message lint in MVP, but reviewers may ask for a cle
 
 ---
 
-## 12. CI (later)
+## 13. CI (later)
 
 CI is not configured in MVP. When CI lands (a future docs+chore PR will define the scope), it will, at minimum:
 
@@ -194,7 +218,7 @@ Until CI exists, the same checks are run **locally** before opening the PR.
 
 ---
 
-## 13. Hot rules — quick reference
+## 14. Hot rules — quick reference
 
 > 1. Stable `main`. PR for everything.
 > 2. One purpose per PR.
