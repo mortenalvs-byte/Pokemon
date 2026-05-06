@@ -55,7 +55,7 @@ npm run build        # tsc + Vite production build into dist/
 npm run preview      # serve the production build locally
 ```
 
-Node.js 20 LTS or newer is recommended.
+Node.js **>= 20.19.0** and npm **>= 10** are required (enforced via `engines` in `package.json`).
 
 The app shell is in place but no database, sync, or features yet. Each navigation entry currently shows a placeholder explaining which PR will fill it in.
 

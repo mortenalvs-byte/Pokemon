@@ -111,20 +111,36 @@ Pokemon/
 
 ---
 
-## 5. Initial scaffold (run once in PR 2)
+## 5. Initial scaffold
+
+The scaffold lands across two PRs. PR 2 brings in the build tool, type-checker, test runner, and DOM polyfill. PR 3 adds the IndexedDB layer and its in-memory test polyfill on top.
+
+### PR 2 — app shell + tooling (no database)
 
 ```bash
 # Inside the empty repo, on branch feat/app-shell
 npm create vite@latest . -- --template vanilla-ts
 npm install
-npm install dexie
-npm install -D vitest @vitest/ui jsdom fake-indexeddb
+npm install -D vitest @vitest/ui jsdom
 ```
 
-After scaffold:
-- Update `tsconfig.json` to ensure `"strict": true`, `"noUncheckedIndexedAccess": true`.
+### PR 3 — Dexie + IndexedDB tests
+
+```bash
+# On branch feat/dexie-schema-v1
+npm install dexie
+npm install -D fake-indexeddb
+```
+
+`tests/setup.ts` stays a placeholder in PR 2 and adds `import 'fake-indexeddb/auto';` in PR 3 alongside the first Dexie schema.
+
+After PR 2 scaffold:
+- Update `tsconfig.json` to ensure `"strict": true`, `"noUncheckedIndexedAccess": true`, `"exactOptionalPropertyTypes": true`.
 - Add `vitest.config.ts` with `environment: 'jsdom'` and `setupFiles: ['./tests/setup.ts']`.
-- In `tests/setup.ts`: `import 'fake-indexeddb/auto'`.
+- Leave `tests/setup.ts` empty for now.
+
+After PR 3 scaffold:
+- In `tests/setup.ts`: `import 'fake-indexeddb/auto';` so Dexie schema and migrations can be tested in Node.
 
 ---
 

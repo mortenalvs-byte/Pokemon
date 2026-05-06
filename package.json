@@ -4,6 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "description": "Private, local-first browser tracker for English Pokemon TCG cards.",
+  "engines": {
+    "node": ">=20.19.0",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
