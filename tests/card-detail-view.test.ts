@@ -131,21 +131,29 @@ describe('Card detail view', () => {
     expect(window.location.hash).toBe('#browse');
   });
 
-  it('Add buttons are disabled with a "kommer i PR 7" tooltip', async () => {
+  it('Add to collection is enabled (PR 7a); Add to wishlist is disabled with "kommer i PR 7b"', async () => {
     window.location.hash = `card/${encodeURIComponent('base1-4')}`;
     const root = document.getElementById('content');
     if (!root) throw new Error('test bootstrap failed');
     mountCardDetailView(root);
     await settle();
 
-    const buttons = root.querySelectorAll<HTMLButtonElement>(
+    const collectionButton = root.querySelector<HTMLButtonElement>(
+      '[data-action="add-to-collection"]',
+    );
+    expect(collectionButton).not.toBeNull();
+    expect(collectionButton?.disabled).toBe(false);
+
+    // Wishlist button is the other action button without a data-action.
+    const allButtons = root.querySelectorAll<HTMLButtonElement>(
       '.card-detail-view__actions button',
     );
-    expect(buttons.length).toBe(2);
-    for (const btn of buttons) {
-      expect(btn.disabled).toBe(true);
-      expect(btn.title).toMatch(/kommer i PR 7/i);
-    }
+    const wishlistButton = Array.from(allButtons).find(
+      (btn) => btn.dataset['action'] !== 'add-to-collection',
+    );
+    expect(wishlistButton).toBeDefined();
+    expect(wishlistButton?.disabled).toBe(true);
+    expect(wishlistButton?.title).toMatch(/kommer i PR 7b/i);
   });
 
   it('renders "Ingen prisdata" when both price fields are null', async () => {

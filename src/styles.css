@@ -790,6 +790,249 @@ body {
   }
 }
 
+/* Browse-table action variant for destructive actions */
+
+.browse-table__action--danger {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.browse-table__action--danger:hover:not(:disabled) {
+  background: var(--color-danger);
+  color: var(--color-accent-fg);
+}
+
+.browse-view__field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Collection view — extends the browse table look */
+
+.collection-view h1 {
+  margin: 0 0 var(--space-2);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.collection-view__counts {
+  margin: 0 0 var(--space-3);
+  color: var(--color-fg-muted);
+  font-size: 13px;
+}
+
+.collection-table__row--deleted {
+  opacity: 0.55;
+}
+
+.collection-table__row--deleted td {
+  text-decoration: line-through;
+}
+
+.collection-table__card-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.collection-table__card-link:hover {
+  text-decoration: underline;
+}
+
+/* Card detail "Dine kort" section */
+
+.card-detail-view__holdings {
+  margin-top: var(--space-5);
+}
+
+.card-detail-view__holdings h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.card-detail-view__empty-holdings {
+  color: var(--color-fg-muted);
+  margin: 0;
+}
+
+.card-detail-view__holdings-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  overflow: hidden;
+}
+
+.card-detail-view__holdings-table th,
+.card-detail-view__holdings-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+.card-detail-view__holdings-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.card-detail-view__holdings-row--deleted {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+/* App-level dialog wrapper */
+
+.app-dialog {
+  max-width: min(720px, calc(100vw - 24px));
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: 0;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.app-dialog::backdrop {
+  background: rgba(15, 17, 22, 0.45);
+}
+
+/* Holding form */
+
+.holding-form-wrap {
+  padding: var(--space-5);
+}
+
+.holding-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.holding-form__header h2 {
+  margin: 0 0 var(--space-1);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.holding-form__card {
+  margin: 0;
+  color: var(--color-fg-muted);
+  font-size: 13px;
+}
+
+.holding-form__section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  padding: var(--space-3);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.holding-form__section legend {
+  padding: 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-fg-muted);
+  grid-column: 1 / -1;
+}
+
+.holding-form__sub-section {
+  display: contents;
+}
+
+.holding-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.holding-form__field span {
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.holding-form__field input,
+.holding-form__field select,
+.holding-form__field textarea {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  font: inherit;
+}
+
+.holding-form__field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.holding-form__radio-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: var(--space-4);
+}
+
+.holding-form__hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.holding-form__error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 13px;
+  display: none;
+}
+
+.holding-form__error--visible {
+  display: block;
+}
+
+.holding-form__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.holding-form__footer button {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.holding-form__submit {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+.holding-form__submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .holding-form__section {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Narrow viewports — usable, not optimized */
 
 @media (max-width: 720px) {

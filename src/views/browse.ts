@@ -1,14 +1,18 @@
-// Browse view. Read-only over the cached `cards` and `sets` stores —
-// never reads or writes any user-owned store. Every dynamic field is
-// rendered with `textContent` / `createElement`, so card names that
-// contain HTML metacharacters cannot affect the DOM.
+// Browse view. Reads the cached `cards` and `sets` stores. Now also
+// reads `holdings` (live only) for the owned/not-owned filter, and
+// can WRITE holdings via the "Legg til i samling" Add button — but
+// only via an explicit user click that goes through `holdingsRepo`.
+// Filter / sort / pagination / navigation paths still never write.
 //
-// Quick-action buttons for "Add to collection" / "Add to wishlist" are
-// rendered disabled with a "kommer i PR 7" tooltip; clicking them does
-// nothing and crucially does not navigate to card detail.
+// "Legg til i ønskeliste" remains disabled with a "kommer i PR 7b"
+// tooltip until that PR lands.
 
+import { openDialog } from '../components/dialog';
+import { USER_DATA_CHANGED_EVENT } from '../components/events';
+import { buildHoldingForm } from '../components/holding-form';
 import { getDb } from '../db/database';
 import { createCardsRepo } from '../repositories/cards-repo';
+import { createHoldingsRepo } from '../repositories/holdings-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
 import {
   createBrowseService,
@@ -16,6 +20,7 @@ import {
   type BrowsePageSize,
   type BrowseService,
   type BrowseSort,
+  type OwnershipFilter,
   type SortDirection,
 } from '../services/browse-service';
 import { navigate, navigateToCard } from '../router';
@@ -25,6 +30,7 @@ interface BrowseState {
   search: string;
   setId: string;
   rarity: string;
+  ownership: '' | OwnershipFilter;
   sort: BrowseSort;
   sortDirection: SortDirection;
   page: number;
@@ -60,6 +66,14 @@ export function mountBrowseView(container: HTMLElement): void {
           <span>Rarity</span>
           <select data-region="rarity-filter">
             <option value="">Alle</option>
+          </select>
+        </label>
+        <label class="browse-view__field">
+          <span>Eier</span>
+          <select data-region="ownership-filter">
+            <option value="">Alle</option>
+            <option value="owned">Eid</option>
+            <option value="not-owned">Ikke eid</option>
           </select>
         </label>
         <label class="browse-view__field">
@@ -111,6 +125,7 @@ export function mountBrowseView(container: HTMLElement): void {
     search: '',
     setId: '',
     rarity: '',
+    ownership: '',
     sort: 'set-release',
     sortDirection: 'desc',
     page: 0,
@@ -120,10 +135,18 @@ export function mountBrowseView(container: HTMLElement): void {
   const service = createBrowseService(
     createCardsRepo(getDb()),
     createSetsRepo(getDb()),
+    createHoldingsRepo(getDb()),
   );
 
   void boot(refs, service, state);
   attachEventListeners(refs, service, state);
+  // The listener stays around for the page lifetime. Skip updates when
+  // the container has been detached (test teardown or in-app re-mount)
+  // so a leaked listener cannot write to a stale DOM tree.
+  window.addEventListener(USER_DATA_CHANGED_EVENT, () => {
+    if (!container.isConnected) return;
+    void rerenderRows(refs, service, state);
+  });
 }
 
 interface ViewRefs {
@@ -132,6 +155,7 @@ interface ViewRefs {
   readonly searchInput: HTMLInputElement;
   readonly setFilter: HTMLSelectElement;
   readonly rarityFilter: HTMLSelectElement;
+  readonly ownershipFilter: HTMLSelectElement;
   readonly sortSelect: HTMLSelectElement;
   readonly sortDirectionSelect: HTMLSelectElement;
   readonly pageSizeSelect: HTMLSelectElement;
@@ -152,6 +176,9 @@ function collectRefs(container: HTMLElement): ViewRefs | null {
   const searchInput = get<HTMLInputElement>('[data-region="search"]');
   const setFilter = get<HTMLSelectElement>('[data-region="set-filter"]');
   const rarityFilter = get<HTMLSelectElement>('[data-region="rarity-filter"]');
+  const ownershipFilter = get<HTMLSelectElement>(
+    '[data-region="ownership-filter"]',
+  );
   const sortSelect = get<HTMLSelectElement>('[data-region="sort"]');
   const sortDirectionSelect = get<HTMLSelectElement>('[data-region="sort-direction"]');
   const pageSizeSelect = get<HTMLSelectElement>('[data-region="page-size"]');
@@ -168,6 +195,7 @@ function collectRefs(container: HTMLElement): ViewRefs | null {
     !searchInput ||
     !setFilter ||
     !rarityFilter ||
+    !ownershipFilter ||
     !sortSelect ||
     !sortDirectionSelect ||
     !pageSizeSelect ||
@@ -187,6 +215,7 @@ function collectRefs(container: HTMLElement): ViewRefs | null {
     searchInput,
     setFilter,
     rarityFilter,
+    ownershipFilter,
     sortSelect,
     sortDirectionSelect,
     pageSizeSelect,
@@ -308,6 +337,9 @@ async function rerenderRows(
     sortDirection: state.sortDirection,
     page: state.page,
     pageSize: state.pageSize,
+    ...(state.ownership !== ''
+      ? { ownership: state.ownership }
+      : {}),
   });
 
   refs.rowsRegion.replaceChildren();
@@ -374,8 +406,22 @@ function buildRow(row: BrowseCardRow): HTMLTableRowElement {
   // Actions
   const actionsCell = document.createElement('td');
   actionsCell.className = 'browse-table__actions';
-  actionsCell.appendChild(buildDisabledQuickAction('Legg til i samling'));
-  actionsCell.appendChild(buildDisabledQuickAction('Legg til i ønskeliste'));
+
+  const addCollection = document.createElement('button');
+  addCollection.type = 'button';
+  addCollection.dataset['action'] = 'add-to-collection';
+  addCollection.className = 'browse-table__action';
+  addCollection.textContent = 'Legg til i samling';
+  actionsCell.appendChild(addCollection);
+
+  const addWishlist = document.createElement('button');
+  addWishlist.type = 'button';
+  addWishlist.disabled = true;
+  addWishlist.className = 'browse-table__action browse-table__action--disabled';
+  addWishlist.title = 'Legg til i ønskeliste — kommer i PR 7b';
+  addWishlist.textContent = 'Legg til i ønskeliste';
+  actionsCell.appendChild(addWishlist);
+
   const detailButton = document.createElement('button');
   detailButton.type = 'button';
   detailButton.dataset['action'] = 'view-details';
@@ -385,16 +431,6 @@ function buildRow(row: BrowseCardRow): HTMLTableRowElement {
   tr.appendChild(actionsCell);
 
   return tr;
-}
-
-function buildDisabledQuickAction(label: string): HTMLButtonElement {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'browse-table__action browse-table__action--disabled';
-  btn.disabled = true;
-  btn.title = `${label} — kommer i PR 7`;
-  btn.textContent = label;
-  return btn;
 }
 
 function attachEventListeners(
@@ -423,6 +459,13 @@ function attachEventListeners(
 
   refs.rarityFilter.addEventListener('change', () => {
     state.rarity = refs.rarityFilter.value;
+    state.page = 0;
+    void rerenderRows(refs, service, state);
+  });
+
+  refs.ownershipFilter.addEventListener('change', () => {
+    const value = refs.ownershipFilter.value;
+    state.ownership = value === 'owned' || value === 'not-owned' ? value : '';
     state.page = 0;
     void rerenderRows(refs, service, state);
   });
@@ -457,29 +500,35 @@ function attachEventListeners(
     void rerenderRows(refs, service, state);
   });
 
-  // Row click → card detail. Disabled buttons inside the row stop
-  // propagation, so they do not navigate. The View details button has
-  // a non-disabled handler that also navigates.
+  // Row click → card detail. Disabled buttons stop early without
+  // navigating. Action buttons handle their own behaviour:
+  //   view-details → navigate to card detail
+  //   add-to-collection → open holding form modal
   refs.rowsRegion.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
     if (target === null) return;
     const button = target.closest<HTMLElement>('button');
-    if (button !== null) {
-      const isDisabled = button.matches(':disabled');
-      if (isDisabled) {
-        return;
-      }
-      const action = button.dataset['action'];
-      if (action !== 'view-details') {
-        return;
-      }
-    }
     const row = target.closest<HTMLTableRowElement>('tr.browse-table__row');
     if (row === null) return;
     const cardId = row.dataset['cardId'];
-    if (cardId !== undefined && cardId.length > 0) {
-      navigateToCard(cardId);
+    if (cardId === undefined || cardId.length === 0) return;
+
+    if (button !== null) {
+      if (button.matches(':disabled')) return;
+      const action = button.dataset['action'];
+      if (action === 'view-details') {
+        navigateToCard(cardId);
+        return;
+      }
+      if (action === 'add-to-collection') {
+        void openAddToCollection(cardId);
+        return;
+      }
+      // Unknown enabled button: do not navigate.
+      return;
     }
+
+    navigateToCard(cardId);
   });
 
   refs.rowsRegion.addEventListener('keydown', (event) => {
@@ -495,4 +544,8 @@ function attachEventListeners(
       navigateToCard(cardId);
     }
   });
+}
+
+async function openAddToCollection(cardId: string): Promise<void> {
+  await openDialog(buildHoldingForm({ mode: 'add', cardId }));
 }
