@@ -174,18 +174,18 @@ This bootstrap exception applies to PR 1 only. It cannot be reused.
 
 ---
 
-## 10. PR 3 backup-rule exception
+## 10. PR 3 backup-rule exception (historical)
 
-PR 3 introduces the Dexie schema, migrations, repositories, soft delete, and audit log — i.e. the typed data layer that PR 4's backup/restore is built on top of. Backup and restore do not exist yet.
+PR 3 introduced the Dexie schema, migrations, repositories, soft delete, and audit log — i.e. the typed data layer that PR 4's backup/restore is built on top of. Backup and restore did not exist yet.
 
 **For PR 3 only:**
-- The §4 backup-rule clause "no PR is complete if it breaks JSON export, JSON import, backup validation, schemaVersion handling" is satisfied because none of those code paths exist yet.
-- The §8 merge-rule clause "if the PR touches the data layer, backup/restore still works end-to-end" is **N/A**.
-- The §12 reviewer step "verifies that backup/restore still works" is **N/A**.
+- The §4 backup-rule clause "no PR is complete if it breaks JSON export, JSON import, backup validation, schemaVersion handling" was satisfied because none of those code paths existed yet.
+- The §8 merge-rule clause "if the PR touches the data layer, backup/restore still works end-to-end" was **N/A**.
+- The §13 reviewer step "verifies that backup/restore still works" was **N/A**.
 
-**From PR 4 onward**, every data-layer PR must keep the `export → wipe → restore` round-trip passing. PR 4 lands the export, the validator, the replace-restore (with the pre-restore auto-backup), and a Vitest round-trip test that subsequent PRs may not break.
+This exception was a one-time historical allowance. **It cannot be reused.** It is documented here so reviewers reading the merged PR 3 can see the contract that was in force at merge time.
 
-This exception applies to PR 3 only. It cannot be reused.
+**From PR 4 onward, the `export → wipe → restore` round-trip is mandatory for every data-layer PR.** PR 4 lands the export, the validator, the replace-restore (with the pre-restore auto-backup), and a Vitest round-trip test that subsequent data-layer PRs may not break. A failing round-trip test blocks merge of any later PR that touches stores, repositories, or the schema.
 
 ---
 
