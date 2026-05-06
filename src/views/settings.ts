@@ -31,7 +31,12 @@ import { createCardsRepo } from '../repositories/cards-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
 import { createSettingsRepo } from '../repositories/settings-repo';
 
-export const SYNC_COMPLETED_EVENT = 'pokemon:sync-completed';
+// Dispatched after every sync attempt — both successful and failed.
+// Listeners (currently the topbar; later possibly the dashboard) read
+// `appMeta.lastSyncAt` and `appMeta.lastSyncStatus` to decide what to
+// show. Using one event for both outcomes means the chip never gets
+// stuck on a stale "ok" state after a subsequent failure.
+export const SYNC_STATUS_CHANGED_EVENT = 'pokemon:sync-status-changed';
 
 export function mountSettingsView(container: HTMLElement): void {
   container.innerHTML = `
@@ -401,47 +406,50 @@ async function handleSyncNow(refs: SyncRefs): Promise<void> {
   const apiKey = refs.apiKeyInput.value.trim();
   const db = getDb();
 
-  let result: SyncResult;
+  let result: SyncResult | null = null;
   try {
-    result = await syncCardDatabase({
-      db,
-      apiKey: apiKey.length > 0 ? apiKey : null,
-      onProgress: (progress) => {
-        if (progress.phase === 'sets') {
-          refs.syncProgress.textContent = `Henter sett… ${progress.fetched} / ${progress.total}`;
-        } else {
-          refs.syncProgress.textContent = `Henter kort i ${progress.setId}: ${progress.fetched} / ${progress.total}`;
-        }
-      },
-    });
-  } catch (caught) {
-    refs.syncNowButton.disabled = false;
-    refs.syncFeedback.classList.add('settings-view__feedback--error');
-    refs.syncFeedback.textContent = `Synk feilet: ${sanitizeErrorMessage(caught, apiKey)}. Samlingen er trygg.`;
-    return;
-  } finally {
-    refs.syncProgress.replaceChildren();
-  }
+    try {
+      result = await syncCardDatabase({
+        db,
+        apiKey: apiKey.length > 0 ? apiKey : null,
+        onProgress: (progress) => {
+          if (progress.phase === 'sets') {
+            refs.syncProgress.textContent = `Henter sett… ${progress.fetched} / ${progress.total}`;
+          } else {
+            refs.syncProgress.textContent = `Henter kort i ${progress.setId}: ${progress.fetched} / ${progress.total}`;
+          }
+        },
+      });
+    } catch (caught) {
+      // syncCardDatabase is supposed to swallow errors and return a
+      // SyncFailure, but be defensive: if the orchestrator itself
+      // throws (e.g. a Dexie failure that escapes its own catch),
+      // record it locally and let the finally block notify listeners.
+      refs.syncFeedback.classList.add('settings-view__feedback--error');
+      refs.syncFeedback.textContent = `Synk feilet: ${sanitizeErrorMessage(caught, apiKey)}. Samlingen er trygg.`;
+      return;
+    }
 
-  refs.syncNowButton.disabled = false;
-  if (result.ok) {
-    refs.syncFeedback.textContent = `Synk ferdig: ${result.setsCount} sett, ${result.cardsCount} kort.`;
-    window.dispatchEvent(new CustomEvent(SYNC_COMPLETED_EVENT));
+    if (result.ok) {
+      refs.syncFeedback.textContent = `Synk ferdig: ${result.setsCount} sett, ${result.cardsCount} kort.`;
+    } else {
+      refs.syncFeedback.classList.add('settings-view__feedback--error');
+      refs.syncFeedback.textContent = `Synk feilet: ${result.error}. Samlingen er trygg.`;
+    }
+
     await renderSyncStatus(
       refs.syncStatusRegion,
       createAppMetaRepo(db),
       createSetsRepo(db),
       createCardsRepo(db),
     );
-  } else {
-    refs.syncFeedback.classList.add('settings-view__feedback--error');
-    refs.syncFeedback.textContent = `Synk feilet: ${result.error}. Samlingen er trygg.`;
-    await renderSyncStatus(
-      refs.syncStatusRegion,
-      createAppMetaRepo(db),
-      createSetsRepo(db),
-      createCardsRepo(db),
-    );
+  } finally {
+    // Always clear the progress line and notify listeners — the
+    // topbar (and any future listener) needs to refresh the chip
+    // whether the sync succeeded or failed.
+    refs.syncProgress.replaceChildren();
+    refs.syncNowButton.disabled = false;
+    window.dispatchEvent(new CustomEvent(SYNC_STATUS_CHANGED_EVENT));
   }
 }
 

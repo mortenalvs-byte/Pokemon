@@ -4,7 +4,7 @@ import { renderBrowse } from './views/browse';
 import { renderCollection } from './views/collection';
 import { renderDashboard } from './views/dashboard';
 import { renderLots } from './views/lots';
-import { mountSettingsView, SYNC_COMPLETED_EVENT } from './views/settings';
+import { mountSettingsView, SYNC_STATUS_CHANGED_EVENT } from './views/settings';
 import { renderWishlist } from './views/wishlist';
 import { getCurrentRoute, onRouteChange, type Route } from './router';
 import { APP_META_KEYS } from './domain/types';
@@ -114,14 +114,14 @@ function updateNavActive(): void {
 // Topbar sync chip
 //
 // Reads `appMeta.lastSyncAt` and `appMeta.lastSyncStatus` from the live
-// database and renders a small status chip. Listens for the
-// `pokemon:sync-completed` custom event the Settings view dispatches
-// after a successful sync, so the chip refreshes without a global
-// state framework.
+// database and renders a small status chip. Listens for
+// `pokemon:sync-status-changed`, dispatched by the Settings view after
+// every sync attempt — successful or failed — so the chip never gets
+// stuck on stale "ok" state after a subsequent failure.
 
 function setupTopbar(): void {
   void renderTopbarStatus();
-  window.addEventListener(SYNC_COMPLETED_EVENT, () => {
+  window.addEventListener(SYNC_STATUS_CHANGED_EVENT, () => {
     void renderTopbarStatus();
   });
 }
