@@ -143,6 +143,26 @@ describe('backup export', () => {
     );
   });
 
+  it('readBackupSnapshot is consistent across rapid sequential calls (transactional read)', async () => {
+    // Two snapshots taken back-to-back on an unchanged database must
+    // contain the same record arrays. This proves the function returns
+    // a fully resolved view of every store and is safe to retry — a
+    // weaker but stable proxy for the transactional-read property
+    // that BACKUP_FORMAT.md §7 requires.
+    const a = await readBackupSnapshot(db);
+    const b = await readBackupSnapshot(db);
+
+    expect(b.holdings).toEqual(a.holdings);
+    expect(b.cards).toEqual(a.cards);
+    expect(b.binders).toEqual(a.binders);
+    expect(b.binderSlots).toEqual(a.binderSlots);
+    expect(b.lots).toEqual(a.lots);
+    expect(b.lotItems).toEqual(a.lotItems);
+    expect(b.wishlist).toEqual(a.wishlist);
+    expect(b.auditLog).toEqual(a.auditLog);
+    expect(b.settings).toEqual(a.settings);
+  });
+
   it('snapshot is captured before side effects', async () => {
     // Establish a baseline so the audit count we record below is
     // measured against a real starting point (initializeDataLayer adds

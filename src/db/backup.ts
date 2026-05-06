@@ -48,54 +48,77 @@ export async function readBackupSnapshot(
 ): Promise<BackupFile> {
   const includeApiKey = options.includeApiKey === true;
 
-  const [
-    sets,
-    cards,
-    holdings,
-    lots,
-    lotItems,
-    binders,
-    binderSlots,
-    wishlist,
-    auditLog,
-    rawSettings,
-    appMeta,
-  ] = await Promise.all([
-    db.sets.toArray(),
-    db.cards.toArray(),
-    db.holdings.toArray(),
-    db.lots.toArray(),
-    db.lotItems.toArray(),
-    db.binders.toArray(),
-    db.binderSlots.toArray(),
-    db.wishlist.toArray(),
-    db.auditLog.toArray(),
-    db.settings.toArray(),
-    db.appMeta.toArray(),
-  ]);
+  // Read every store inside a single Dexie read transaction so the
+  // snapshot is consistent with respect to any concurrent write. This
+  // matches BACKUP_FORMAT.md §7 ("a single Dexie read transaction over
+  // every store") and prevents an unrelated write that lands between
+  // two `.toArray()` calls from producing an inconsistent backup.
+  return db.transaction(
+    'r',
+    [
+      db.sets,
+      db.cards,
+      db.holdings,
+      db.lots,
+      db.lotItems,
+      db.binders,
+      db.binderSlots,
+      db.wishlist,
+      db.auditLog,
+      db.settings,
+      db.appMeta,
+    ],
+    async () => {
+      const [
+        sets,
+        cards,
+        holdings,
+        lots,
+        lotItems,
+        binders,
+        binderSlots,
+        wishlist,
+        auditLog,
+        rawSettings,
+        appMeta,
+      ] = await Promise.all([
+        db.sets.toArray(),
+        db.cards.toArray(),
+        db.holdings.toArray(),
+        db.lots.toArray(),
+        db.lotItems.toArray(),
+        db.binders.toArray(),
+        db.binderSlots.toArray(),
+        db.wishlist.toArray(),
+        db.auditLog.toArray(),
+        db.settings.toArray(),
+        db.appMeta.toArray(),
+      ]);
 
-  const settings = includeApiKey
-    ? rawSettings
-    : rawSettings.filter(
-        (record) => record.key !== SETTINGS_KEYS.pokemonTcgApiKey,
-      );
+      const settings = includeApiKey
+        ? rawSettings
+        : rawSettings.filter(
+            (record) => record.key !== SETTINGS_KEYS.pokemonTcgApiKey,
+          );
 
-  return {
-    app: BACKUP_APP_LITERAL,
-    schemaVersion: SCHEMA_VERSION,
-    exportedAt: nowIso(),
-    settings,
-    sets,
-    cards,
-    holdings,
-    lots,
-    lotItems,
-    binders,
-    binderSlots,
-    wishlist,
-    auditLog,
-    appMeta,
-  };
+      return {
+        app: BACKUP_APP_LITERAL,
+        schemaVersion: SCHEMA_VERSION,
+        exportedAt: nowIso(),
+        settings,
+        sets,
+        cards,
+        holdings,
+        lots,
+        lotItems,
+        binders,
+        binderSlots,
+        wishlist,
+        auditLog,
+        appMeta,
+      };
+    },
+  );
 }
 
 // ---------------------------------------------------------------------
@@ -142,23 +165,31 @@ async function recordExportSideEffects(
   const liveHoldingCount = backup.holdings.filter(
     (record) => record.deletedAt === null,
   ).length;
+  const message = `exported ${describeRecordCounts(backup)}`;
 
-  await db.appMeta.put({
-    key: APP_META_KEYS.lastBackupAt,
-    value: backup.exportedAt,
-    updatedAt: now,
-  });
-  await db.appMeta.put({
-    key: APP_META_KEYS.lastBackupHoldingCount,
-    value: liveHoldingCount,
-    updatedAt: now,
-  });
-
-  await appendAudit(db, {
-    action: 'backup_exported',
-    entityType: 'system',
-    entityId: null,
-    message: `exported ${describeRecordCounts(backup)}`,
+  // Both `appMeta` writes and the `backup_exported` audit row are part
+  // of the same logical event. Wrap them in one rw-transaction so an
+  // interrupted export cannot leave appMeta updated without an audit
+  // row, or vice versa.
+  await db.transaction('rw', [db.appMeta, db.auditLog], async () => {
+    await db.appMeta.put({
+      key: APP_META_KEYS.lastBackupAt,
+      value: backup.exportedAt,
+      updatedAt: now,
+    });
+    await db.appMeta.put({
+      key: APP_META_KEYS.lastBackupHoldingCount,
+      value: liveHoldingCount,
+      updatedAt: now,
+    });
+    // appendAudit performs a single `db.auditLog.add()`, which Dexie
+    // automatically joins to the surrounding transaction.
+    await appendAudit(db, {
+      action: 'backup_exported',
+      entityType: 'system',
+      entityId: null,
+      message,
+    });
   });
 }
 
