@@ -86,11 +86,11 @@ Do not build the dashboard or any advanced UI feature before the data layer it d
 2. Migrations.
 3. Soft delete.
 4. Audit log.
-5. Backup export.
-6. Backup restore (replace mode).
-7. Repositories (typed CRUD).
+5. Repositories (typed CRUD).
+6. Backup export.
+7. Backup restore (replace mode).
 
-PRs 6 through 10 depend on PRs 3 and 4 having landed.
+Items 1–5 land together in PR 3 because the typed repositories are how PR 4's backup/restore reads and writes every store; building the schema without the typed CRUD layer would force the backup/restore PR to bypass validation. Items 6–7 land in PR 4. PRs 6 through 10 depend on PR 3 and PR 4 having landed.
 
 ---
 
