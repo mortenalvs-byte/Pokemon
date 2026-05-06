@@ -1,6 +1,7 @@
 import { mountBackupView } from './views/backup';
 import { renderBinders } from './views/binders';
-import { renderBrowse } from './views/browse';
+import { mountBrowseView } from './views/browse';
+import { mountCardDetailView } from './views/card-detail';
 import { renderCollection } from './views/collection';
 import { renderDashboard } from './views/dashboard';
 import { renderLots } from './views/lots';
@@ -16,9 +17,7 @@ const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
   dashboard: (container) => {
     container.innerHTML = renderDashboard();
   },
-  browse: (container) => {
-    container.innerHTML = renderBrowse();
-  },
+  browse: mountBrowseView,
   collection: (container) => {
     container.innerHTML = renderCollection();
   },
@@ -33,6 +32,7 @@ const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
   },
   backup: mountBackupView,
   settings: mountSettingsView,
+  'card-detail': mountCardDetailView,
 };
 
 interface NavLink {

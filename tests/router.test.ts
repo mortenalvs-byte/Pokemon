@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_ROUTE,
   ROUTES,
+  getCurrentCardId,
   getCurrentRoute,
   isRoute,
   navigate,
+  navigateToCard,
   onRouteChange,
 } from '../src/router';
 
@@ -65,6 +67,63 @@ describe('router', () => {
     navigate('lots');
     expect(window.location.hash).toBe('#lots');
     expect(getCurrentRoute()).toBe('lots');
+  });
+
+  it('getCurrentCardId() returns null for normal routes', () => {
+    setHash('browse');
+    expect(getCurrentCardId()).toBeNull();
+    setHash('settings');
+    expect(getCurrentCardId()).toBeNull();
+  });
+
+  it('getCurrentCardId() returns the decoded id for #card/<id>', () => {
+    setHash('card/base1-4');
+    expect(getCurrentCardId()).toBe('base1-4');
+  });
+
+  it('navigateToCard() encodes the id in the hash', () => {
+    navigateToCard('base1-4');
+    expect(window.location.hash).toBe('#card/base1-4');
+    expect(getCurrentCardId()).toBe('base1-4');
+  });
+
+  it('navigateToCard() handles ids with characters that need URL encoding', () => {
+    navigateToCard('weird id with spaces & =');
+    // The hash is URL-encoded.
+    expect(window.location.hash).toBe(
+      `#card/${encodeURIComponent('weird id with spaces & =')}`,
+    );
+    expect(getCurrentCardId()).toBe('weird id with spaces & =');
+  });
+
+  it('getCurrentRoute() returns card-detail only for valid #card/<id>', () => {
+    setHash('card/base1-4');
+    expect(getCurrentRoute()).toBe('card-detail');
+  });
+
+  it('getCurrentRoute() falls back to default when #card/ has no id', () => {
+    setHash('card/');
+    expect(getCurrentRoute()).toBe(DEFAULT_ROUTE);
+    expect(getCurrentCardId()).toBeNull();
+  });
+
+  it('getCurrentRoute() falls back when #card/ has only an empty encoded id', () => {
+    setHash('card/%20'); // decodes to a single space — non-empty, valid
+    expect(getCurrentRoute()).toBe('card-detail');
+    expect(getCurrentCardId()).toBe(' ');
+  });
+
+  it('getCurrentRoute() falls back safely when the encoded id is malformed', () => {
+    setHash('card/%E0%A4%A'); // truncated UTF-8 percent escape
+    expect(getCurrentRoute()).toBe(DEFAULT_ROUTE);
+    expect(getCurrentCardId()).toBeNull();
+  });
+
+  it('isRoute() does not classify "card-detail" as a sidebar route', () => {
+    // The `Route` type union includes 'card-detail', but it must not
+    // be a valid plain hash — bare '#card-detail' falls back.
+    setHash('card-detail');
+    expect(getCurrentRoute()).toBe(DEFAULT_ROUTE);
   });
 
   it('onRouteChange() fires the handler on hashchange and can be unsubscribed', async () => {

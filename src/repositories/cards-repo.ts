@@ -10,6 +10,7 @@ export interface CardsRepo {
   get(id: string): Promise<CardRecord | undefined>;
   list(): Promise<CardRecord[]>;
   listBySet(setId: string): Promise<CardRecord[]>;
+  listByRarity(rarity: string): Promise<CardRecord[]>;
   count(): Promise<number>;
   clear(): Promise<void>;
 }
@@ -30,6 +31,9 @@ export function createCardsRepo(db: PokemonTrackerDB): CardsRepo {
     },
     async listBySet(setId) {
       return db.cards.where('setId').equals(setId).toArray();
+    },
+    async listByRarity(rarity) {
+      return db.cards.where('rarity').equals(rarity).toArray();
     },
     async count() {
       return db.cards.count();
