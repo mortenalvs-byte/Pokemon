@@ -2,6 +2,10 @@
 // (schemaVersion, lastSyncAt, lastBackupAt, …) are written by the app
 // itself, not the user, so writes do *not* append audit entries: the
 // init code, sync code, and backup code emit their own audit lines.
+//
+// Like `settings`, the public surface is read + write + list only. No
+// generic `delete(key)` in MVP; later PRs can add a narrow named method
+// if a real need arises.
 
 import { nowIso } from '../utils/dates';
 import type { AppMetaKey, AppMetaRecord } from '../domain/types';
@@ -10,7 +14,6 @@ import type { PokemonTrackerDB } from '../db/database';
 export interface AppMetaRepo {
   get<T>(key: string): Promise<T | undefined>;
   set(key: string, value: unknown): Promise<void>;
-  delete(key: string): Promise<void>;
   all(): Promise<AppMetaRecord[]>;
 }
 
@@ -28,10 +31,6 @@ export function createAppMetaRepo(db: PokemonTrackerDB): AppMetaRepo {
         updatedAt: nowIso(),
       };
       await db.appMeta.put(record);
-    },
-
-    async delete(key) {
-      await db.appMeta.delete(key);
     },
 
     async all() {

@@ -1,7 +1,12 @@
-// Key/value store for user preferences and the local API key. The API
-// key must never be logged (KRAVSPEC §11), so this module avoids any
-// console output even on error paths. Audit entries record that a key
-// changed, but never the value.
+// Key/value store for user preferences and the local API key. Settings
+// are sacred user data, so the public surface only allows reads, writes,
+// and listing — no generic `delete(key)` is exposed in MVP. If a future
+// PR needs to clear a specific setting (e.g. "forget API key"), it must
+// add a narrow, explicitly-named method or rely on PR 4's restore logic.
+//
+// The API key must never be logged (KRAVSPEC §11), so this module avoids
+// any console output even on error paths. Audit entries record that a
+// key changed, but never the value.
 
 import { nowIso } from '../utils/dates';
 import type { SettingsKey, SettingsRecord } from '../domain/types';
@@ -12,7 +17,6 @@ import type { PokemonTrackerDB } from '../db/database';
 export interface SettingsRepo {
   get<T>(key: string): Promise<T | undefined>;
   set(key: string, value: unknown): Promise<void>;
-  delete(key: string): Promise<void>;
   all(): Promise<SettingsRecord[]>;
 }
 
@@ -32,16 +36,6 @@ export function createSettingsRepo(db: PokemonTrackerDB): SettingsRepo {
       await db.settings.put(record);
       await appendAudit(db, {
         action: keyToAction(key),
-        entityType: 'settings',
-        entityId: key,
-        message: redactedAuditMessage(key),
-      });
-    },
-
-    async delete(key) {
-      await db.settings.delete(key);
-      await appendAudit(db, {
-        action: 'setting_deleted',
         entityType: 'settings',
         entityId: key,
         message: redactedAuditMessage(key),

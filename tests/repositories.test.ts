@@ -286,6 +286,11 @@ describe('repositories', () => {
     expect(await repo.get<string>('pokemonTcgApiKey')).toBe('super-secret');
   });
 
+  it('settings-repo has no generic delete API', () => {
+    const repo = createSettingsRepo(db);
+    expect((repo as unknown as { delete?: unknown }).delete).toBeUndefined();
+  });
+
   it('appMeta-repo set/get without audit', async () => {
     const repo = createAppMetaRepo(db);
     await repo.set('lastSyncAt', '2026-05-06T00:00:00.000Z');
@@ -293,5 +298,10 @@ describe('repositories', () => {
       '2026-05-06T00:00:00.000Z',
     );
     expect(await db.auditLog.count()).toBe(0);
+  });
+
+  it('appMeta-repo has no generic delete API', () => {
+    const repo = createAppMetaRepo(db);
+    expect((repo as unknown as { delete?: unknown }).delete).toBeUndefined();
   });
 });

@@ -174,7 +174,22 @@ This bootstrap exception applies to PR 1 only. It cannot be reused.
 
 ---
 
-## 10. Branch naming
+## 10. PR 3 backup-rule exception
+
+PR 3 introduces the Dexie schema, migrations, repositories, soft delete, and audit log — i.e. the typed data layer that PR 4's backup/restore is built on top of. Backup and restore do not exist yet.
+
+**For PR 3 only:**
+- The §4 backup-rule clause "no PR is complete if it breaks JSON export, JSON import, backup validation, schemaVersion handling" is satisfied because none of those code paths exist yet.
+- The §8 merge-rule clause "if the PR touches the data layer, backup/restore still works end-to-end" is **N/A**.
+- The §12 reviewer step "verifies that backup/restore still works" is **N/A**.
+
+**From PR 4 onward**, every data-layer PR must keep the `export → wipe → restore` round-trip passing. PR 4 lands the export, the validator, the replace-restore (with the pre-restore auto-backup), and a Vitest round-trip test that subsequent PRs may not break.
+
+This exception applies to PR 3 only. It cannot be reused.
+
+---
+
+## 11. Branch naming
 
 | Kind of change | Branch prefix | Example |
 |---|---|---|
@@ -187,7 +202,7 @@ Branches are created from up-to-date `main`.
 
 ---
 
-## 11. Commit message style
+## 12. Commit message style
 
 - Short imperative subject line, ≤ 72 chars.
 - A blank line, then a body explaining **why** when the change isn't obvious.
@@ -197,7 +212,7 @@ There is no enforced commit-message lint in MVP, but reviewers may ask for a cle
 
 ---
 
-## 12. Reviews
+## 13. Reviews
 
 - A PR has at least one reviewer (the project owner, in MVP).
 - The reviewer reads the code, runs the branch locally if it touches the data layer, and verifies that backup/restore still works.
@@ -205,7 +220,7 @@ There is no enforced commit-message lint in MVP, but reviewers may ask for a cle
 
 ---
 
-## 13. CI (later)
+## 14. CI (later)
 
 CI is not configured in MVP. When CI lands (a future docs+chore PR will define the scope), it will, at minimum:
 
@@ -218,7 +233,7 @@ Until CI exists, the same checks are run **locally** before opening the PR.
 
 ---
 
-## 14. Hot rules — quick reference
+## 15. Hot rules — quick reference
 
 > 1. Stable `main`. PR for everything.
 > 2. One purpose per PR.
