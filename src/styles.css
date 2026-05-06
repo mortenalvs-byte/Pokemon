@@ -357,6 +357,125 @@ body {
   font-weight: 500;
 }
 
+/* Settings view — reuses the panel/button/feedback look from the backup view */
+
+.settings-view {
+  max-width: 720px;
+}
+
+.settings-view h1 {
+  margin: 0 0 var(--space-3);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.settings-view__panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.settings-view__panel h2 {
+  margin: 0 0 var(--space-2);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.settings-view__hint {
+  color: var(--color-fg-muted);
+  margin: 0 0 var(--space-3);
+}
+
+.settings-view__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-2) 0;
+  max-width: 360px;
+}
+
+.settings-view__field span {
+  font-size: 13px;
+  color: var(--color-fg-muted);
+}
+
+.settings-view__field input,
+.settings-view__field select {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  font: inherit;
+}
+
+.settings-view__field input:focus-visible,
+.settings-view__field select:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.settings-view__status {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0 0 var(--space-3);
+}
+
+.settings-view__status dt {
+  color: var(--color-fg-muted);
+  font-weight: 500;
+}
+
+.settings-view__status dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.settings-view__button {
+  display: inline-block;
+  padding: var(--space-2) var(--space-4);
+  margin-right: var(--space-2);
+  margin-top: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings-view__button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.settings-view__button:hover:not(:disabled) {
+  background: var(--color-bg);
+}
+
+.settings-view__button--primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+.settings-view__button--primary:hover:not(:disabled) {
+  filter: brightness(0.95);
+  background: var(--color-accent);
+}
+
+.settings-view__feedback {
+  margin: var(--space-3) 0 0;
+  color: var(--color-fg-muted);
+}
+
+.settings-view__feedback--error {
+  color: var(--color-danger);
+}
+
 /* Narrow viewports — usable, not optimized */
 
 @media (max-width: 720px) {
