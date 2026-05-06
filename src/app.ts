@@ -2,7 +2,7 @@ import { mountBackupView } from './views/backup';
 import { renderBinders } from './views/binders';
 import { mountBrowseView } from './views/browse';
 import { mountCardDetailView } from './views/card-detail';
-import { renderCollection } from './views/collection';
+import { mountCollectionView } from './views/collection';
 import { renderDashboard } from './views/dashboard';
 import { renderLots } from './views/lots';
 import { mountSettingsView, SYNC_STATUS_CHANGED_EVENT } from './views/settings';
@@ -18,9 +18,7 @@ const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
     container.innerHTML = renderDashboard();
   },
   browse: mountBrowseView,
-  collection: (container) => {
-    container.innerHTML = renderCollection();
-  },
+  collection: mountCollectionView,
   binders: (container) => {
     container.innerHTML = renderBinders();
   },

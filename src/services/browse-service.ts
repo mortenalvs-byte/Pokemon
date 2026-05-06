@@ -16,17 +16,21 @@
 
 import type { CardRecord, SetRecord } from '../domain/types';
 import type { CardsRepo } from '../repositories/cards-repo';
+import type { HoldingsRepo } from '../repositories/holdings-repo';
 import type { SetsRepo } from '../repositories/sets-repo';
 
 export type BrowseSort = 'set-release' | 'name' | 'rarity' | 'set-number';
 export type SortDirection = 'asc' | 'desc';
 export type BrowsePageSize = 25 | 50 | 100;
+export type OwnershipFilter = 'owned' | 'not-owned';
 
 export interface BrowseCriteria {
   /** Free-text substring (matched against card name, case-insensitive). */
   readonly search?: string;
   readonly setId?: string;
   readonly rarity?: string;
+  /** Filter by whether the card has at least one live (not soft-deleted) holding. */
+  readonly ownership?: OwnershipFilter;
   readonly sort: BrowseSort;
   readonly sortDirection: SortDirection;
   /** Zero-indexed. */
@@ -54,13 +58,17 @@ export interface BrowseService {
 export function createBrowseService(
   cardsRepo: CardsRepo,
   setsRepo: SetsRepo,
+  holdingsRepo?: HoldingsRepo,
 ): BrowseService {
   return {
     async browse(criteria) {
       const sets = await setsRepo.list();
       const setsById = buildSetsById(sets);
       const candidates = await selectCandidates(cardsRepo, criteria);
-      const filtered = applyRemainingFilters(candidates, criteria);
+      let filtered = applyRemainingFilters(candidates, criteria);
+      if (criteria.ownership !== undefined && holdingsRepo !== undefined) {
+        filtered = await applyOwnershipFilter(filtered, criteria.ownership, holdingsRepo);
+      }
       const sorted = sortCards(
         filtered,
         setsById,
@@ -108,6 +116,22 @@ function buildSetsById(sets: readonly SetRecord[]): Map<string, SetRecord> {
     map.set(set.id, set);
   }
   return map;
+}
+
+async function applyOwnershipFilter(
+  cards: readonly CardRecord[],
+  ownership: OwnershipFilter,
+  holdingsRepo: HoldingsRepo,
+): Promise<CardRecord[]> {
+  // Load all live holdings once and build a Set of card ids the user
+  // owns. The Set lookup is O(1) per card, so the overall pass stays
+  // linear in cards regardless of holdings count.
+  const liveHoldings = await holdingsRepo.listLive();
+  const ownedCardIds = new Set(liveHoldings.map((h) => h.cardId));
+  if (ownership === 'owned') {
+    return cards.filter((card) => ownedCardIds.has(card.id));
+  }
+  return cards.filter((card) => !ownedCardIds.has(card.id));
 }
 
 async function selectCandidates(

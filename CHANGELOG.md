@@ -9,6 +9,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- **PR 7a — Holdings: Collection view, Add/Edit/Delete flow, Browse + Card Detail integration.** First user-data writes from the UI. Wishlist UI is intentionally deferred to PR 7b — its Browse / Card Detail buttons remain disabled with the `kommer i PR 7b` tooltip.
+  - `src/components/dialog.ts` — small `<dialog>` wrapper. `openDialog(content)` returns a Promise resolving to `'submitted'` or `'cancelled'`. Falls back to `setAttribute('open', '')` + manual `close` event when running under jsdom (older versions miss `dialog.close`).
+  - `src/components/events.ts` — `USER_DATA_CHANGED_EVENT = 'pokemon:user-data-changed'`. Dispatched after every successful holding mutation; views listen and refresh.
+  - `src/components/holding-form.ts` — Add/Edit modal. Renders all fields from `DATA_MODEL.md` §7 (quantity, condition type + raw / graded fields, finish, edition, language, purchase price + currency, manual estimated value + currency, tags, note, status, special variant). Pre-validates inline; the actual write goes through `holdingsRepo.create` / `holdingsRepo.update` so PR 3's repo validation and audit are still authoritative.
+  - `src/domain/tags.ts` — `parseTags(text)` (comma-split, trim, lowercase, dedupe, first-occurrence ordered) + `formatTags`.
+  - `src/services/collection-service.ts` — joins `holdings` + `cards` + `sets` and returns `CollectionRow[]` with `liveTotal` / `deletedTotal` counts. Filters: `conditionType`, `rawCondition`, `setId`, `status`, `missingCondition`, `missingValue`, `showDeleted`, `search`. Default sort: `updatedAt` desc per UI_DESIGN_SPEC §23. `listForCard()` returns the ordered holdings for a single card (live first, deleted last).
+  - `src/services/browse-service.ts` — extended with optional `ownership: 'owned' | 'not-owned'` filter. Loads live holdings once and builds a `Set<cardId>` for O(1) per-card filtering.
+  - `src/views/collection.ts` (replaces placeholder) — full table with toolbar, pagination, soft-delete with `confirm()` dialog, restore from a "Vis slettede" toggle, audit-correct mutation paths. Listens for `USER_DATA_CHANGED_EVENT` and re-renders only when the view is still attached (`isConnected` guard).
+  - `src/views/browse.ts` — "Legg til i samling" enabled, opens the holding form modal. New `Eier` filter (Alle / Eid / Ikke eid). "Legg til i ønskeliste" remains disabled with the `kommer i PR 7b` tooltip. Click handler split so disabled buttons never navigate.
+  - `src/views/card-detail.ts` — "Legg til i samling" enabled. New "Dine kort" section lists every holding for the card (raw and graded as separate rows) with Edit / Slett / Gjenopprett actions. Refreshes on `USER_DATA_CHANGED_EVENT`. "Legg til i ønskeliste" stays disabled with the `kommer i PR 7b` tooltip.
+  - `src/app.ts` — registers `mountCollectionView` for the `collection` route.
+  - `src/styles.css` — Collection table, dialog wrapper, holding-form layout, danger-action variant for destructive buttons.
+
+### Tests (223 / 223 across 31 files)
+- `tests/tags.test.ts` — `parseTags` / `formatTags` round-trip, dedupe, lowercasing, empty-token dropping.
+- `tests/dialog.test.ts` — `<dialog>` mount, `submitted` / `cancelled` resolution, jsdom fallback path.
+- `tests/holding-form.test.ts` — add-mode + edit-mode rendering, valid raw save through the repo, graded validation blocks save, negative purchase price blocks save, manual-value entry sets `valueSource = 'manual'` + `valueUpdatedAt`, dispatches `USER_DATA_CHANGED_EVENT`, audit row written.
+- `tests/collection-service.test.ts` — live / deleted totals, default-deleted exclusion, `showDeleted` toggle, conditionType / setId / missingCondition / missingValue filters, search, default sort, `listForCard` ordering.
+- `tests/collection-view.test.ts` — view structure, edit and soft-delete actions, `Vis slettede` reveals deleted rows with Restore, counts header, empty state.
+- `tests/browse-with-holdings.test.ts` — Add button enabled and opens dialog, wishlist button stays disabled with `kommer i PR 7b`, owned / not-owned filter narrows rows, **passive interactions (search, sort, filter, page) do not write user data**, save through dialog produces exactly one new holding + one `holding_created` audit row.
+- `tests/card-detail-with-holdings.test.ts` — Add button opens form, "Dine kort" empty / populated states, soft-delete from Card Detail writes one `holding_soft_deleted` audit.
+- `tests/card-detail-view.test.ts` (existing) — updated assertion to match the new state: Add to collection enabled, Add to wishlist still disabled with `kommer i PR 7b`.
+- All PR 1–6 tests including `tests/backup-roundtrip.test.ts` and `tests/browse-readonly-invariant.test.ts` remain green: passive Browse + Card Detail interactions still never write.
+
+### Known limitations (PR 7a)
+- Wishlist UI is deferred to PR 7b. Browse and Card Detail buttons render disabled with the documented tooltip.
+- Card Detail's "binder locations" section (UI_DESIGN_SPEC §13) is deferred to PR 8 alongside binders.
+- Lot picker on the holding form is deferred to PR 9; `holding.lotId` is preserved on edit but cannot be set in the UI yet.
+- Sort by **value** in Browse is still deferred (an editable "value" needs aggregated holdings — coming with the dashboard in PR 10).
+- The `<dialog>` wrapper relies on the browser's native modal behaviour; tests run against jsdom's partial implementation via the `setAttribute('open', '')` fallback.
+
+### Added
 - **PR 6 — Browse + Card Detail views over the cached card database.** First user-facing surface that reads from cache. Read-only over `cards` and `sets`; never reads or writes any user-owned store. Add-to-collection and add-to-wishlist buttons render disabled with a "kommer i PR 7" tooltip.
   - `src/router.ts` — extended with `#card/<encodedCardId>` sub-route. `getCurrentCardId()` decodes safely (returns `null` on empty or malformed input); `navigateToCard()` encodes via `encodeURIComponent`; `getCurrentRoute()` returns `'card-detail'` only when a non-empty card id is present, otherwise falls back to the default. The bare string `card-detail` is **not** a valid sidebar hash, so a malformed URL does not produce an empty page.
   - `src/services/browse-service.ts` (new) — joins `cards` and `sets` and returns rows as `{ card, set }` so the view never makes per-row set lookups. Picks the most selective indexed filter as the candidate set (`listBySet` / `listByRarity`) and applies remaining filters in JS. Default sort is set release date desc, with card number ascending tiebreak inside the same set. Search is case-insensitive substring against `name`, with whitespace trimmed.

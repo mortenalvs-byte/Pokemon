@@ -1,24 +1,58 @@
-// Card Detail view. Reads the card id from `getCurrentCardId()` and
-// renders a single card from the cached `cards` + `sets` stores. The
-// holdings/binder/wishlist sections that UI_DESIGN_SPEC §13 describes
-// land in PR 7 (when user-data writes arrive); here those slots
-// simply do not render and the action buttons are disabled with the
-// "kommer i PR 7" tooltip.
+// Card Detail view. Reads a single card from the cached `cards` +
+// `sets` stores and now also shows the user's holdings for that card
+// ("Dine kort"). The Add-to-collection button is enabled and opens
+// the holding form modal. The wishlist button stays disabled until
+// PR 7b lands.
 
+import { openDialog } from '../components/dialog';
+import { USER_DATA_CHANGED_EVENT } from '../components/events';
+import { buildHoldingForm } from '../components/holding-form';
 import { getDb } from '../db/database';
-import { createCardsRepo } from '../repositories/cards-repo';
-import { createSetsRepo } from '../repositories/sets-repo';
+import { formatTags } from '../domain/tags';
 import {
   extractCardmarketPrices,
   extractTcgplayerPrices,
   type PriceRow,
 } from '../domain/price-extractors';
 import { getCurrentCardId, navigate } from '../router';
+import { createCardsRepo } from '../repositories/cards-repo';
+import { createHoldingsRepo } from '../repositories/holdings-repo';
+import { createSetsRepo } from '../repositories/sets-repo';
+import {
+  createCollectionService,
+  type CollectionRow,
+} from '../services/collection-service';
 import { createLazyImage } from '../utils/lazy-image';
-import type { CardRecord, SetRecord } from '../domain/types';
+import type {
+  CardRecord,
+  HoldingRecord,
+  HoldingStatus,
+  SetRecord,
+} from '../domain/types';
+
+const STATUS_LABELS: Record<HoldingStatus, string> = {
+  owned: 'Eid',
+  duplicate: 'Duplikat',
+  for_sale: 'Til salgs',
+  for_trade: 'Bytte',
+  upgrade_needed: 'Bør oppgraderes',
+  ordered: 'Bestilt',
+  wanted: 'Ønsket',
+};
 
 export function mountCardDetailView(container: HTMLElement): void {
   void renderInto(container);
+
+  // Listener stays registered for the lifetime of the page (the route
+  // can return to card detail with the same container in the running
+  // app). The `isConnected` guard skips updates for any container the
+  // app shell or test harness has since detached, so a leaked listener
+  // can never write to a stale DOM tree.
+  const refresh = (): void => {
+    if (!container.isConnected) return;
+    void renderInto(container);
+  };
+  window.addEventListener(USER_DATA_CHANGED_EVENT, refresh);
 }
 
 async function renderInto(container: HTMLElement): Promise<void> {
@@ -64,7 +98,8 @@ async function renderInto(container: HTMLElement): Promise<void> {
   const set = await setsRepo.get(card.setId);
 
   root.appendChild(buildBody(card, set ?? null));
-  root.appendChild(buildActions());
+  root.appendChild(buildActions(cardId));
+  root.appendChild(await buildHoldingsSection(cardId));
 }
 
 function appendMessage(root: HTMLElement, text: string): void {
@@ -78,7 +113,6 @@ function buildBody(card: CardRecord, set: SetRecord | null): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'card-detail-view__body';
 
-  // Image
   const imageWrap = document.createElement('div');
   imageWrap.className = 'card-detail-view__image';
   const image = createLazyImage({
@@ -89,7 +123,6 @@ function buildBody(card: CardRecord, set: SetRecord | null): HTMLElement {
   imageWrap.appendChild(image);
   wrap.appendChild(imageWrap);
 
-  // Metadata
   const meta = document.createElement('div');
   meta.className = 'card-detail-view__meta';
 
@@ -172,23 +205,177 @@ function buildPriceList(rows: readonly PriceRow[]): HTMLDListElement {
   return dl;
 }
 
-function buildActions(): HTMLElement {
+function buildActions(cardId: string): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'card-detail-view__actions';
 
   const addToCollection = document.createElement('button');
   addToCollection.type = 'button';
-  addToCollection.disabled = true;
-  addToCollection.title = 'Legg til i samling — kommer i PR 7';
+  addToCollection.dataset['action'] = 'add-to-collection';
   addToCollection.textContent = 'Legg til i samling';
+  addToCollection.addEventListener('click', () => {
+    void openDialog(buildHoldingForm({ mode: 'add', cardId }));
+  });
   wrap.appendChild(addToCollection);
 
   const addToWishlist = document.createElement('button');
   addToWishlist.type = 'button';
   addToWishlist.disabled = true;
-  addToWishlist.title = 'Legg til i ønskeliste — kommer i PR 7';
+  addToWishlist.title = 'Legg til i ønskeliste — kommer i PR 7b';
   addToWishlist.textContent = 'Legg til i ønskeliste';
   wrap.appendChild(addToWishlist);
 
   return wrap;
+}
+
+async function buildHoldingsSection(cardId: string): Promise<HTMLElement> {
+  const section = document.createElement('section');
+  section.className = 'card-detail-view__holdings';
+
+  const heading = document.createElement('h3');
+  heading.textContent = 'Dine kort';
+  section.appendChild(heading);
+
+  const db = getDb();
+  const service = createCollectionService(
+    createHoldingsRepo(db),
+    createCardsRepo(db),
+    createSetsRepo(db),
+  );
+  const rows = await service.listForCard(cardId);
+
+  if (rows.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'card-detail-view__empty-holdings';
+    empty.textContent =
+      'Ingen holdings for dette kortet ennå. Bruk "Legg til i samling" over.';
+    section.appendChild(empty);
+    return section;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'card-detail-view__holdings-table';
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Tilstand</th>
+        <th>Finish</th>
+        <th>Edition</th>
+        <th>Antall</th>
+        <th>Manuell verdi</th>
+        <th>Status</th>
+        <th>Tags</th>
+        <th>Notat</th>
+        <th>Handlinger</th>
+      </tr>
+    </thead>
+    <tbody data-region="holdings-body"></tbody>
+  `;
+  const body = table.querySelector<HTMLElement>('[data-region="holdings-body"]');
+  if (body !== null) {
+    for (const row of rows) {
+      body.appendChild(buildHoldingRow(row));
+    }
+  }
+  section.appendChild(table);
+  return section;
+}
+
+function buildHoldingRow(row: CollectionRow): HTMLTableRowElement {
+  const tr = document.createElement('tr');
+  if (row.holding.deletedAt !== null) {
+    tr.classList.add('card-detail-view__holdings-row--deleted');
+  }
+  tr.dataset['holdingId'] = row.holding.id;
+
+  appendCell(tr, describeCondition(row.holding));
+  appendCell(tr, row.holding.finish);
+  appendCell(tr, row.holding.edition);
+  appendCell(tr, String(row.holding.quantity));
+  appendCell(
+    tr,
+    row.holding.estimatedValue !== null && row.holding.valueCurrency !== null
+      ? `${row.holding.estimatedValue.toFixed(2)} ${row.holding.valueCurrency}`
+      : '–',
+  );
+  appendCell(tr, STATUS_LABELS[row.holding.status]);
+  appendCell(
+    tr,
+    row.holding.tags.length > 0 ? formatTags(row.holding.tags) : '–',
+  );
+  appendCell(tr, row.holding.note ?? '–');
+
+  const actions = document.createElement('td');
+  actions.className = 'browse-table__actions';
+  if (row.holding.deletedAt !== null) {
+    const restore = document.createElement('button');
+    restore.type = 'button';
+    restore.className = 'browse-table__action';
+    restore.textContent = 'Gjenopprett';
+    restore.addEventListener('click', () => {
+      void handleRestore(row.holding.id);
+    });
+    actions.appendChild(restore);
+  } else {
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'browse-table__action';
+    edit.textContent = 'Rediger';
+    edit.addEventListener('click', () => {
+      void handleEdit(row.holding);
+    });
+    actions.appendChild(edit);
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'browse-table__action browse-table__action--danger';
+    del.textContent = 'Slett';
+    del.addEventListener('click', () => {
+      void handleSoftDelete(row.holding.id);
+    });
+    actions.appendChild(del);
+  }
+  tr.appendChild(actions);
+
+  return tr;
+}
+
+function appendCell(tr: HTMLTableRowElement, value: string): void {
+  const td = document.createElement('td');
+  td.textContent = value;
+  tr.appendChild(td);
+}
+
+function describeCondition(holding: HoldingRecord): string {
+  if (holding.conditionType === 'graded') {
+    const company = holding.gradingCompany ?? '?';
+    const grade = holding.grade !== null ? holding.grade.toFixed(1) : '?';
+    return `${company} ${grade}`;
+  }
+  return holding.rawCondition ?? '–';
+}
+
+async function handleEdit(holding: HoldingRecord): Promise<void> {
+  await openDialog(buildHoldingForm({ mode: 'edit', holding }));
+}
+
+async function handleSoftDelete(holdingId: string): Promise<void> {
+  const confirmed = window.confirm(
+    'Slett dette kortet fra samlingen?\n\n' +
+      'Holdingen merkes som slettet og kan gjenopprettes senere fra Min samling.',
+  );
+  if (!confirmed) return;
+  await createHoldingsRepo(getDb()).softDelete(
+    holdingId,
+    'Soft-deleted from Card Detail',
+  );
+  window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
+}
+
+async function handleRestore(holdingId: string): Promise<void> {
+  await createHoldingsRepo(getDb()).restore(
+    holdingId,
+    'Restored from Card Detail',
+  );
+  window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
 }
