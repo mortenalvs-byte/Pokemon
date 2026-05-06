@@ -1,4 +1,4 @@
-import { renderBackup } from './views/backup';
+import { mountBackupView } from './views/backup';
 import { renderBinders } from './views/binders';
 import { renderBrowse } from './views/browse';
 import { renderCollection } from './views/collection';
@@ -8,15 +8,35 @@ import { renderSettings } from './views/settings';
 import { renderWishlist } from './views/wishlist';
 import { getCurrentRoute, onRouteChange, type Route } from './router';
 
-const VIEW_RENDERERS: Record<Route, () => string> = {
-  dashboard: renderDashboard,
-  browse: renderBrowse,
-  collection: renderCollection,
-  binders: renderBinders,
-  lots: renderLots,
-  wishlist: renderWishlist,
-  backup: renderBackup,
-  settings: renderSettings,
+type ViewMounter = (container: HTMLElement) => void;
+
+// Most views are still pure HTML strings (PR 2 placeholders). The
+// Backup view is interactive, so it owns its own container and attaches
+// listeners directly. Future feature views will follow the mount-style
+// pattern.
+const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
+  dashboard: (container) => {
+    container.innerHTML = renderDashboard();
+  },
+  browse: (container) => {
+    container.innerHTML = renderBrowse();
+  },
+  collection: (container) => {
+    container.innerHTML = renderCollection();
+  },
+  binders: (container) => {
+    container.innerHTML = renderBinders();
+  },
+  lots: (container) => {
+    container.innerHTML = renderLots();
+  },
+  wishlist: (container) => {
+    container.innerHTML = renderWishlist();
+  },
+  backup: mountBackupView,
+  settings: (container) => {
+    container.innerHTML = renderSettings();
+  },
 };
 
 interface NavLink {
@@ -60,8 +80,8 @@ function renderShell(): string {
     <header class="topbar" role="banner">
       <div class="topbar__brand">Pokemon TCG Tracker</div>
       <div class="topbar__status" aria-live="polite">
-        <span class="status-chip status-chip--info" title="Database og sync er ikke implementert ennå">
-          App-skall (PR 2)
+        <span class="status-chip status-chip--info" title="Database, backup og sync er under arbeid">
+          MVP under bygging
         </span>
       </div>
     </header>
@@ -79,9 +99,10 @@ function renderActiveView(): void {
   if (!content) {
     return;
   }
-  const route = getCurrentRoute();
-  const render = VIEW_RENDERERS[route];
-  content.innerHTML = render();
+  // Reset content. Removing the old elements detaches any listeners the
+  // previous view attached, so views never need explicit cleanup.
+  content.innerHTML = '';
+  VIEW_MOUNTERS[getCurrentRoute()](content);
 }
 
 function updateNavActive(): void {
