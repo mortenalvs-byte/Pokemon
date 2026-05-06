@@ -160,7 +160,12 @@ describe('Browse view', () => {
     expect(window.location.hash).toBe(`#card/${encodeURIComponent(cardId ?? '')}`);
   });
 
-  it('clicking a disabled quick-action button does not navigate', async () => {
+  it('quick-action buttons (Add to collection, Add to wishlist, Vis detaljer) handle their own clicks', async () => {
+    // Both Add buttons are enabled from PR 7a/PR 7b. Click handler
+    // discipline is verified separately in browse-with-holdings.test.ts
+    // (Add to collection opens dialog) and browse-with-wishlist.test.ts
+    // (Add to wishlist opens dialog) — here we just confirm that
+    // clicking either Add button does NOT trigger row navigation.
     await seedManyCards(db, 3);
     const root = document.getElementById('content');
     if (!root) throw new Error('test bootstrap failed');
@@ -168,14 +173,17 @@ describe('Browse view', () => {
     await settle();
 
     const previousHash = window.location.hash;
-    const disabledButton = root.querySelector<HTMLButtonElement>(
-      '.browse-table__action--disabled',
+    const addCollection = root.querySelector<HTMLButtonElement>(
+      '[data-action="add-to-collection"]',
     );
-    expect(disabledButton).not.toBeNull();
-    expect(disabledButton?.disabled).toBe(true);
-    expect(disabledButton?.title ?? '').toMatch(/kommer i PR 7/i);
-    disabledButton?.click();
+    expect(addCollection).not.toBeNull();
+    addCollection?.click();
     expect(window.location.hash).toBe(previousHash);
+    // Close any dialog that opened so the next test starts fresh.
+    document
+      .querySelector<HTMLButtonElement>('dialog.app-dialog [data-action="cancel"]')
+      ?.click();
+    await settle();
   });
 
   it('Vis detaljer button does navigate to card detail', async () => {

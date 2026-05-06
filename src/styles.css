@@ -1033,6 +1033,189 @@ body {
   }
 }
 
+/* Wishlist view — reuses browse-table and collection-table look */
+
+.wishlist-view h1 {
+  margin: 0 0 var(--space-2);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.wishlist-view__counts {
+  margin: 0 0 var(--space-3);
+  color: var(--color-fg-muted);
+  font-size: 13px;
+}
+
+.wishlist-view__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.wishlist-table__row--deleted {
+  opacity: 0.55;
+}
+
+.wishlist-table__row--deleted td {
+  text-decoration: line-through;
+}
+
+/* Wishlist form (mirrors holding form structure) */
+
+.wishlist-form-wrap {
+  padding: var(--space-5);
+}
+
+.wishlist-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.wishlist-form__header h2 {
+  margin: 0 0 var(--space-1);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.wishlist-form__card {
+  margin: 0;
+  color: var(--color-fg-muted);
+  font-size: 13px;
+}
+
+.wishlist-form__section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  padding: var(--space-3);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.wishlist-form__section legend {
+  padding: 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-fg-muted);
+  grid-column: 1 / -1;
+}
+
+.wishlist-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.wishlist-form__field--full {
+  grid-column: 1 / -1;
+}
+
+.wishlist-form__field span {
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.wishlist-form__field input,
+.wishlist-form__field select,
+.wishlist-form__field textarea {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  font: inherit;
+}
+
+.wishlist-form__error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 13px;
+  display: none;
+}
+
+.wishlist-form__error--visible {
+  display: block;
+}
+
+.wishlist-form__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.wishlist-form__footer button {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wishlist-form__submit {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+.wishlist-form__submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .wishlist-form__section {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Card detail "Ønskeliste-status" section */
+
+.card-detail-view__wishlist {
+  margin-top: var(--space-5);
+}
+
+.card-detail-view__wishlist h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.card-detail-view__wishlist-empty {
+  color: var(--color-fg-muted);
+  margin: 0;
+}
+
+.card-detail-view__wishlist-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  overflow: hidden;
+}
+
+.card-detail-view__wishlist-table th,
+.card-detail-view__wishlist-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+.card-detail-view__wishlist-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
 /* Narrow viewports — usable, not optimized */
 
 @media (max-width: 720px) {

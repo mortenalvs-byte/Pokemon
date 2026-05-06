@@ -1,19 +1,19 @@
 // Browse view. Reads the cached `cards` and `sets` stores. Now also
-// reads `holdings` (live only) for the owned/not-owned filter, and
-// can WRITE holdings via the "Legg til i samling" Add button — but
-// only via an explicit user click that goes through `holdingsRepo`.
-// Filter / sort / pagination / navigation paths still never write.
-//
-// "Legg til i ønskeliste" remains disabled with a "kommer i PR 7b"
-// tooltip until that PR lands.
+// reads `holdings` and `wishlist` (live only) for the
+// owned/not-owned and on-wishlist filters, and can WRITE holdings or
+// wishlist via the Add buttons — but only via explicit user clicks
+// that go through `holdingsRepo` / `wishlistRepo`. Filter / sort /
+// pagination / navigation paths still never write.
 
 import { openDialog } from '../components/dialog';
 import { USER_DATA_CHANGED_EVENT } from '../components/events';
 import { buildHoldingForm } from '../components/holding-form';
+import { buildWishlistForm } from '../components/wishlist-form';
 import { getDb } from '../db/database';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createHoldingsRepo } from '../repositories/holdings-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
+import { createWishlistRepo } from '../repositories/wishlist-repo';
 import {
   createBrowseService,
   type BrowseCardRow,
@@ -22,6 +22,7 @@ import {
   type BrowseSort,
   type OwnershipFilter,
   type SortDirection,
+  type WishlistFilter,
 } from '../services/browse-service';
 import { navigate, navigateToCard } from '../router';
 import { createLazyImage } from '../utils/lazy-image';
@@ -31,6 +32,7 @@ interface BrowseState {
   setId: string;
   rarity: string;
   ownership: '' | OwnershipFilter;
+  wishlist: '' | WishlistFilter;
   sort: BrowseSort;
   sortDirection: SortDirection;
   page: number;
@@ -74,6 +76,13 @@ export function mountBrowseView(container: HTMLElement): void {
             <option value="">Alle</option>
             <option value="owned">Eid</option>
             <option value="not-owned">Ikke eid</option>
+          </select>
+        </label>
+        <label class="browse-view__field">
+          <span>Ønskeliste</span>
+          <select data-region="wishlist-filter">
+            <option value="">Alle</option>
+            <option value="on-wishlist">På ønskelisten</option>
           </select>
         </label>
         <label class="browse-view__field">
@@ -126,6 +135,7 @@ export function mountBrowseView(container: HTMLElement): void {
     setId: '',
     rarity: '',
     ownership: '',
+    wishlist: '',
     sort: 'set-release',
     sortDirection: 'desc',
     page: 0,
@@ -136,6 +146,7 @@ export function mountBrowseView(container: HTMLElement): void {
     createCardsRepo(getDb()),
     createSetsRepo(getDb()),
     createHoldingsRepo(getDb()),
+    createWishlistRepo(getDb()),
   );
 
   void boot(refs, service, state);
@@ -156,6 +167,7 @@ interface ViewRefs {
   readonly setFilter: HTMLSelectElement;
   readonly rarityFilter: HTMLSelectElement;
   readonly ownershipFilter: HTMLSelectElement;
+  readonly wishlistFilter: HTMLSelectElement;
   readonly sortSelect: HTMLSelectElement;
   readonly sortDirectionSelect: HTMLSelectElement;
   readonly pageSizeSelect: HTMLSelectElement;
@@ -179,6 +191,9 @@ function collectRefs(container: HTMLElement): ViewRefs | null {
   const ownershipFilter = get<HTMLSelectElement>(
     '[data-region="ownership-filter"]',
   );
+  const wishlistFilter = get<HTMLSelectElement>(
+    '[data-region="wishlist-filter"]',
+  );
   const sortSelect = get<HTMLSelectElement>('[data-region="sort"]');
   const sortDirectionSelect = get<HTMLSelectElement>('[data-region="sort-direction"]');
   const pageSizeSelect = get<HTMLSelectElement>('[data-region="page-size"]');
@@ -196,6 +211,7 @@ function collectRefs(container: HTMLElement): ViewRefs | null {
     !setFilter ||
     !rarityFilter ||
     !ownershipFilter ||
+    !wishlistFilter ||
     !sortSelect ||
     !sortDirectionSelect ||
     !pageSizeSelect ||
@@ -216,6 +232,7 @@ function collectRefs(container: HTMLElement): ViewRefs | null {
     setFilter,
     rarityFilter,
     ownershipFilter,
+    wishlistFilter,
     sortSelect,
     sortDirectionSelect,
     pageSizeSelect,
@@ -340,6 +357,9 @@ async function rerenderRows(
     ...(state.ownership !== ''
       ? { ownership: state.ownership }
       : {}),
+    ...(state.wishlist !== ''
+      ? { wishlist: state.wishlist }
+      : {}),
   });
 
   refs.rowsRegion.replaceChildren();
@@ -416,9 +436,8 @@ function buildRow(row: BrowseCardRow): HTMLTableRowElement {
 
   const addWishlist = document.createElement('button');
   addWishlist.type = 'button';
-  addWishlist.disabled = true;
-  addWishlist.className = 'browse-table__action browse-table__action--disabled';
-  addWishlist.title = 'Legg til i ønskeliste — kommer i PR 7b';
+  addWishlist.dataset['action'] = 'add-to-wishlist';
+  addWishlist.className = 'browse-table__action';
   addWishlist.textContent = 'Legg til i ønskeliste';
   actionsCell.appendChild(addWishlist);
 
@@ -466,6 +485,13 @@ function attachEventListeners(
   refs.ownershipFilter.addEventListener('change', () => {
     const value = refs.ownershipFilter.value;
     state.ownership = value === 'owned' || value === 'not-owned' ? value : '';
+    state.page = 0;
+    void rerenderRows(refs, service, state);
+  });
+
+  refs.wishlistFilter.addEventListener('change', () => {
+    const value = refs.wishlistFilter.value;
+    state.wishlist = value === 'on-wishlist' ? value : '';
     state.page = 0;
     void rerenderRows(refs, service, state);
   });
@@ -524,6 +550,10 @@ function attachEventListeners(
         void openAddToCollection(cardId);
         return;
       }
+      if (action === 'add-to-wishlist') {
+        void openAddToWishlist(cardId);
+        return;
+      }
       // Unknown enabled button: do not navigate.
       return;
     }
@@ -548,4 +578,8 @@ function attachEventListeners(
 
 async function openAddToCollection(cardId: string): Promise<void> {
   await openDialog(buildHoldingForm({ mode: 'add', cardId }));
+}
+
+async function openAddToWishlist(cardId: string): Promise<void> {
+  await openDialog(buildWishlistForm({ mode: 'add', cardId }));
 }

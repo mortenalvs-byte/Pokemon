@@ -18,6 +18,7 @@ export interface WishlistRepo {
   get(id: string): Promise<WishlistRecord | undefined>;
   list(): Promise<WishlistRecord[]>;
   listLive(): Promise<WishlistRecord[]>;
+  listByCardId(cardId: string): Promise<WishlistRecord[]>;
   update(
     id: string,
     changes: Partial<WishlistInput>,
@@ -58,6 +59,13 @@ export function createWishlistRepo(db: PokemonTrackerDB): WishlistRepo {
 
     async listLive() {
       return listLive(db.wishlist);
+    },
+
+    async listByCardId(cardId) {
+      // Uses the `cardId` index declared in `db/schema.ts`. Returns
+      // both live and soft-deleted entries; callers filter further if
+      // they want only live ones.
+      return db.wishlist.where('cardId').equals(cardId).toArray();
     },
 
     async update(id, changes) {

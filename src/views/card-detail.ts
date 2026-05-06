@@ -1,12 +1,12 @@
 // Card Detail view. Reads a single card from the cached `cards` +
-// `sets` stores and now also shows the user's holdings for that card
-// ("Dine kort"). The Add-to-collection button is enabled and opens
-// the holding form modal. The wishlist button stays disabled until
-// PR 7b lands.
+// `sets` stores and shows the user's holdings ("Dine kort") and
+// wishlist entries ("Ønskeliste-status") for that card. Both Add
+// buttons are enabled and open their respective form modals.
 
 import { openDialog } from '../components/dialog';
 import { USER_DATA_CHANGED_EVENT } from '../components/events';
 import { buildHoldingForm } from '../components/holding-form';
+import { buildWishlistForm } from '../components/wishlist-form';
 import { getDb } from '../db/database';
 import { formatTags } from '../domain/tags';
 import {
@@ -18,16 +18,24 @@ import { getCurrentCardId, navigate } from '../router';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createHoldingsRepo } from '../repositories/holdings-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
+import { createWishlistRepo } from '../repositories/wishlist-repo';
 import {
   createCollectionService,
   type CollectionRow,
 } from '../services/collection-service';
+import {
+  createWishlistService,
+  type WishlistRow,
+} from '../services/wishlist-service';
 import { createLazyImage } from '../utils/lazy-image';
 import type {
   CardRecord,
   HoldingRecord,
   HoldingStatus,
   SetRecord,
+  WishlistPriority,
+  WishlistRecord,
+  WishlistStatus,
 } from '../domain/types';
 
 const STATUS_LABELS: Record<HoldingStatus, string> = {
@@ -38,6 +46,20 @@ const STATUS_LABELS: Record<HoldingStatus, string> = {
   upgrade_needed: 'Bør oppgraderes',
   ordered: 'Bestilt',
   wanted: 'Ønsket',
+};
+
+const WISHLIST_STATUS_LABELS: Record<WishlistStatus, string> = {
+  wanted: 'Ønsket',
+  ordered: 'Bestilt',
+  received: 'Mottatt',
+  cancelled: 'Avbrutt',
+};
+
+const WISHLIST_PRIORITY_LABELS: Record<WishlistPriority, string> = {
+  grail: 'Grail',
+  high: 'Høy',
+  medium: 'Medium',
+  low: 'Lav',
 };
 
 export function mountCardDetailView(container: HTMLElement): void {
@@ -100,6 +122,7 @@ async function renderInto(container: HTMLElement): Promise<void> {
   root.appendChild(buildBody(card, set ?? null));
   root.appendChild(buildActions(cardId));
   root.appendChild(await buildHoldingsSection(cardId));
+  root.appendChild(await buildWishlistSection(cardId));
 }
 
 function appendMessage(root: HTMLElement, text: string): void {
@@ -220,9 +243,11 @@ function buildActions(cardId: string): HTMLElement {
 
   const addToWishlist = document.createElement('button');
   addToWishlist.type = 'button';
-  addToWishlist.disabled = true;
-  addToWishlist.title = 'Legg til i ønskeliste — kommer i PR 7b';
+  addToWishlist.dataset['action'] = 'add-to-wishlist';
   addToWishlist.textContent = 'Legg til i ønskeliste';
+  addToWishlist.addEventListener('click', () => {
+    void openDialog(buildWishlistForm({ mode: 'add', cardId }));
+  });
   wrap.appendChild(addToWishlist);
 
   return wrap;
@@ -353,6 +378,116 @@ function describeCondition(holding: HoldingRecord): string {
     return `${company} ${grade}`;
   }
   return holding.rawCondition ?? '–';
+}
+
+async function buildWishlistSection(cardId: string): Promise<HTMLElement> {
+  const section = document.createElement('section');
+  section.className = 'card-detail-view__wishlist';
+
+  const heading = document.createElement('h3');
+  heading.textContent = 'Ønskeliste-status';
+  section.appendChild(heading);
+
+  const db = getDb();
+  const service = createWishlistService(
+    createWishlistRepo(db),
+    createCardsRepo(db),
+    createSetsRepo(db),
+  );
+  const allRows = await service.listForCard(cardId);
+  const liveRows = allRows.filter((row) => row.wishlist.deletedAt === null);
+
+  if (liveRows.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'card-detail-view__wishlist-empty';
+    empty.textContent =
+      'Kortet ligger ikke på ønskelisten. Bruk "Legg til i ønskeliste" over.';
+    section.appendChild(empty);
+    return section;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'card-detail-view__wishlist-table';
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Finish</th>
+        <th>Prioritet</th>
+        <th>Måltilstand</th>
+        <th>Målpris</th>
+        <th>Status</th>
+        <th>Notat</th>
+        <th>Handlinger</th>
+      </tr>
+    </thead>
+    <tbody data-region="wishlist-body"></tbody>
+  `;
+  const body = table.querySelector<HTMLElement>('[data-region="wishlist-body"]');
+  if (body !== null) {
+    for (const row of liveRows) {
+      body.appendChild(buildWishlistRow(row));
+    }
+  }
+  section.appendChild(table);
+  return section;
+}
+
+function buildWishlistRow(row: WishlistRow): HTMLTableRowElement {
+  const tr = document.createElement('tr');
+  tr.dataset['wishlistId'] = row.wishlist.id;
+
+  appendCell(tr, row.wishlist.finish);
+  appendCell(tr, WISHLIST_PRIORITY_LABELS[row.wishlist.priority]);
+  appendCell(tr, row.wishlist.targetCondition ?? '–');
+  appendCell(
+    tr,
+    row.wishlist.targetPrice !== null && row.wishlist.targetCurrency !== null
+      ? `${row.wishlist.targetPrice.toFixed(2)} ${row.wishlist.targetCurrency}`
+      : '–',
+  );
+  appendCell(tr, WISHLIST_STATUS_LABELS[row.wishlist.status]);
+  appendCell(tr, row.wishlist.note ?? '–');
+
+  const actions = document.createElement('td');
+  actions.className = 'browse-table__actions';
+
+  const edit = document.createElement('button');
+  edit.type = 'button';
+  edit.className = 'browse-table__action';
+  edit.textContent = 'Rediger';
+  edit.addEventListener('click', () => {
+    void handleWishlistEdit(row.wishlist);
+  });
+  actions.appendChild(edit);
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'browse-table__action browse-table__action--danger';
+  remove.textContent = 'Fjern';
+  remove.addEventListener('click', () => {
+    void handleWishlistSoftDelete(row.wishlist.id);
+  });
+  actions.appendChild(remove);
+
+  tr.appendChild(actions);
+  return tr;
+}
+
+async function handleWishlistEdit(entry: WishlistRecord): Promise<void> {
+  await openDialog(buildWishlistForm({ mode: 'edit', entry }));
+}
+
+async function handleWishlistSoftDelete(wishlistId: string): Promise<void> {
+  const confirmed = window.confirm(
+    'Fjern denne oppføringen fra ønskelisten?\n\n' +
+      'Oppføringen merkes som slettet og kan gjenopprettes fra ønskeliste-vyen.',
+  );
+  if (!confirmed) return;
+  await createWishlistRepo(getDb()).softDelete(
+    wishlistId,
+    'Soft-deleted from Card Detail',
+  );
+  window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
 }
 
 async function handleEdit(holding: HoldingRecord): Promise<void> {

@@ -6,7 +6,7 @@ import { mountCollectionView } from './views/collection';
 import { renderDashboard } from './views/dashboard';
 import { renderLots } from './views/lots';
 import { mountSettingsView, SYNC_STATUS_CHANGED_EVENT } from './views/settings';
-import { renderWishlist } from './views/wishlist';
+import { mountWishlistView } from './views/wishlist';
 import { getCurrentRoute, onRouteChange, type Route } from './router';
 import { APP_META_KEYS } from './domain/types';
 import { getDb } from './db/database';
@@ -25,9 +25,7 @@ const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
   lots: (container) => {
     container.innerHTML = renderLots();
   },
-  wishlist: (container) => {
-    container.innerHTML = renderWishlist();
-  },
+  wishlist: mountWishlistView,
   backup: mountBackupView,
   settings: mountSettingsView,
   'card-detail': mountCardDetailView,
