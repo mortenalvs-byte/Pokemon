@@ -40,7 +40,7 @@ const sampleCard: CardRecord = {
   types: ['Fire'],
   imageSmall: null,
   imageLarge: null,
-  tcgplayer: null,
+  tcgplayer: { prices: { normal: { market: 1 }, holofoil: { market: 1 }, reverseHolofoil: { market: 1 }, "1stEditionNormal": { market: 1 }, "1stEditionHolofoil": { market: 1 } } },
   cardmarket: null,
   updatedAt: '2026-05-06T00:00:00.000Z',
 };
@@ -78,6 +78,11 @@ describe('repositories', () => {
 
   beforeEach(async () => {
     db = await freshDb();
+    // Strict variant validation (PR 11) needs the card in the cache
+    // for any holding/lot-item/wishlist write that uses verified
+    // finishes. Seed the test card up front so each test does not
+    // have to repeat the boilerplate.
+    await createCardsRepo(db).upsert(sampleCard);
   });
 
   afterEach(async () => {

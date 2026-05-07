@@ -53,11 +53,42 @@ function lotItem(
   };
 }
 
+async function seedTestCards(db: PokemonTrackerDB): Promise<void> {
+  // Strict variant validation (PR 11) needs every referenced card in
+  // the cache. Seed the lot-test cardIds with all common
+  // tcgplayer.prices keys so the default raw + holo + reverse-holo
+  // finishes pass.
+  const base = {
+    setId: 'test',
+    name: 'Test card',
+    number: '1',
+    rarity: 'Rare',
+    supertype: 'Pokémon',
+    subtypes: [],
+    types: [],
+    imageSmall: null,
+    imageLarge: null,
+    tcgplayer: {
+      prices: {
+        normal: { market: 1 },
+        holofoil: { market: 1 },
+        reverseHolofoil: { market: 1 },
+      },
+    },
+    cardmarket: null,
+    updatedAt: '2026-05-06T00:00:00.000Z',
+  };
+  for (const id of ['card-1', 'card-2', 'card-3']) {
+    await db.cards.put({ ...base, id });
+  }
+}
+
 describe('lot-service.applyAllocation', () => {
   let db: PokemonTrackerDB;
 
   beforeEach(async () => {
     db = await freshDb();
+    await seedTestCards(db);
   });
 
   afterEach(async () => {
@@ -155,6 +186,7 @@ describe('lot-service.materializeHoldings', () => {
 
   beforeEach(async () => {
     db = await freshDb();
+    await seedTestCards(db);
   });
 
   afterEach(async () => {

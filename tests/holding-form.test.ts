@@ -22,7 +22,7 @@ const sampleCard: CardRecord = {
   types: ['Fire'],
   imageSmall: null,
   imageLarge: null,
-  tcgplayer: null,
+  tcgplayer: { prices: { normal: { market: 1 }, holofoil: { market: 1 }, reverseHolofoil: { market: 1 }, "1stEditionNormal": { market: 1 }, "1stEditionHolofoil": { market: 1 } } },
   cardmarket: null,
   updatedAt: '2026-05-06T00:00:00.000Z',
 };

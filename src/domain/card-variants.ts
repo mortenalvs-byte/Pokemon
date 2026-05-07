@@ -1,19 +1,45 @@
-// Card-variant helpers for the binder template generator.
+// Card-variant helpers: derive what printings actually exist for a
+// given card based on the pokemontcg.io API data we already cache.
 //
-// `cardHasReverseHolo(card)` is a narrow runtime check — does the card's
-// raw `tcgplayer.prices.reverseHolofoil` price entry exist? It is the
-// only signal pokemontcg.io exposes that consistently flags whether a
-// reverse-holo printing was produced for a given card. We deliberately
-// do not consult `cardmarket` (less reliable for this signal) and do
-// not estimate value here — this module is about variant existence,
-// not pricing.
+// Pokémon TCG API exposes per-printing pricing in `card.tcgplayer.prices`.
+// Each key in that object names a printing the card was actually
+// produced in. We treat the key set as the canonical truth: if a key
+// is there, the printing exists; if not, it doesn't. We never guess
+// from rarity, set name, card name, or `cardmarket` data — see
+// `BACKUP_FORMAT.md` and the PR review notes.
 //
-// PR 8b uses this only when generating master-mode template slots. The
-// helper returns `false` for unknown shapes, so a card sitting in the
-// cache without TCGplayer data is treated as "no known reverse-holo
-// printing" and gets a single template slot instead of two.
+// Recognised keys (PR review § "Mapping"):
+//   normal               → finish=normal     edition=unlimited
+//   holofoil             → finish=holo       edition=unlimited
+//   reverseHolofoil      → finish=reverse_holo edition=unlimited
+//   1stEditionNormal     → finish=normal     edition=first_edition
+//   1stEditionHolofoil   → finish=holo       edition=first_edition
+//   unlimitedNormal      → finish=normal     edition=unlimited (defensive
+//                                            fallback for older API rows)
+//   unlimitedHolofoil    → finish=holo       edition=unlimited (same)
+//
+// Every other key (including unrecognised future keys, lowercase
+// `firstEdition*`, weird casings) is ignored. This is deliberate: no
+// guessing. If we don't know the printing exists, we don't surface it.
+//
+// `availableVariants(card)` returns:
+//   { verified: true,  finishes, editions } — when at least one
+//                                             recognised key is present
+//   { verified: false, finishes:∅, editions:∅ } — when tcgplayer.prices
+//                                             is missing, malformed,
+//                                             empty, or only contains
+//                                             unrecognised keys
+//
+// The form layer narrows dropdowns from this set; the repo layer runs
+// the same rule at submit time so a user editing form state via
+// devtools cannot bypass it. See `domain/validators.ts` for the
+// validation predicates.
 
-import type { CardRecord } from './types';
+import type {
+  CardFinish,
+  CardRecord,
+  Edition,
+} from './types';
 
 /**
  * Slot.note marker used to flag a generated reverse-holo template slot.
@@ -28,17 +54,113 @@ import type { CardRecord } from './types';
  */
 export const REVERSE_HOLO_TEMPLATE_MARKER = 'template:reverse_holo';
 
+export interface AvailableVariants {
+  /**
+   * `true` iff at least one recognised key was found. Forms and the
+   * repo validator branch on this — when `false`, only escape-hatch
+   * finishes/editions are allowed, and a marker (`specialVariant=true`
+   * or a non-empty `note`) is required.
+   */
+  readonly verified: boolean;
+  readonly finishes: ReadonlySet<CardFinish>;
+  readonly editions: ReadonlySet<Edition>;
+}
+
+const EMPTY: AvailableVariants = Object.freeze({
+  verified: false,
+  finishes: new Set<CardFinish>(),
+  editions: new Set<Edition>(),
+});
+
+/**
+ * "Escape hatch" finishes: always selectable in the UI but require
+ * `specialVariant=true` or a non-empty `note` at submit time, since
+ * the API cannot prove they exist for the chosen card.
+ *
+ * Per the PR review lock, only `unknown` and `stamped` qualify.
+ * `non_holo` is not an escape hatch — if the API doesn't list a
+ * non-holo printing, the user must record the card as `unknown` +
+ * note/specialVariant.
+ */
+export const ESCAPE_HATCH_FINISHES: ReadonlySet<CardFinish> = new Set<CardFinish>([
+  'unknown',
+  'stamped',
+]);
+
+/**
+ * Same idea for `Edition`. `shadowless` is real but never
+ * API-detectable, so it is always treated as a manual / special
+ * variant requiring note/specialVariant.
+ */
+export const ESCAPE_HATCH_EDITIONS: ReadonlySet<Edition> = new Set<Edition>([
+  'unknown',
+  'shadowless',
+]);
+
 export function cardHasReverseHolo(card: CardRecord): boolean {
-  const tcgplayer = card.tcgplayer;
-  if (!isPlainObject(tcgplayer)) return false;
-  const prices = tcgplayer['prices'];
-  if (!isPlainObject(prices)) return false;
-  const reverseHolofoil = prices['reverseHolofoil'];
-  return isPlainObject(reverseHolofoil);
+  return availableVariants(card).finishes.has('reverse_holo');
 }
 
 export function isReverseHoloTemplateSlot(note: string | null): boolean {
   return note === REVERSE_HOLO_TEMPLATE_MARKER;
+}
+
+export function availableVariants(card: CardRecord): AvailableVariants {
+  const prices = readTcgplayerPrices(card);
+  if (prices === null) return EMPTY;
+
+  const finishes = new Set<CardFinish>();
+  const editions = new Set<Edition>();
+  for (const [key, value] of Object.entries(prices)) {
+    // The API exposes each printing as a plain object with market /
+    // low / mid / high fields. A `null` or scalar value here means the
+    // entry was malformed or stripped; we treat that as "not present"
+    // and refuse to infer the printing exists. Same defence as the
+    // PR 8b cardHasReverseHolo helper.
+    if (!isPlainObject(value)) continue;
+    switch (key) {
+      case 'normal':
+        finishes.add('normal');
+        editions.add('unlimited');
+        break;
+      case 'holofoil':
+        finishes.add('holo');
+        editions.add('unlimited');
+        break;
+      case 'reverseHolofoil':
+        finishes.add('reverse_holo');
+        editions.add('unlimited');
+        break;
+      case '1stEditionNormal':
+        finishes.add('normal');
+        editions.add('first_edition');
+        break;
+      case '1stEditionHolofoil':
+        finishes.add('holo');
+        editions.add('first_edition');
+        break;
+      case 'unlimitedNormal':
+        finishes.add('normal');
+        editions.add('unlimited');
+        break;
+      case 'unlimitedHolofoil':
+        finishes.add('holo');
+        editions.add('unlimited');
+        break;
+      // Unrecognised keys are deliberately ignored. We do not guess.
+    }
+  }
+
+  if (finishes.size === 0 && editions.size === 0) return EMPTY;
+  return { verified: true, finishes, editions };
+}
+
+function readTcgplayerPrices(card: CardRecord): Record<string, unknown> | null {
+  const tcgplayer = card.tcgplayer;
+  if (!isPlainObject(tcgplayer)) return null;
+  const prices = tcgplayer['prices'];
+  if (!isPlainObject(prices)) return null;
+  return prices;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

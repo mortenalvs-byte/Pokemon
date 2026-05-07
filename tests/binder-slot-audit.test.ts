@@ -59,6 +59,29 @@ describe('binder-slots-repo audit precedence', () => {
 
   beforeEach(async () => {
     db = await freshDb();
+    // PR 11 strict variant validation: seed the test card so the
+    // baseHoldingInput passes through holdingsRepo.create.
+    await db.cards.put({
+      id: 'base1-1',
+      setId: 'base1',
+      name: 'Bulbasaur',
+      number: '1',
+      rarity: 'Rare',
+      supertype: 'Pokémon',
+      subtypes: [],
+      types: [],
+      imageSmall: null,
+      imageLarge: null,
+      tcgplayer: {
+        prices: {
+          normal: { market: 1 },
+          holofoil: { market: 1 },
+          reverseHolofoil: { market: 1 },
+        },
+      },
+      cardmarket: null,
+      updatedAt: '2026-05-06T00:00:00.000Z',
+    });
   });
 
   afterEach(async () => {

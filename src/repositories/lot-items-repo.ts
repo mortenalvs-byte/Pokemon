@@ -3,6 +3,7 @@ import { newId } from '../utils/ids';
 import type { LotItemRecord } from '../domain/types';
 import {
   validateLotItemInput,
+  validateLotItemVariants,
   type LotItemInput,
 } from '../domain/validators';
 import { appendAudit } from '../db/audit';
@@ -28,6 +29,8 @@ export function createLotItemsRepo(db: PokemonTrackerDB): LotItemsRepo {
   return {
     async create(input) {
       validateLotItemInput(input);
+      const card = (await db.cards.get(input.cardId)) ?? null;
+      validateLotItemVariants(input, { card });
       const now = nowIso();
       const record: LotItemRecord = {
         ...input,
@@ -76,6 +79,8 @@ export function createLotItemsRepo(db: PokemonTrackerDB): LotItemsRepo {
         updatedAt: nowIso(),
       };
       validateLotItemInput(merged);
+      const card = (await db.cards.get(merged.cardId)) ?? null;
+      validateLotItemVariants(merged, { card });
       await db.lotItems.put(merged);
       await appendAudit(db, {
         action: 'lot_item_updated',

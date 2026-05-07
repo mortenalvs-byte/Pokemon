@@ -9,6 +9,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- **PR 11 — Strict variant validation against pokemontcg.io API truth.** Closes a real gap surfaced after the first import: form dropdowns showed every theoretically-possible finish/edition for any selected card, even when the API explicitly told us the printing did not exist. PR 11 turns API-key presence in `card.tcgplayer.prices` into the **canonical truth** for which variants exist, and enforces it both in the UI (dropdowns narrow when a card is selected) and at submit time (repos re-validate so a user with devtools cannot bypass the rule).
+  - `src/domain/card-variants.ts` — new pure helper `availableVariants(card)` returns `{ verified, finishes, editions }`. Recognised tcgplayer.prices keys are mapped exactly per the PR review lock:
+    - `normal` → finish `normal` + edition `unlimited`
+    - `holofoil` → finish `holo` + edition `unlimited`
+    - `reverseHolofoil` → finish `reverse_holo` + edition `unlimited`
+    - `1stEditionNormal` → finish `normal` + edition `first_edition`
+    - `1stEditionHolofoil` → finish `holo` + edition `first_edition`
+    - `unlimitedNormal` / `unlimitedHolofoil` → defensive fallback
+    Every other key (cardmarket data, rarity strings, set names, future tcgplayer keys) is **deliberately ignored** — no guessing. A key is only counted when its value is a plain object (the API shape), so `{ normal: null }` or `{ holofoil: 5 }` does not flip a variant on. The escape-hatch sets `ESCAPE_HATCH_FINISHES = { unknown, stamped }` and `ESCAPE_HATCH_EDITIONS = { unknown, shadowless }` are exported so the form layer always has manual options for misprints / promos / shadowless prints.
+  - `src/domain/validators.ts` — new `validateHoldingVariants` / `validateLotItemVariants` / `validateWishlistVariants` predicates. Pure: callers (the repos) load the card and pass it in. The rule:
+    - **verified card**: `finish` (and `edition`, where the record has one) must be in the verified set, OR be an escape-hatch value with `specialVariant=true` or a non-empty `note`.
+    - **unverified card** (no tcgplayer.prices, only unknown keys, or card missing from cache entirely): finish/edition must take an escape-hatch value AND require the same marker.
+    No fallback to "all options". The error messages name which finishes the API actually exposes, so the UI can surface them inline.
+  - `src/repositories/holdings-repo.ts`, `src/repositories/lot-items-repo.ts`, `src/repositories/wishlist-repo.ts` — `create` and `update` now load the card via `db.cards.get(input.cardId)` and run the new variant validator before any write. This is the **submit-time** defence per the PR review: a user editing form state via devtools (or an old JSON import) cannot persist an invalid finish.
+  - `src/services/lot-service.ts` — `materializeHoldings` runs the same variant validator on each holding draft before opening the transaction. Adds `specialVariant: true` to the synthesised holding when the source lot-item carries no note, so escape-hatch finishes survive materialisation. Keeps the existing rollback contract.
+  - `src/components/holding-form.ts`, `src/components/wishlist-form.ts`, `src/components/lot-item-form.ts` — finish + edition dropdowns are now populated dynamically from `availableVariants(card)`. Order: most-likely options first (normal, holo, reverse_holo for finish; unlimited, first_edition for edition), then escape hatches (Stamped + Unknown / Shadowless + Unknown). Default selection in add mode picks the first verified option; falls back to `Ukjent` when nothing is verified. The lot-item form re-narrows in response to the card-picker's `onSelect` so the dropdowns track the user's pick. A small hint surfaces in the form when the card has no tcgplayer.prices ("velg Ukjent og fyll inn et notat eller marker som spesial-variant").
+
+### New / changed audit actions
+- None. Variant validation rejects bad input with `ValidationError` before any audit row is written, preserving PR_RULES §10.
+
+### Tests (467 / 467 across 65 files)
+- `tests/card-variants.test.ts` — extended with the full availableVariants matrix: each recognised key maps correctly, unrecognised keys are ignored, defensive narrowing rejects non-object price values, no guessing from rarity / cardmarket, escape-hatch sets exposed.
+- `tests/strict-variant-validation.test.ts` (new) — pure validators reject `holo` when the card only has `normal`, reject `reverse_holo` without `reverseHolofoil`, reject `first_edition` without `1stEdition*`, reject escape-hatch finish without the marker, accept escape-hatch finish with `specialVariant=true` OR a non-empty note, treat missing card as unverified. Repo-level enforcement: holdings/lot-items/wishlist `create` rejects unverified finish, `update` re-validates, devtools-style escape-hatch bypass without the marker fails.
+- `tests/form-variant-narrowing.test.ts` (new) — holding-form / wishlist-form / lot-item-form dropdowns expose only verified finishes + escape hatches; show only escape hatches when the card has no tcgplayer.prices; surface a hint; lot-item-form re-narrows on card-picker selection.
+- All PR 1–10 tests including `tests/backup-roundtrip.test.ts` and `tests/browse-readonly-invariant.test.ts` remain green. Test fixtures across the suite were updated to include `tcgplayer.prices` keys on seeded cards; tests that explicitly exercise the unverified path (price-extractors, "no prices" rendering) still pass `tcgplayer: null` as an override.
+
+### Migration
+- **No schema changes.** Existing holdings / lot-items / wishlist rows are NOT auto-migrated. They keep whatever finish/edition they were created with. The validators only run on new `create` / `update` calls — a user who imports a legacy backup keeps their data, but any subsequent edit must clear strict validation against the cached card.
+- After PR 11 merges, users who haven't synced yet will see only escape-hatch options in the form until they sync — this is the documented behaviour for the unverified path.
+
+### Known limitations (PR 11)
+- **Cardmarket data is ignored** by design. Only `tcgplayer.prices` keys count.
+- **Shadowless** is never API-detectable; the form always lists it as an escape-hatch option that requires `specialVariant=true` or a note.
+- **Stamped** is always shown as an escape hatch since the API does not expose stamping signals; user must mark `specialVariant` or write a note.
+- **Card missing from cache** is treated as the unverified path (force escape hatch + marker). A user who entered an obscure cardId not yet synced cannot persist a holding with a "real" finish until they sync the card.
+
+### Added
 - **PR 10 — Dashboard MVP + MVP CSV exports.** Closes the MVP feature surface. The dashboard is a read-only control panel that aggregates the seven sections from `DASHBOARD_SPEC.md` plus an action-needed strip; the four MVP CSV exports (`collection`, `wishlist`, `duplicates`, `missing-cards`) called out by `MVP_ACCEPTANCE.md` ship from the same PR. **No schema changes.**
   - `src/domain/dashboard-actions.ts` (new) — pure rules engine. `computeActionItems(snapshot)` returns `ActionItem[]` with three severities (`info | warning | critical`); the strip filter `filterStripItems()` drops `info` so the top strip stays focused on items that genuinely require attention. Rules: never-backed-up (critical), `daysSinceLastBackup > 7` (warning), `lastMigrationAt > lastBackupAt` (warning), `holdingsSinceLastBackup > 50` (warning), persistent storage not granted (warning), `lastSyncStatus === 'failed'` (warning), partial/unallocated lots (warning), missing condition / missing value / not-in-binder / incomplete binder slots (info).
   - `src/services/dashboard-service.ts` (new) — read-only aggregation. **Performance contract:** `cards.count()` and `sets.count()` only — never `cardsRepo.list()`. Holdings / binderSlots / lots / lotItems / wishlist use `toArray()` because their MVP volumes are small. Builds a single `DashboardSnapshot` covering Database Health, Sync, Backup, Collection, Binders (with avg completion + top 3), Lots (totals grouped per currency), Wishlist (with top 5 grail), and embeds the `actions` array from the rules engine. `now` is injectable for deterministic tests.

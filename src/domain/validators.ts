@@ -2,9 +2,18 @@
 // from holding records that violate KRAVSPEC. The rules are documented in
 // DATA_MODEL.md §10. All validators throw `ValidationError` on failure.
 
+import {
+  ESCAPE_HATCH_EDITIONS,
+  ESCAPE_HATCH_FINISHES,
+  availableVariants,
+  type AvailableVariants,
+} from './card-variants';
 import type {
   BinderRecord,
   BinderSlotRecord,
+  CardFinish,
+  CardRecord,
+  Edition,
   HoldingRecord,
   LotItemRecord,
   LotRecord,
@@ -191,4 +200,135 @@ export function validateWishlistInput(input: WishlistInput): void {
   if (input.targetPrice !== null && input.targetPrice < 0) {
     throw new ValidationError('targetPrice', 'cannot be negative');
   }
+}
+
+// -- Variant validation against the cached card -------------------------
+//
+// These run after the shape validators above. They enforce the strict
+// API-truth contract from PR 11: the chosen `finish` (and `edition`,
+// where the record has one) must either appear in
+// `availableVariants(card)` or fall into the escape-hatch set with a
+// `specialVariant=true` / non-empty `note` marker.
+//
+// The validators are pure: callers (the repos) load the card from the
+// cache and pass it in. When the card is missing from the cache, we
+// synthesise an "unverified" variant set so the rule still applies —
+// the user must explicitly mark their record as a manual/special
+// variant. No guessing, no fallback to "all options".
+
+export interface VariantValidationContext {
+  /**
+   * The cached card the record is being created/updated against. Pass
+   * `null` when the card is not in the cache — this is treated as the
+   * unverified path (`verified=false`) and only escape-hatch finishes
+   * + a note/specialVariant marker will satisfy the rule.
+   */
+  readonly card: CardRecord | null;
+}
+
+function variantsForContext(
+  ctx: VariantValidationContext,
+): AvailableVariants {
+  if (ctx.card === null) {
+    return { verified: false, finishes: new Set(), editions: new Set() };
+  }
+  return availableVariants(ctx.card);
+}
+
+function hasManualMarker(input: {
+  readonly note: string | null;
+  readonly specialVariant?: boolean;
+}): boolean {
+  if (input.specialVariant === true) return true;
+  if (input.note !== null && input.note.trim().length > 0) return true;
+  return false;
+}
+
+function checkFinish(
+  finish: CardFinish,
+  variants: AvailableVariants,
+  manualMarker: boolean,
+  field: string,
+): void {
+  if (variants.finishes.has(finish)) return;
+  if (ESCAPE_HATCH_FINISHES.has(finish)) {
+    if (!manualMarker) {
+      throw new ValidationError(
+        field,
+        `finish "${finish}" requires specialVariant=true or a non-empty note`,
+      );
+    }
+    return;
+  }
+  throw new ValidationError(
+    field,
+    variants.verified
+      ? `finish "${finish}" not produced for this card (API exposes ${listOrNone(
+          variants.finishes,
+        )})`
+      : `finish "${finish}" cannot be verified — pick "unknown" or "stamped" with note/specialVariant`,
+  );
+}
+
+function checkEdition(
+  edition: Edition,
+  variants: AvailableVariants,
+  manualMarker: boolean,
+  field: string,
+): void {
+  if (variants.editions.has(edition)) return;
+  if (ESCAPE_HATCH_EDITIONS.has(edition)) {
+    if (!manualMarker) {
+      throw new ValidationError(
+        field,
+        `edition "${edition}" requires specialVariant=true or a non-empty note`,
+      );
+    }
+    return;
+  }
+  throw new ValidationError(
+    field,
+    variants.verified
+      ? `edition "${edition}" not produced for this card (API exposes ${listOrNone(
+          variants.editions,
+        )})`
+      : `edition "${edition}" cannot be verified — pick "unknown" or "shadowless" with note/specialVariant`,
+  );
+}
+
+function listOrNone<T extends string>(set: ReadonlySet<T>): string {
+  if (set.size === 0) return 'none';
+  return Array.from(set).sort().join(', ');
+}
+
+export function validateHoldingVariants(
+  input: HoldingInput,
+  ctx: VariantValidationContext,
+): void {
+  const variants = variantsForContext(ctx);
+  const manual = hasManualMarker({
+    note: input.note,
+    specialVariant: input.specialVariant,
+  });
+  checkFinish(input.finish, variants, manual, 'finish');
+  checkEdition(input.edition, variants, manual, 'edition');
+}
+
+export function validateLotItemVariants(
+  input: LotItemInput,
+  ctx: VariantValidationContext,
+): void {
+  const variants = variantsForContext(ctx);
+  const manual = hasManualMarker({ note: input.note });
+  checkFinish(input.finish, variants, manual, 'finish');
+  checkEdition(input.edition, variants, manual, 'edition');
+}
+
+export function validateWishlistVariants(
+  input: WishlistInput,
+  ctx: VariantValidationContext,
+): void {
+  const variants = variantsForContext(ctx);
+  const manual = hasManualMarker({ note: input.note });
+  checkFinish(input.finish, variants, manual, 'finish');
 }

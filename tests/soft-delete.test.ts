@@ -38,6 +38,30 @@ describe('soft delete + restore', () => {
 
   beforeEach(async () => {
     db = await freshDb();
+    // PR 11 strict variant validation needs the cards in the cache
+    // before holdings are written.
+    const base = {
+      setId: 'base1',
+      name: 'Charizard',
+      number: '4',
+      rarity: 'Rare Holo',
+      supertype: 'Pokémon',
+      subtypes: [],
+      types: [],
+      imageSmall: null,
+      imageLarge: null,
+      tcgplayer: {
+        prices: {
+          normal: { market: 1 },
+          holofoil: { market: 1 },
+          reverseHolofoil: { market: 1 },
+        },
+      },
+      cardmarket: null,
+      updatedAt: '2026-05-06T00:00:00.000Z',
+    };
+    await db.cards.put({ ...base, id: 'base1-4' });
+    await db.cards.put({ ...base, id: 'base1-5' });
   });
 
   afterEach(async () => {
