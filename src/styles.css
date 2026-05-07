@@ -1259,6 +1259,11 @@ body {
   margin-bottom: var(--space-3);
 }
 
+.binders-view__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
 .binders-view__add {
   background: var(--color-accent);
   color: var(--color-accent-fg);
@@ -1770,4 +1775,295 @@ body {
   text-align: left;
   padding: var(--space-2);
   border-bottom: 1px solid var(--color-border);
+}
+
+/* Binder detail toolbar (view toggle + filter + export) */
+
+.binder-detail-view__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+}
+
+.binder-detail-view__toggle {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  overflow: hidden;
+}
+
+.binder-detail-view__toggle-btn {
+  padding: 6px 12px;
+  background: var(--color-surface);
+  border: none;
+  border-right: 1px solid var(--color-border);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-fg);
+}
+
+.binder-detail-view__toggle-btn:last-child {
+  border-right: none;
+}
+
+.binder-detail-view__toggle-btn--active {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+.binder-detail-view__filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.binder-detail-view__filter select {
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  font-size: 13px;
+}
+
+.binder-detail-view__export {
+  margin-left: auto;
+  padding: 6px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-fg);
+}
+
+.binder-detail-view__export:hover {
+  background: var(--color-bg);
+}
+
+/* Filtered-out slot — preserves grid position, just visually muted.
+   Action buttons are not rendered at all when filtered (see
+   binder-detail.ts), so no pointer-events override is needed. */
+
+.binder-slot--filtered-out {
+  opacity: 0.25;
+  filter: saturate(0.4);
+}
+
+.binder-slot__card-link--inert {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-fg-muted);
+}
+
+.binder-slot--reverse-template {
+  border-style: dashed;
+}
+
+.binder-slot__finish-badge {
+  font-size: 11px;
+  color: var(--color-fg-muted);
+  font-style: italic;
+}
+
+/* Checklist table */
+
+.binder-detail-view__checklist {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  overflow-x: auto;
+}
+
+.checklist-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.checklist-table thead th {
+  text-align: left;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+
+.checklist-table td {
+  text-align: left;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.checklist-table__row[data-status='owned'] {
+  background: rgba(31, 122, 61, 0.04);
+}
+
+.checklist-table__row[data-status='missing'] {
+  background: rgba(160, 35, 35, 0.04);
+}
+
+.checklist-table__actions {
+  display: flex;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.checklist-table__action {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  cursor: pointer;
+  color: var(--color-fg);
+}
+
+.checklist-table__action:hover {
+  background: var(--color-bg);
+}
+
+/* From-set wizard */
+
+.binder-from-set-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 380px;
+  max-width: 560px;
+}
+
+.binder-from-set-wizard__header h2 {
+  margin: 0 0 var(--space-1);
+  font-size: 16px;
+}
+
+.binder-from-set-wizard__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.binder-from-set-wizard__section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.binder-from-set-wizard__section legend {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-fg-muted);
+  padding: 0 var(--space-1);
+}
+
+.binder-from-set-wizard__field {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.binder-from-set-wizard__field input,
+.binder-from-set-wizard__field select {
+  font-size: 14px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+}
+
+.binder-from-set-wizard__field--checkbox {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.binder-from-set-wizard__field--checkbox input {
+  width: 16px;
+  height: 16px;
+}
+
+.binder-from-set-wizard__preview {
+  background: var(--color-bg);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+}
+
+.binder-from-set-wizard__preview h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-fg-muted);
+}
+
+.binder-from-set-wizard__preview dl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px var(--space-3);
+  margin: 0;
+  font-size: 13px;
+}
+
+.binder-from-set-wizard__preview dt {
+  color: var(--color-fg-muted);
+}
+
+.binder-from-set-wizard__preview dd {
+  margin: 0;
+  font-weight: 500;
+  text-align: right;
+}
+
+.binder-from-set-wizard__error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+  min-height: 1em;
+}
+
+.binder-from-set-wizard__error--visible {
+  font-weight: 500;
+}
+
+.binder-from-set-wizard__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.binder-from-set-wizard__footer button {
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: var(--radius-1);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-fg);
+}
+
+.binder-from-set-wizard__submit {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border-color: var(--color-accent);
+}
+
+.binder-from-set-wizard__submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }

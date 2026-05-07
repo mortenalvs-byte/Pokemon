@@ -9,6 +9,7 @@
 import { openDialog } from '../components/dialog';
 import { USER_DATA_CHANGED_EVENT } from '../components/events';
 import { buildBinderForm } from '../components/binder-form';
+import { buildBinderFromSetWizard } from '../components/binder-from-set-wizard';
 import { getDb } from '../db/database';
 import { navigateToBinder } from '../router';
 import { createBindersRepo } from '../repositories/binders-repo';
@@ -32,9 +33,14 @@ export function mountBindersView(container: HTMLElement): void {
     <section class="binders-view" aria-labelledby="binders-heading">
       <header class="binders-view__header">
         <h1 id="binders-heading">Permer</h1>
-        <button type="button" class="binders-view__add" data-action="new-binder">
-          Ny perm
-        </button>
+        <div class="binders-view__actions">
+          <button type="button" class="binders-view__add" data-action="new-binder">
+            Ny perm
+          </button>
+          <button type="button" class="binders-view__add" data-action="new-from-set">
+            Ny perm fra sett
+          </button>
+        </div>
       </header>
       <p class="binders-view__counts" data-region="counts"></p>
       <div class="binders-view__list" data-region="list"></div>
@@ -46,12 +52,24 @@ export function mountBindersView(container: HTMLElement): void {
   const newButton = container.querySelector<HTMLButtonElement>(
     '[data-action="new-binder"]',
   );
-  if (listRegion === null || countsRegion === null || newButton === null) {
+  const fromSetButton = container.querySelector<HTMLButtonElement>(
+    '[data-action="new-from-set"]',
+  );
+  if (
+    listRegion === null ||
+    countsRegion === null ||
+    newButton === null ||
+    fromSetButton === null
+  ) {
     return;
   }
 
   newButton.addEventListener('click', () => {
     void handleNewBinder(container);
+  });
+
+  fromSetButton.addEventListener('click', () => {
+    void handleNewFromSet(container);
   });
 
   void rerender(container);
@@ -193,6 +211,13 @@ function appendStat(dl: HTMLDListElement, label: string, value: string): void {
 
 async function handleNewBinder(container: HTMLElement): Promise<void> {
   const result = await openDialog(buildBinderForm({ mode: 'add' }));
+  if (result === 'submitted' && container.isConnected) {
+    await rerender(container);
+  }
+}
+
+async function handleNewFromSet(container: HTMLElement): Promise<void> {
+  const result = await openDialog(buildBinderFromSetWizard());
   if (result === 'submitted' && container.isConnected) {
     await rerender(container);
   }
