@@ -517,6 +517,22 @@ function applyBulkModeUi(
     const eligibleVisible = visibleRows
       .filter((r) => decideQuickAdd(r.card).canQuickAdd)
       .map((r) => r.card.id);
+
+    // PR 19 review patch — prune selection to the current visible
+    // eligible set. When the user changes page / search / filter,
+    // any selection that referred to a now-hidden card is dropped
+    // BEFORE a bulk action could fire on it. This is the safest
+    // first-version model: bulk is strictly about what the user can
+    // see right now. Cross-page selection requires a deliberate UX
+    // affordance ("X valgt på tvers av sider", "Clear all"), and
+    // none of those are in this PR.
+    const eligibleVisibleSet = new Set(eligibleVisible);
+    for (const id of [...state.selectedCardIds]) {
+      if (!eligibleVisibleSet.has(id)) {
+        state.selectedCardIds.delete(id);
+      }
+    }
+
     const allEligibleSelected =
       eligibleVisible.length > 0 &&
       eligibleVisible.every((id) => state.selectedCardIds.has(id));
