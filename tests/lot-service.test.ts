@@ -321,3 +321,127 @@ describe('lot-service.materializeHoldings', () => {
     expect(holdingPricesAfter).toEqual(holdingPricesBefore);
   });
 });
+
+// PR 18 — partial materialise. The lot UI now lets the user
+// materialise a subset of items via per-row checkboxes. The service
+// still does all the validation work and the audit message reflects
+// "selected" + any skips that happened because the chosen ids were
+// already materialised.
+describe('lot-service.materializeHoldings — partial via { itemIds }', () => {
+  let db: PokemonTrackerDB;
+
+  beforeEach(async () => {
+    db = await freshDb();
+    await seedTestCards(db);
+  });
+
+  afterEach(async () => {
+    await closeAndDelete(db);
+  });
+
+  it('materialises only the listed item ids', async () => {
+    const lotsRepo = createLotsRepo(db);
+    const itemsRepo = createLotItemsRepo(db);
+    const lot = await lotsRepo.create({ ...baseLotInput, totalCost: 300 });
+    const i1 = await itemsRepo.create(lotItem(lot.id, 'card-1'));
+    const i2 = await itemsRepo.create(lotItem(lot.id, 'card-2'));
+    const i3 = await itemsRepo.create(lotItem(lot.id, 'card-3'));
+
+    await createLotService(db).applyAllocation(lot.id);
+    const result = await createLotService(db).materializeHoldings(lot.id, {
+      itemIds: [i1.id, i3.id],
+    });
+
+    expect(result.noop).toBe(false);
+    expect(result.created).toHaveLength(2);
+    expect(result.skippedAlreadyMaterialised).toBe(0);
+    expect(result.skippedNotFound).toBe(0);
+
+    const updated = await itemsRepo.listByLotId(lot.id);
+    const byId = new Map(updated.map((u) => [u.id, u] as const));
+    expect(byId.get(i1.id)?.holdingId).not.toBeNull();
+    expect(byId.get(i2.id)?.holdingId).toBeNull(); // untouched
+    expect(byId.get(i3.id)?.holdingId).not.toBeNull();
+    expect(await db.holdings.count()).toBe(2);
+  });
+
+  it('skips ids that are already materialised (idempotent partial)', async () => {
+    const lotsRepo = createLotsRepo(db);
+    const itemsRepo = createLotItemsRepo(db);
+    const lot = await lotsRepo.create({ ...baseLotInput, totalCost: 200 });
+    const i1 = await itemsRepo.create(lotItem(lot.id, 'card-1'));
+    const i2 = await itemsRepo.create(lotItem(lot.id, 'card-2'));
+    await createLotService(db).applyAllocation(lot.id);
+
+    // First call materialises i1.
+    await createLotService(db).materializeHoldings(lot.id, {
+      itemIds: [i1.id],
+    });
+    expect(await db.holdings.count()).toBe(1);
+
+    // Second call asks for both i1 (already done) and i2 (new). Only
+    // i2 is created; i1 is reported as skipped.
+    const second = await createLotService(db).materializeHoldings(lot.id, {
+      itemIds: [i1.id, i2.id],
+    });
+    expect(second.created).toHaveLength(1);
+    expect(second.skippedAlreadyMaterialised).toBe(1);
+    expect(await db.holdings.count()).toBe(2);
+  });
+
+  it('passing only already-materialised ids is a no-op (no audit, no holdings)', async () => {
+    const lotsRepo = createLotsRepo(db);
+    const itemsRepo = createLotItemsRepo(db);
+    const lot = await lotsRepo.create({ ...baseLotInput, totalCost: 100 });
+    const i1 = await itemsRepo.create(lotItem(lot.id, 'card-1'));
+    await createLotService(db).applyAllocation(lot.id);
+    await createLotService(db).materializeHoldings(lot.id, {
+      itemIds: [i1.id],
+    });
+    const auditsBefore = await db.auditLog.count();
+
+    const result = await createLotService(db).materializeHoldings(lot.id, {
+      itemIds: [i1.id],
+    });
+    expect(result.noop).toBe(true);
+    expect(result.skippedAlreadyMaterialised).toBe(1);
+    expect(result.created).toHaveLength(0);
+    expect(await db.auditLog.count()).toBe(auditsBefore);
+  });
+
+  it('skipps unknown ids gracefully via skippedNotFound', async () => {
+    const lotsRepo = createLotsRepo(db);
+    const itemsRepo = createLotItemsRepo(db);
+    const lot = await lotsRepo.create({ ...baseLotInput, totalCost: 100 });
+    const i1 = await itemsRepo.create(lotItem(lot.id, 'card-1'));
+    await createLotService(db).applyAllocation(lot.id);
+    const result = await createLotService(db).materializeHoldings(lot.id, {
+      itemIds: [i1.id, 'does-not-exist'],
+    });
+    expect(result.created).toHaveLength(1);
+    expect(result.skippedNotFound).toBe(1);
+  });
+
+  it('audit message marks the partial path as "(selected)" and reports skips', async () => {
+    const lotsRepo = createLotsRepo(db);
+    const itemsRepo = createLotItemsRepo(db);
+    const lot = await lotsRepo.create({ ...baseLotInput, totalCost: 200 });
+    const i1 = await itemsRepo.create(lotItem(lot.id, 'card-1'));
+    const i2 = await itemsRepo.create(lotItem(lot.id, 'card-2'));
+    await createLotService(db).applyAllocation(lot.id);
+    await createLotService(db).materializeHoldings(lot.id, {
+      itemIds: [i1.id],
+    });
+    await createLotService(db).materializeHoldings(lot.id, {
+      itemIds: [i1.id, i2.id],
+    });
+    const audits = await db.auditLog
+      .where('action')
+      .equals('lot_holdings_materialized')
+      .toArray();
+    expect(audits).toHaveLength(2);
+    expect(audits[0]?.message).toContain('(selected)');
+    expect(audits[1]?.message).toContain('(selected)');
+    expect(audits[1]?.message).toContain('skipped 1 already in collection');
+  });
+});

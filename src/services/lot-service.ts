@@ -50,11 +50,37 @@ export interface MaterializeResult {
   readonly updatedItems: readonly LotItemRecord[];
   /** True if there was nothing to materialize (no audit row written). */
   readonly noop: boolean;
+  /**
+   * Number of items the caller asked us to materialise but skipped
+   * because they were already materialised (`holdingId !== null`).
+   * Useful for surfacing "5 items var allerede i samlingen" feedback.
+   */
+  readonly skippedAlreadyMaterialised: number;
+  /**
+   * Number of items the caller asked us to materialise but skipped
+   * because they were not in the lot's live items (e.g. a stale id
+   * from an older snapshot of the lot). 0 in normal flows.
+   */
+  readonly skippedNotFound: number;
+}
+
+export interface MaterializeOptions {
+  /**
+   * PR 18 — when present, only the listed lot-item ids are candidates
+   * for materialisation. Items already materialised are still skipped
+   * (the operation stays idempotent). When absent, every
+   * unmaterialised live item in the lot is materialised — this is the
+   * "Legg hele loten i samling" path.
+   */
+  readonly itemIds?: readonly string[];
 }
 
 export interface LotService {
   applyAllocation(lotId: string): Promise<ApplyAllocationResult>;
-  materializeHoldings(lotId: string): Promise<MaterializeResult>;
+  materializeHoldings(
+    lotId: string,
+    options?: MaterializeOptions,
+  ): Promise<MaterializeResult>;
 }
 
 export function createLotService(db: PokemonTrackerDB): LotService {
@@ -140,7 +166,7 @@ export function createLotService(db: PokemonTrackerDB): LotService {
       return { lot, allocation, applied: true, updatedItems: updated };
     },
 
-    async materializeHoldings(lotId) {
+    async materializeHoldings(lotId, options) {
       const lot = await db.lots.get(lotId);
       if (lot === undefined || lot.deletedAt !== null) {
         throw new Error(`lot ${lotId} not found or soft-deleted`);
@@ -150,9 +176,45 @@ export function createLotService(db: PokemonTrackerDB): LotService {
         await db.lotItems.where('lotId').equals(lotId).toArray()
       ).filter((i) => i.deletedAt === null);
 
-      const candidates = liveItems.filter((i) => i.holdingId === null);
+      const liveItemsById = new Map<string, LotItemRecord>();
+      for (const item of liveItems) liveItemsById.set(item.id, item);
+
+      // PR 18 — partial materialise. When the caller passes `itemIds`,
+      // candidates are limited to those ids. Items already materialised
+      // (holdingId !== null) are still skipped so the operation remains
+      // idempotent regardless of the path. We track skipped counts so
+      // the UI can render "X allerede i samlingen" feedback.
+      let skippedAlreadyMaterialised = 0;
+      let skippedNotFound = 0;
+      let candidatePool: readonly LotItemRecord[];
+      if (options?.itemIds !== undefined) {
+        const requested: LotItemRecord[] = [];
+        for (const id of options.itemIds) {
+          const item = liveItemsById.get(id);
+          if (item === undefined) {
+            skippedNotFound += 1;
+            continue;
+          }
+          if (item.holdingId !== null) {
+            skippedAlreadyMaterialised += 1;
+            continue;
+          }
+          requested.push(item);
+        }
+        candidatePool = requested;
+      } else {
+        candidatePool = liveItems.filter((i) => i.holdingId === null);
+      }
+
+      const candidates = candidatePool;
       if (candidates.length === 0) {
-        return { created: [], updatedItems: [], noop: true };
+        return {
+          created: [],
+          updatedItems: [],
+          noop: true,
+          skippedAlreadyMaterialised,
+          skippedNotFound,
+        };
       }
 
       const missingAllocation = candidates.filter(
@@ -240,16 +302,31 @@ export function createLotService(db: PokemonTrackerDB): LotService {
         async () => {
           await db.holdings.bulkAdd(newHoldings);
           await db.lotItems.bulkPut(updatedItems);
+          // PR 18 — audit message reflects partial vs full and any
+          // already-materialised skips, so the audit log stays
+          // diagnosable when the user tries to add the same items
+          // twice.
+          const partialSuffix = options?.itemIds !== undefined ? ' (selected)' : '';
+          const skipSuffix =
+            skippedAlreadyMaterialised > 0
+              ? `, skipped ${skippedAlreadyMaterialised} already in collection`
+              : '';
           await appendAudit(db, {
             action: 'lot_holdings_materialized',
             entityType: 'lot',
             entityId: lot.id,
-            message: `materialized ${newHoldings.length} holdings from lot "${lot.name}"`,
+            message: `materialized ${newHoldings.length} holdings from lot "${lot.name}"${partialSuffix}${skipSuffix}`,
           });
         },
       );
 
-      return { created: newHoldings, updatedItems, noop: false };
+      return {
+        created: newHoldings,
+        updatedItems,
+        noop: false,
+        skippedAlreadyMaterialised,
+        skippedNotFound,
+      };
     },
   };
 }

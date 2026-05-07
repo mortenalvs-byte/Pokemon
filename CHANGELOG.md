@@ -8,6 +8,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR 18 — Lot-to-stock / materialise UX)
+PR 18 turns the lot-detail view into a practical inbox for bulk purchases. Builds on PR 15A's `upsertByVariant` foundations, PR 17's view-state pattern, and PR 9's idempotent `materializeHoldings` service.
+
+- **Two clearly-labelled actions** in the lot-detail toolbar:
+  - **`Legg hele loten i samling (N)`** — same end state as the old "Materialiser N holdings" button. Carries the count for the user to verify before confirming.
+  - **`Legg valgte i samling (X)`** — new partial-materialise path. Disabled until the user ticks at least one row.
+- **Per-row checkbox column** for items that are still `holdingId === null` AND have an `allocatedCost`. Materialised rows have no checkbox so a tick can never undo a finished item. A header `Velg alle synlige` toggles the checkbox state for the current page only.
+- **Per-row `Legg i samling` button** for the one-at-a-time path. Disabled with a tooltip when the row is missing `allocatedCost` ("Trykk \"Beregn allokering på nytt\" først.").
+- **Materialised-row visual cue**. Rows where `holdingId !== null` get a `lot-items-table__row--materialized` class (light green tint) and the actions cell shows **`✓ I samlingen`** instead of the previous "Materialisert (låst)" italic. Same idempotent contract as before — the row is data-locked.
+- **Pagination** — 50 items per page (same default as Browse / Collection so the user develops one mental model). `Forrige / Side X av Y — viser N–M av total / Neste` summary. Hidden for lots with ≤ 50 items.
+- **Idempotent partial materialise**. The new `materializeHoldings(lotId, { itemIds })` overload runs the same variant validator + transaction as the bulk path. Items already materialised are skipped (counted as `skippedAlreadyMaterialised`); unknown ids are skipped (counted as `skippedNotFound`); same audit row, with a `(selected)` suffix and an inline skip count when relevant.
+- **Selection state survives `USER_DATA_CHANGED_EVENT` rerenders** — held in `LotDetailState.selectedItemIds: Set<string>` per mount. Materialised ids are pruned automatically on the next render so the next "Legg valgte" action can't try to re-add them.
+
+#### Touched files
+- `src/services/lot-service.ts` — `MaterializeOptions { itemIds }`, `MaterializeResult { skippedAlreadyMaterialised, skippedNotFound }`, partial-pool branch, audit message extension.
+- `src/views/lot-detail.ts` — `LotDetailState`, two-button toolbar, checkbox column + select-all, per-row Legg-i-samling button, pagination component, dispatch wiring.
+- `src/styles.css` — checkbox column styling, materialised-row tint, partial-button styling, pagination layout, `visually-hidden` helper.
+- `tests/lot-service.test.ts` — 5 new cases for partial materialise (only listed ids; idempotent skip; all-already-materialised no-op; unknown id `skippedNotFound`; audit message reflects partial path + skips).
+- `tests/lot-detail-view.test.ts` — 6 new cases (button-text count + disabled-until-allocation; "Legg valgte" disabled until tick; partial via toolbar moves only selected; per-row Legg-i-samling creates one holding; materialised row CSS class + `✓ I samlingen`; pagination hidden ≤ 50 items).
+
+#### Test totals
+- 74 test files, **604 tests** (up from 593). Typecheck green. Build green (335 KB JS / 89 KB gzip).
+
+#### Browser-verified
+On the QA-stress `Bulk Buy 2025` lot (400 items, all materialised from PR 15A run):
+- Toolbar shows `Legg hele loten i samling (0)` (disabled) + `Legg valgte i samling (0)` (disabled).
+- Pagination renders `Side 1 av 8 — viser 1–50 av 400`. Forrige / Neste advance correctly.
+- All 50 visible rows carry `lot-items-table__row--materialized` (light tint) and `✓ I samlingen` in the actions cell.
+- Zero console errors throughout.
+
+#### Out of scope (per the user's instruction)
+- No multi-select on the Browse table — that is PR 19 (Bulk mode).
+- No virtualisation; the page-by-50 model is the smallest fix that covers the user's stated 3 000-card scale.
+- No global search.
+- No wishlist automation when materialising — out of scope until PR 21.
+- No automatic allocation: the user still presses "Beregn allokering på nytt" before any materialise.
+
 ### Added (PR 17 — Binder workflow)
 PR 17 makes binders an active workspace instead of static slot storage. Builds on PR 15A's `cardMatchesQuery` and the AbortController router.
 

@@ -140,7 +140,7 @@ describe('Lot detail view', () => {
     ).not.toBeNull();
     // Materialize button is disabled because no allocatedCost yet.
     const materializeBtn = root.querySelector<HTMLButtonElement>(
-      '[data-action="materialize"]',
+      '[data-action="materialize-all"]',
     );
     expect(materializeBtn?.disabled).toBe(true);
   });
@@ -210,7 +210,7 @@ describe('Lot detail view', () => {
     // Confirm dialog → just accept
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     root
-      .querySelector<HTMLButtonElement>('[data-action="materialize"]')
+      .querySelector<HTMLButtonElement>('[data-action="materialize-all"]')
       ?.click();
     await vi.waitFor(async () => {
       expect(await db.holdings.count()).toBe(2);
@@ -223,5 +223,281 @@ describe('Lot detail view', () => {
       '.lot-items-table__locked',
     );
     expect(lockedCells.length).toBe(2);
+  });
+});
+
+// PR 18 — partial materialise via per-row checkboxes + the new
+// "Legg valgte i samling" toolbar button. Also covers the per-row
+// "Legg i samling" button and the materialised-row visual state.
+describe('Lot detail — partial materialise (PR 18)', () => {
+  let db: PokemonTrackerDB;
+
+  beforeEach(async () => {
+    document.body.innerHTML = '<div id="content"></div>';
+    _resetDbSingletonForTests();
+    db = getDb();
+    await initializeDataLayer({ db, skipPersistentStorage: true });
+    await createSetsRepo(db).upsert(sampleSet);
+    await createCardsRepo(db).upsertMany([makeCard(1), makeCard(2), makeCard(3)]);
+    window.location.hash = '';
+  });
+
+  afterEach(async () => {
+    await closeAndDelete(db);
+    _resetDbSingletonForTests();
+  });
+
+  function getRoot(): HTMLElement {
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    return root;
+  }
+
+  it('"Legg hele loten i samling" carries the count and is disabled until allocation', async () => {
+    const lot = await createLotsRepo(db).create({
+      name: 'L',
+      purchaseDate: '2026-04-01T00:00:00.000Z',
+      totalCost: 100,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+    await createLotItemsRepo(db).create(lotItem(lot.id, 'base1-1'));
+    await createLotItemsRepo(db).create(lotItem(lot.id, 'base1-2'));
+    window.location.hash = `lot/${encodeURIComponent(lot.id)}`;
+    mountLotDetailView(getRoot());
+    await settle();
+
+    const allBtn = getRoot().querySelector<HTMLButtonElement>(
+      '[data-action="materialize-all"]',
+    );
+    expect(allBtn?.textContent).toContain('Legg hele loten i samling');
+    // No allocation yet → 0 ready, button disabled.
+    expect(allBtn?.textContent).toContain('(0)');
+    expect(allBtn?.disabled).toBe(true);
+
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="apply-allocation"]')
+      ?.click();
+    await vi.waitFor(async () => {
+      const items = await db.lotItems.toArray();
+      expect(items.every((i) => i.allocatedCost !== null)).toBe(true);
+    });
+    await settle();
+
+    const allBtn2 = getRoot().querySelector<HTMLButtonElement>(
+      '[data-action="materialize-all"]',
+    );
+    expect(allBtn2?.textContent).toContain('(2)');
+    expect(allBtn2?.disabled).toBe(false);
+  });
+
+  it('"Legg valgte i samling" stays at (0) and disabled until rows are ticked', async () => {
+    const lot = await createLotsRepo(db).create({
+      name: 'L',
+      purchaseDate: '2026-04-01T00:00:00.000Z',
+      totalCost: 100,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+    await createLotItemsRepo(db).create(lotItem(lot.id, 'base1-1'));
+    await createLotItemsRepo(db).create(lotItem(lot.id, 'base1-2'));
+    window.location.hash = `lot/${encodeURIComponent(lot.id)}`;
+    mountLotDetailView(getRoot());
+    await settle();
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="apply-allocation"]')
+      ?.click();
+    await vi.waitFor(async () => {
+      const items = await db.lotItems.toArray();
+      expect(items.every((i) => i.allocatedCost !== null)).toBe(true);
+    });
+    await settle();
+
+    const sel = getRoot().querySelector<HTMLButtonElement>(
+      '[data-action="materialize-selected"]',
+    );
+    expect(sel?.textContent).toContain('Legg valgte i samling (0)');
+    expect(sel?.disabled).toBe(true);
+
+    // Tick the first row's checkbox.
+    const firstCheckbox = getRoot().querySelector<HTMLInputElement>(
+      'input[data-action="select-item"]',
+    );
+    expect(firstCheckbox).not.toBeNull();
+    firstCheckbox!.checked = true;
+    firstCheckbox!.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    const sel2 = getRoot().querySelector<HTMLButtonElement>(
+      '[data-action="materialize-selected"]',
+    );
+    expect(sel2?.textContent).toContain('Legg valgte i samling (1)');
+    expect(sel2?.disabled).toBe(false);
+  });
+
+  it('partial materialise via toolbar moves only the selected items into the collection', async () => {
+    const lot = await createLotsRepo(db).create({
+      name: 'L',
+      purchaseDate: '2026-04-01T00:00:00.000Z',
+      totalCost: 300,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+    const item1 = await createLotItemsRepo(db).create(lotItem(lot.id, 'base1-1'));
+    const item2 = await createLotItemsRepo(db).create(lotItem(lot.id, 'base1-2'));
+    const item3 = await createLotItemsRepo(db).create(lotItem(lot.id, 'base1-3'));
+    window.location.hash = `lot/${encodeURIComponent(lot.id)}`;
+    mountLotDetailView(getRoot());
+    await settle();
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="apply-allocation"]')
+      ?.click();
+    await vi.waitFor(async () => {
+      const items = await db.lotItems.toArray();
+      expect(items.every((i) => i.allocatedCost !== null)).toBe(true);
+    });
+    await settle();
+
+    // Tick item1 + item3, leave item2.
+    const cb1 = getRoot().querySelector<HTMLInputElement>(
+      `input[data-action="select-item"][data-item-id="${item1.id}"]`,
+    );
+    const cb3 = getRoot().querySelector<HTMLInputElement>(
+      `input[data-action="select-item"][data-item-id="${item3.id}"]`,
+    );
+    cb1!.checked = true;
+    cb1!.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    // Re-fetch cb3 since the rerender replaced the row.
+    const cb3b = getRoot().querySelector<HTMLInputElement>(
+      `input[data-action="select-item"][data-item-id="${item3.id}"]`,
+    );
+    cb3b!.checked = true;
+    cb3b!.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    void cb3;
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    getRoot()
+      .querySelector<HTMLButtonElement>(
+        '[data-action="materialize-selected"]',
+      )
+      ?.click();
+    await vi.waitFor(async () => {
+      expect(await db.holdings.count()).toBe(2);
+    });
+    confirmSpy.mockRestore();
+
+    const items = await createLotItemsRepo(db).listByLotId(lot.id);
+    const byId = new Map(items.map((i) => [i.id, i] as const));
+    expect(byId.get(item1.id)?.holdingId).not.toBeNull();
+    expect(byId.get(item2.id)?.holdingId).toBeNull();
+    expect(byId.get(item3.id)?.holdingId).not.toBeNull();
+  });
+
+  it('per-row "Legg i samling" button creates one holding for that row', async () => {
+    const lot = await createLotsRepo(db).create({
+      name: 'L',
+      purchaseDate: '2026-04-01T00:00:00.000Z',
+      totalCost: 200,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+    const item1 = await createLotItemsRepo(db).create(lotItem(lot.id, 'base1-1'));
+    await createLotItemsRepo(db).create(lotItem(lot.id, 'base1-2'));
+    window.location.hash = `lot/${encodeURIComponent(lot.id)}`;
+    mountLotDetailView(getRoot());
+    await settle();
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="apply-allocation"]')
+      ?.click();
+    await vi.waitFor(async () => {
+      const items = await db.lotItems.toArray();
+      expect(items.every((i) => i.allocatedCost !== null)).toBe(true);
+    });
+    await settle();
+
+    const rowOne = getRoot().querySelector<HTMLTableRowElement>(
+      `tr[data-item-id="${item1.id}"]`,
+    );
+    const addOne = rowOne?.querySelector<HTMLButtonElement>(
+      '[data-action="materialize-one"]',
+    );
+    expect(addOne).not.toBeNull();
+    expect(addOne?.disabled).toBe(false);
+    addOne!.click();
+    await vi.waitFor(async () => {
+      expect(await db.holdings.count()).toBe(1);
+    });
+
+    const items = await createLotItemsRepo(db).listByLotId(lot.id);
+    expect(items.find((i) => i.id === item1.id)?.holdingId).not.toBeNull();
+  });
+
+  it('materialised row gains the materialised CSS class and shows "✓ I samlingen"', async () => {
+    const lot = await createLotsRepo(db).create({
+      name: 'L',
+      purchaseDate: '2026-04-01T00:00:00.000Z',
+      totalCost: 100,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+    await createLotItemsRepo(db).create(lotItem(lot.id, 'base1-1'));
+    window.location.hash = `lot/${encodeURIComponent(lot.id)}`;
+    mountLotDetailView(getRoot());
+    await settle();
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="apply-allocation"]')
+      ?.click();
+    await vi.waitFor(async () => {
+      const items = await db.lotItems.toArray();
+      expect(items[0]?.allocatedCost).not.toBeNull();
+    });
+    await settle();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="materialize-all"]')
+      ?.click();
+    await vi.waitFor(async () => {
+      expect(await db.holdings.count()).toBe(1);
+    });
+    confirmSpy.mockRestore();
+    await settle();
+
+    const row = getRoot().querySelector<HTMLTableRowElement>(
+      '.lot-items-table__row',
+    );
+    expect(row?.classList.contains('lot-items-table__row--materialized')).toBe(
+      true,
+    );
+    expect(row?.querySelector('.lot-items-table__locked')?.textContent).toBe(
+      '✓ I samlingen',
+    );
+  });
+
+  it('pagination is hidden for ≤ 50 items and visible for > 50', async () => {
+    // ≤ 50 items: pagination hidden.
+    const small = await createLotsRepo(db).create({
+      name: 'Small',
+      purchaseDate: '2026-04-01T00:00:00.000Z',
+      totalCost: 100,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+    await createLotItemsRepo(db).create(lotItem(small.id, 'base1-1'));
+    window.location.hash = `lot/${encodeURIComponent(small.id)}`;
+    mountLotDetailView(getRoot());
+    await settle();
+    expect(
+      getRoot().querySelector<HTMLElement>(
+        '.lot-detail-view__pagination',
+      )?.hidden,
+    ).toBe(true);
   });
 });

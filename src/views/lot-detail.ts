@@ -54,20 +54,47 @@ const ALLOCATION_METHOD_LABELS: Record<AllocationMethod, string> = {
   manual: 'Manuell',
 };
 
+/**
+ * PR 18 — view state held across `USER_DATA_CHANGED_EVENT` rerenders.
+ *
+ * `selectedItemIds` is a Set<string> of lot-item ids the user ticked
+ * the per-row checkbox on. When the user materialises selected items,
+ * those ids leave the unmaterialised pool, so the next render
+ * automatically removes them from the selection (we filter out any
+ * id that's no longer a candidate).
+ *
+ * `page` is 0-indexed for pagination. Resets to 0 when the user
+ * navigates away and back (the per-mount state is created fresh in
+ * `mountLotDetailView`).
+ */
+const LOT_ITEMS_PAGE_SIZE = 50;
+
+interface LotDetailState {
+  readonly selectedItemIds: Set<string>;
+  page: number;
+}
+
 export function mountLotDetailView(
   container: HTMLElement,
   signal?: AbortSignal,
 ): void {
-  void renderInto(container);
+  const state: LotDetailState = {
+    selectedItemIds: new Set(),
+    page: 0,
+  };
+  void renderInto(container, state);
   const refresh = (): void => {
     if (!container.isConnected) return;
-    void renderInto(container);
+    void renderInto(container, state);
   };
   // PR 15A — F-3: router signal drops this listener on next route.
   onUserDataChanged(refresh, signal);
 }
 
-async function renderInto(container: HTMLElement): Promise<void> {
+async function renderInto(
+  container: HTMLElement,
+  state: LotDetailState,
+): Promise<void> {
   container.innerHTML = '';
   const lotId = getCurrentLotId();
 
@@ -107,9 +134,31 @@ async function renderInto(container: HTMLElement): Promise<void> {
     return;
   }
 
+  // PR 18 — drop selection ids that are no longer candidates (item
+  // soft-deleted, lot reloaded, or just-materialised in the previous
+  // action).
+  const candidateIds = new Set(
+    detail.items
+      .filter((i) => i.holdingId === null && i.deletedAt === null)
+      .map((i) => i.id),
+  );
+  for (const id of [...state.selectedItemIds]) {
+    if (!candidateIds.has(id)) state.selectedItemIds.delete(id);
+  }
+
+  // Clamp the page index so a soft-delete that shrinks the list
+  // doesn't leave the view stranded on a non-existent page.
+  const totalPages = Math.max(
+    1,
+    Math.ceil(detail.items.length / LOT_ITEMS_PAGE_SIZE),
+  );
+  if (state.page >= totalPages) state.page = totalPages - 1;
+  if (state.page < 0) state.page = 0;
+
   root.appendChild(buildSummary(detail));
-  root.appendChild(buildToolbar(detail));
-  root.appendChild(buildItemsTable(detail));
+  root.appendChild(buildToolbar(detail, state, container));
+  root.appendChild(buildItemsTable(detail, state, container));
+  root.appendChild(buildPagination(detail, state, container));
   root.appendChild(buildBottomActions(detail));
 }
 
@@ -190,7 +239,11 @@ function appendStat(dl: HTMLDListElement, label: string, value: string): void {
 // ---------------------------------------------------------------------
 // Toolbar
 
-function buildToolbar(detail: LotDetail): HTMLElement {
+function buildToolbar(
+  detail: LotDetail,
+  state: LotDetailState,
+  container: HTMLElement,
+): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'lot-detail-view__toolbar';
 
@@ -232,16 +285,35 @@ function buildToolbar(detail: LotDetail): HTMLElement {
   });
   wrap.appendChild(applyBtn);
 
-  const materialiseBtn = document.createElement('button');
-  materialiseBtn.type = 'button';
-  materialiseBtn.className = 'lot-detail-view__materialize';
-  materialiseBtn.dataset['action'] = 'materialize';
-  materialiseBtn.textContent = `Materialiser ${countMaterializeReady(detail)} holdings`;
-  materialiseBtn.disabled = countMaterializeReady(detail) === 0;
-  materialiseBtn.addEventListener('click', () => {
-    void handleMaterialize(detail);
+  // PR 18 — split the old "Materialiser N holdings" into two
+  // explicit, plain-language actions:
+  //   - "Legg hele loten i samling" → unchanged behaviour from PR 9
+  //   - "Legg valgte i samling (X)" → new partial-materialise path
+  const totalReady = countMaterializeReady(detail);
+  const allBtn = document.createElement('button');
+  allBtn.type = 'button';
+  allBtn.className = 'lot-detail-view__materialize';
+  allBtn.dataset['action'] = 'materialize-all';
+  allBtn.textContent = `Legg hele loten i samling (${totalReady})`;
+  allBtn.disabled = totalReady === 0;
+  allBtn.addEventListener('click', () => {
+    void handleMaterializeAll(detail, state);
   });
-  wrap.appendChild(materialiseBtn);
+  wrap.appendChild(allBtn);
+
+  const selectedReady = countSelectedReady(detail, state);
+  const selectedBtn = document.createElement('button');
+  selectedBtn.type = 'button';
+  selectedBtn.className = 'lot-detail-view__materialize-selected';
+  selectedBtn.dataset['action'] = 'materialize-selected';
+  selectedBtn.textContent = `Legg valgte i samling (${selectedReady})`;
+  selectedBtn.disabled = selectedReady === 0;
+  selectedBtn.addEventListener('click', () => {
+    void handleMaterializeSelected(detail, state);
+  });
+  wrap.appendChild(selectedBtn);
+
+  void container;
 
   const exportBtn = document.createElement('button');
   exportBtn.type = 'button';
@@ -262,10 +334,31 @@ function countMaterializeReady(detail: LotDetail): number {
   ).length;
 }
 
+function countSelectedReady(
+  detail: LotDetail,
+  state: LotDetailState,
+): number {
+  let n = 0;
+  for (const item of detail.items) {
+    if (
+      item.holdingId === null &&
+      item.allocatedCost !== null &&
+      state.selectedItemIds.has(item.id)
+    ) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
 // ---------------------------------------------------------------------
 // Items
 
-function buildItemsTable(detail: LotDetail): HTMLElement {
+function buildItemsTable(
+  detail: LotDetail,
+  state: LotDetailState,
+  container: HTMLElement,
+): HTMLElement {
   const wrap = document.createElement('section');
   wrap.className = 'lot-detail-view__items';
 
@@ -278,11 +371,34 @@ function buildItemsTable(detail: LotDetail): HTMLElement {
     return wrap;
   }
 
+  // PR 18 — paginate. 50 per page is the same default as Browse and
+  // Collection, so users develop one mental model. Pagination
+  // operates over the full item list (materialised + ready), which
+  // keeps the row order stable across allocate / materialise cycles.
+  const start = state.page * LOT_ITEMS_PAGE_SIZE;
+  const visible = detail.items.slice(start, start + LOT_ITEMS_PAGE_SIZE);
+
+  // Visible-range select-all checkbox: ticks/un-ticks every
+  // unmaterialised, allocation-ready item ON THE CURRENT PAGE.
+  // Materialised rows are deliberately excluded so the checkbox
+  // never undoes a materialised state (it can't anyway, since
+  // those rows have no checkbox).
+  const visibleReadyIds = visible
+    .filter((i) => i.holdingId === null && i.allocatedCost !== null)
+    .map((i) => i.id);
+  const allVisibleSelected =
+    visibleReadyIds.length > 0 &&
+    visibleReadyIds.every((id) => state.selectedItemIds.has(id));
+
   const table = document.createElement('table');
   table.className = 'lot-items-table';
   table.innerHTML = `
     <thead>
       <tr>
+        <th class="lot-items-table__check-col">
+          <label class="visually-hidden" for="lot-items-select-all">Velg alle synlige</label>
+          <input type="checkbox" id="lot-items-select-all" data-region="select-all" />
+        </th>
         <th>Kort</th>
         <th>Finish</th>
         <th>Edition</th>
@@ -297,15 +413,32 @@ function buildItemsTable(detail: LotDetail): HTMLElement {
     </thead>
     <tbody data-region="items-body"></tbody>
   `;
+  const selectAll = table.querySelector<HTMLInputElement>(
+    '[data-region="select-all"]',
+  );
+  if (selectAll !== null) {
+    selectAll.checked = allVisibleSelected;
+    selectAll.disabled = visibleReadyIds.length === 0;
+    selectAll.addEventListener('change', () => {
+      if (selectAll.checked) {
+        for (const id of visibleReadyIds) state.selectedItemIds.add(id);
+      } else {
+        for (const id of visibleReadyIds) state.selectedItemIds.delete(id);
+      }
+      void renderInto(container, state);
+    });
+  }
   const body = table.querySelector<HTMLElement>('[data-region="items-body"]');
   if (body !== null) {
-    for (const item of detail.items) {
+    for (const item of visible) {
       const card = detail.cardsById.get(item.cardId) ?? null;
       const holding =
         item.holdingId !== null
           ? (detail.holdingsById.get(item.holdingId) ?? null)
           : null;
-      body.appendChild(buildItemRow(detail.lot, item, card, holding));
+      body.appendChild(
+        buildItemRow(detail, item, card, holding, state, container),
+      );
     }
   }
   wrap.appendChild(table);
@@ -313,17 +446,45 @@ function buildItemsTable(detail: LotDetail): HTMLElement {
 }
 
 function buildItemRow(
-  lot: LotRecord,
+  detail: LotDetail,
   item: LotItemRecord,
   card: CardRecord | null,
   holding: HoldingRecord | null,
+  state: LotDetailState,
+  container: HTMLElement,
 ): HTMLTableRowElement {
   const tr = document.createElement('tr');
   tr.className = 'lot-items-table__row';
   tr.dataset['itemId'] = item.id;
-  if (item.holdingId !== null) {
+  const isMaterialised = item.holdingId !== null;
+  if (isMaterialised) {
     tr.dataset['materialized'] = 'true';
+    tr.classList.add('lot-items-table__row--materialized');
   }
+
+  // PR 18 — per-row checkbox. Only rendered for unmaterialised
+  // allocation-ready rows; materialised + un-allocated rows show an
+  // empty cell so the column still aligns.
+  const checkCell = document.createElement('td');
+  checkCell.className = 'lot-items-table__check';
+  if (!isMaterialised && item.allocatedCost !== null) {
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.dataset['action'] = 'select-item';
+    cb.dataset['itemId'] = item.id;
+    cb.checked = state.selectedItemIds.has(item.id);
+    cb.setAttribute('aria-label', 'Velg dette itemet');
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        state.selectedItemIds.add(item.id);
+      } else {
+        state.selectedItemIds.delete(item.id);
+      }
+      void renderInto(container, state);
+    });
+    checkCell.appendChild(cb);
+  }
+  tr.appendChild(checkCell);
 
   // Card name (linkable when in cache)
   const cardCell = document.createElement('td');
@@ -367,6 +528,24 @@ function buildItemRow(
   const actions = document.createElement('td');
   actions.className = 'lot-items-table__actions';
   if (item.holdingId === null) {
+    // PR 18 — per-row "Legg i samling". Only useful when the row
+    // already has an allocatedCost (materialise needs that). Disabled
+    // with a tooltip otherwise so the user knows what to do next.
+    const addOne = document.createElement('button');
+    addOne.type = 'button';
+    addOne.className = 'lot-items-table__action lot-items-table__action--primary';
+    addOne.dataset['action'] = 'materialize-one';
+    addOne.textContent = 'Legg i samling';
+    if (item.allocatedCost === null) {
+      addOne.disabled = true;
+      addOne.title =
+        'Mangler allokert kostnad. Trykk "Beregn allokering på nytt" først.';
+    }
+    addOne.addEventListener('click', () => {
+      void handleMaterializeOne(detail, item, state, container);
+    });
+    actions.appendChild(addOne);
+
     const edit = document.createElement('button');
     edit.type = 'button';
     edit.className = 'lot-items-table__action';
@@ -389,13 +568,66 @@ function buildItemRow(
   } else {
     const note = document.createElement('span');
     note.className = 'lot-items-table__locked';
-    note.textContent = 'Materialisert (låst)';
+    note.textContent = '✓ I samlingen';
     actions.appendChild(note);
   }
   tr.appendChild(actions);
 
-  void lot;
   return tr;
+}
+
+function buildPagination(
+  detail: LotDetail,
+  state: LotDetailState,
+  container: HTMLElement,
+): HTMLElement {
+  const wrap = document.createElement('nav');
+  wrap.className = 'lot-detail-view__pagination';
+  wrap.setAttribute('aria-label', 'Sidenavigasjon for lot-items');
+  if (detail.items.length <= LOT_ITEMS_PAGE_SIZE) {
+    wrap.hidden = true;
+    return wrap;
+  }
+  const totalPages = Math.max(
+    1,
+    Math.ceil(detail.items.length / LOT_ITEMS_PAGE_SIZE),
+  );
+  const prev = document.createElement('button');
+  prev.type = 'button';
+  prev.dataset['action'] = 'prev-page';
+  prev.textContent = 'Forrige';
+  prev.disabled = state.page === 0;
+  prev.addEventListener('click', () => {
+    if (state.page > 0) {
+      state.page -= 1;
+      void renderInto(container, state);
+    }
+  });
+  wrap.appendChild(prev);
+
+  const summary = document.createElement('span');
+  summary.dataset['region'] = 'page-summary';
+  const start = state.page * LOT_ITEMS_PAGE_SIZE + 1;
+  const end = Math.min(
+    detail.items.length,
+    (state.page + 1) * LOT_ITEMS_PAGE_SIZE,
+  );
+  summary.textContent = `Side ${state.page + 1} av ${totalPages} — viser ${start}–${end} av ${detail.items.length}`;
+  wrap.appendChild(summary);
+
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.dataset['action'] = 'next-page';
+  next.textContent = 'Neste';
+  next.disabled = state.page + 1 >= totalPages;
+  next.addEventListener('click', () => {
+    if (state.page + 1 < totalPages) {
+      state.page += 1;
+      void renderInto(container, state);
+    }
+  });
+  wrap.appendChild(next);
+  return wrap;
 }
 
 function describeCondition(item: LotItemRecord): string {
@@ -461,28 +693,82 @@ async function handleApplyAllocation(lotId: string): Promise<void> {
   window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
 }
 
-async function handleMaterialize(detail: LotDetail): Promise<void> {
+async function handleMaterializeAll(
+  detail: LotDetail,
+  state: LotDetailState,
+): Promise<void> {
   const ready = countMaterializeReady(detail);
   const confirmed = window.confirm(
-    `Opprett ${ready} holdings fra lotten "${detail.lot.name}"?\n\n` +
+    `Legg ${ready} kort fra lotten "${detail.lot.name}" i samlingen?\n\n` +
       'Hver holding får source=lot, lotId=<denne lotten> og purchasePrice=allokert kostnad. ' +
       'Allerede materialiserte items hoppes over.',
   );
   if (!confirmed) return;
+  await runMaterialize(detail, state, undefined);
+}
+
+async function handleMaterializeSelected(
+  detail: LotDetail,
+  state: LotDetailState,
+): Promise<void> {
+  const ready = countSelectedReady(detail, state);
+  if (ready === 0) return;
+  const confirmed = window.confirm(
+    `Legg ${ready} valgte kort fra lotten "${detail.lot.name}" i samlingen?\n\n` +
+      'Bare de valgte ready-itemene blir materialisert. Allerede materialiserte items hoppes over hvis de er med i utvalget.',
+  );
+  if (!confirmed) return;
+  await runMaterialize(detail, state, [...state.selectedItemIds]);
+}
+
+async function handleMaterializeOne(
+  detail: LotDetail,
+  item: LotItemRecord,
+  state: LotDetailState,
+  container: HTMLElement,
+): Promise<void> {
+  if (item.allocatedCost === null) return;
+  await runMaterialize(detail, state, [item.id]);
+  void container;
+}
+
+async function runMaterialize(
+  detail: LotDetail,
+  state: LotDetailState,
+  itemIds: readonly string[] | undefined,
+): Promise<void> {
   try {
+    const options =
+      itemIds !== undefined ? { itemIds } : undefined;
     const result = await createLotService(getDb()).materializeHoldings(
       detail.lot.id,
+      options,
     );
     if (result.noop) {
-      window.alert('Ingen items å materialisere.');
+      const msg =
+        result.skippedAlreadyMaterialised > 0
+          ? `Alle ${result.skippedAlreadyMaterialised} valgte items var allerede i samlingen.`
+          : 'Ingen items å legge til i samlingen.';
+      window.alert(msg);
       return;
+    }
+    // Drop the materialised ids from the selection so the next render
+    // doesn't keep them ticked.
+    for (const updated of result.updatedItems) {
+      state.selectedItemIds.delete(updated.id);
+    }
+    if (result.skippedAlreadyMaterialised > 0) {
+      window.alert(
+        `La til ${result.created.length} kort i samlingen. ` +
+          `${result.skippedAlreadyMaterialised} var allerede der og ble hoppet over.`,
+      );
     }
     window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
   } catch (caught) {
     if (caught instanceof Error) {
-      window.alert(`Materialisering feilet: ${caught.message}`);
+      window.alert(`Kunne ikke legge i samling: ${caught.message}`);
     } else {
-      window.alert('Materialisering feilet av en ukjent grunn.');
+      window.alert('Kunne ikke legge i samling av en ukjent grunn.');
     }
   }
 }
