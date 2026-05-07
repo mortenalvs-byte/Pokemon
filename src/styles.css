@@ -1244,3 +1244,530 @@ body {
     border-bottom-color: var(--color-accent);
   }
 }
+
+/* Binders list view */
+
+.binders-view {
+  max-width: 1200px;
+}
+
+.binders-view__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.binders-view__add {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-1);
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.binders-view__add:hover {
+  filter: brightness(1.05);
+}
+
+.binders-view__counts {
+  color: var(--color-fg-muted);
+  margin: 0 0 var(--space-4);
+}
+
+.binders-view__empty {
+  color: var(--color-fg-muted);
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-5);
+  text-align: center;
+}
+
+.binders-view__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-4);
+}
+
+.binder-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.binder-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.binder-card__title {
+  flex-grow: 1;
+  background: none;
+  border: none;
+  text-align: left;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--color-accent);
+  cursor: pointer;
+  padding: 0;
+}
+
+.binder-card__title:hover {
+  text-decoration: underline;
+}
+
+.binder-card__edit,
+.binder-card__delete {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--color-fg);
+}
+
+.binder-card__delete {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.binder-card__type,
+.binder-card__description {
+  margin: 0;
+  color: var(--color-fg-muted);
+  font-size: 13px;
+}
+
+.binder-card__stats {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 2px var(--space-3);
+  margin: var(--space-2) 0 0;
+  font-size: 13px;
+}
+
+.binder-card__stats dt {
+  color: var(--color-fg-muted);
+}
+
+.binder-card__stats dd {
+  margin: 0;
+  font-weight: 500;
+}
+
+.binder-card__progress,
+.binder-detail-view__progress {
+  position: relative;
+  height: 6px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.binder-card__progress-fill,
+.binder-detail-view__progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-success);
+  transition: width 120ms linear;
+}
+
+/* Binder detail view */
+
+.binder-detail-view {
+  max-width: 1200px;
+}
+
+.binder-detail-view__header {
+  margin-bottom: var(--space-3);
+}
+
+.binder-detail-view__back {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.binder-detail-view__back:hover {
+  text-decoration: underline;
+}
+
+.binder-detail-view__summary {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.binder-detail-view__title {
+  margin: 0 0 var(--space-1);
+  font-size: 20px;
+}
+
+.binder-detail-view__type,
+.binder-detail-view__description {
+  margin: 0 0 var(--space-2);
+  color: var(--color-fg-muted);
+}
+
+.binder-detail-view__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-3) 0;
+  font-size: 13px;
+}
+
+.binder-detail-view__stats dt {
+  color: var(--color-fg-muted);
+}
+
+.binder-detail-view__stats dd {
+  margin: 0;
+  font-weight: 500;
+}
+
+.binder-detail-view__pages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.binder-detail-view__empty,
+.binder-detail-view__message {
+  color: var(--color-fg-muted);
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-5);
+  text-align: center;
+}
+
+.binder-page__heading {
+  margin: 0 0 var(--space-3);
+  font-size: 14px;
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.binder-page__grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.binder-page__grid--9 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.binder-page__grid--18 {
+  grid-template-columns: repeat(6, 1fr);
+}
+
+.binder-slot {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 200px;
+  position: relative;
+}
+
+.binder-slot--owned {
+  border-color: var(--color-success);
+}
+
+.binder-slot--missing {
+  border-color: var(--color-danger);
+}
+
+.binder-slot--ordered,
+.binder-slot--upgrade_needed {
+  border-color: var(--color-warning);
+}
+
+.binder-slot__index {
+  font-size: 11px;
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
+}
+
+.binder-slot__thumb {
+  margin: var(--space-1) 0;
+}
+
+.binder-slot__card-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.binder-slot__card-link:hover {
+  text-decoration: underline;
+}
+
+.binder-slot__meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-fg-muted);
+}
+
+.binder-slot__empty {
+  margin: var(--space-2) 0;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  font-style: italic;
+}
+
+.binder-slot__actions {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.binder-slot__action {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--color-fg);
+}
+
+.binder-slot__action:hover {
+  background: var(--color-bg);
+}
+
+/* Slot status colour cues. Always paired with the textual badge label
+   inside the chip — see UI_DESIGN_SPEC accessibility minimum. */
+
+.status-chip--empty {
+  color: var(--color-fg-muted);
+}
+
+.status-chip--wanted {
+  color: var(--color-info);
+  border-color: var(--color-info);
+}
+
+.status-chip--owned {
+  color: var(--color-success);
+  border-color: var(--color-success);
+  background: #ecf6ef;
+}
+
+.status-chip--missing {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+  background: #fbeaea;
+}
+
+.status-chip--ordered,
+.status-chip--upgrade_needed {
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+  background: #fdf3e2;
+}
+
+.status-chip--duplicate {
+  color: var(--color-info);
+  border-color: var(--color-info);
+}
+
+/* Binder forms (binder-form, slot-action-menu, assign-holding-modal) */
+
+.binder-form,
+.assign-holding-modal,
+.slot-action-menu-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 320px;
+  max-width: 520px;
+}
+
+.binder-form__header h2,
+.assign-holding-modal__header h2,
+.slot-action-menu__header h2 {
+  margin: 0 0 var(--space-1);
+  font-size: 16px;
+}
+
+.binder-form__section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.binder-form__section legend {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-fg-muted);
+  padding: 0 var(--space-1);
+}
+
+.binder-form__field,
+.assign-holding-modal__field {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.binder-form__field--full {
+  grid-column: 1 / -1;
+}
+
+.binder-form__field input,
+.binder-form__field select,
+.binder-form__field textarea,
+.assign-holding-modal__field input,
+.assign-holding-modal__field select {
+  font-size: 14px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+}
+
+.binder-form__field input:disabled,
+.binder-form__field select:disabled {
+  background: var(--color-bg);
+  color: var(--color-fg-muted);
+}
+
+.binder-form__hint,
+.slot-action-menu__hint {
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  margin: 0;
+}
+
+.binder-form__error,
+.assign-holding-modal__error,
+.slot-action-menu__error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+  min-height: 1em;
+}
+
+.binder-form__error--visible {
+  font-weight: 500;
+}
+
+.binder-form__footer,
+.assign-holding-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.binder-form__footer button,
+.assign-holding-modal__footer button,
+.slot-action-menu__cancel {
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: var(--radius-1);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-fg);
+}
+
+.binder-form__submit,
+.assign-holding-modal__submit {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border-color: var(--color-accent);
+}
+
+.binder-form__submit:disabled,
+.assign-holding-modal__submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.slot-action-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.slot-action-menu__option {
+  padding: 8px 12px;
+  text-align: left;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.slot-action-menu__option:hover {
+  background: var(--color-bg);
+}
+
+.slot-action-menu__cancel {
+  align-self: flex-end;
+}
+
+.assign-holding-modal__empty {
+  color: var(--color-fg-muted);
+  font-size: 13px;
+}
+
+/* Card detail "Binder-lokasjoner" section */
+
+.card-detail-view__binders {
+  margin-top: var(--space-4);
+}
+
+.card-detail-view__binders-empty {
+  color: var(--color-fg-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.card-detail-view__binders-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.card-detail-view__binders-table th,
+.card-detail-view__binders-table td {
+  text-align: left;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}

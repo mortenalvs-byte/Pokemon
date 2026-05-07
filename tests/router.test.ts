@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_ROUTE,
   ROUTES,
+  getCurrentBinderId,
   getCurrentCardId,
   getCurrentRoute,
   isRoute,
   navigate,
+  navigateToBinder,
   navigateToCard,
   onRouteChange,
 } from '../src/router';
@@ -123,6 +125,48 @@ describe('router', () => {
     // The `Route` type union includes 'card-detail', but it must not
     // be a valid plain hash — bare '#card-detail' falls back.
     setHash('card-detail');
+    expect(getCurrentRoute()).toBe(DEFAULT_ROUTE);
+  });
+
+  it('getCurrentBinderId() returns null for normal routes', () => {
+    setHash('binders');
+    expect(getCurrentBinderId()).toBeNull();
+    setHash('card/base1-4');
+    expect(getCurrentBinderId()).toBeNull();
+  });
+
+  it('getCurrentBinderId() returns the decoded id for #binder/<id>', () => {
+    setHash('binder/some-uuid');
+    expect(getCurrentBinderId()).toBe('some-uuid');
+  });
+
+  it('navigateToBinder() encodes the id in the hash', () => {
+    navigateToBinder('weird id with spaces & =');
+    expect(window.location.hash).toBe(
+      `#binder/${encodeURIComponent('weird id with spaces & =')}`,
+    );
+    expect(getCurrentBinderId()).toBe('weird id with spaces & =');
+  });
+
+  it('getCurrentRoute() returns binder-detail only for valid #binder/<id>', () => {
+    setHash('binder/some-uuid');
+    expect(getCurrentRoute()).toBe('binder-detail');
+  });
+
+  it('getCurrentRoute() falls back when #binder/ has no id', () => {
+    setHash('binder/');
+    expect(getCurrentRoute()).toBe(DEFAULT_ROUTE);
+    expect(getCurrentBinderId()).toBeNull();
+  });
+
+  it('getCurrentRoute() falls back when #binder/ has malformed id', () => {
+    setHash('binder/%E0%A4%A'); // truncated UTF-8 percent escape
+    expect(getCurrentRoute()).toBe(DEFAULT_ROUTE);
+    expect(getCurrentBinderId()).toBeNull();
+  });
+
+  it('isRoute() does not classify "binder-detail" as a sidebar route', () => {
+    setHash('binder-detail');
     expect(getCurrentRoute()).toBe(DEFAULT_ROUTE);
   });
 

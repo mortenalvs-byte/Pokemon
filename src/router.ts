@@ -23,10 +23,11 @@ export const SIDEBAR_ROUTES = [
 
 export type SidebarRoute = (typeof SIDEBAR_ROUTES)[number];
 
-// Includes `card-detail` so the view-mounter map can register it, but
-// the router intentionally does not treat the bare string `card-detail`
-// as a valid hash — it is only reachable via the `#card/<id>` form.
-export type Route = SidebarRoute | 'card-detail';
+// Includes `card-detail` and `binder-detail` so the view-mounter map can
+// register them, but the router intentionally does not treat the bare
+// strings as valid hashes — they are only reachable via their
+// `#card/<id>` and `#binder/<id>` forms.
+export type Route = SidebarRoute | 'card-detail' | 'binder-detail';
 
 // Existing tests import `ROUTES`; keep it pointing at the sidebar list
 // so the canonical-routes assertion stays meaningful.
@@ -35,6 +36,7 @@ export const ROUTES = SIDEBAR_ROUTES;
 export const DEFAULT_ROUTE: SidebarRoute = 'dashboard';
 
 const CARD_PATH_PREFIX = 'card/';
+const BINDER_PATH_PREFIX = 'binder/';
 
 export function isRoute(value: string): value is SidebarRoute {
   return (SIDEBAR_ROUTES as readonly string[]).includes(value);
@@ -45,11 +47,18 @@ export function getCurrentRoute(): Route {
   if (extractCardId(hash) !== null) {
     return 'card-detail';
   }
+  if (extractBinderId(hash) !== null) {
+    return 'binder-detail';
+  }
   return isRoute(hash) ? hash : DEFAULT_ROUTE;
 }
 
 export function getCurrentCardId(): string | null {
   return extractCardId(window.location.hash.slice(1));
+}
+
+export function getCurrentBinderId(): string | null {
+  return extractBinderId(window.location.hash.slice(1));
 }
 
 export function navigate(route: SidebarRoute): void {
@@ -58,6 +67,10 @@ export function navigate(route: SidebarRoute): void {
 
 export function navigateToCard(cardId: string): void {
   window.location.hash = `${CARD_PATH_PREFIX}${encodeURIComponent(cardId)}`;
+}
+
+export function navigateToBinder(binderId: string): void {
+  window.location.hash = `${BINDER_PATH_PREFIX}${encodeURIComponent(binderId)}`;
 }
 
 export function onRouteChange(handler: (route: Route) => void): () => void {
@@ -71,10 +84,18 @@ export function onRouteChange(handler: (route: Route) => void): () => void {
 }
 
 function extractCardId(hash: string): string | null {
-  if (!hash.startsWith(CARD_PATH_PREFIX)) {
+  return extractIdAfterPrefix(hash, CARD_PATH_PREFIX);
+}
+
+function extractBinderId(hash: string): string | null {
+  return extractIdAfterPrefix(hash, BINDER_PATH_PREFIX);
+}
+
+function extractIdAfterPrefix(hash: string, prefix: string): string | null {
+  if (!hash.startsWith(prefix)) {
     return null;
   }
-  const encoded = hash.slice(CARD_PATH_PREFIX.length);
+  const encoded = hash.slice(prefix.length);
   if (encoded.length === 0) {
     return null;
   }

@@ -14,11 +14,17 @@ import {
   extractTcgplayerPrices,
   type PriceRow,
 } from '../domain/price-extractors';
-import { getCurrentCardId, navigate } from '../router';
+import { getCurrentCardId, navigate, navigateToBinder } from '../router';
+import { createBindersRepo } from '../repositories/binders-repo';
+import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createHoldingsRepo } from '../repositories/holdings-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
 import { createWishlistRepo } from '../repositories/wishlist-repo';
+import {
+  createBinderSlotService,
+  type SlotForCard,
+} from '../services/binder-slot-service';
 import {
   createCollectionService,
   type CollectionRow,
@@ -29,6 +35,7 @@ import {
 } from '../services/wishlist-service';
 import { createLazyImage } from '../utils/lazy-image';
 import type {
+  BinderSlotStatus,
   CardRecord,
   HoldingRecord,
   HoldingStatus,
@@ -60,6 +67,21 @@ const WISHLIST_PRIORITY_LABELS: Record<WishlistPriority, string> = {
   high: 'Høy',
   medium: 'Medium',
   low: 'Lav',
+};
+
+const SLOT_STATUS_LABELS: Record<BinderSlotStatus, string> = {
+  empty: 'Tom',
+  wanted: 'Ønsket',
+  owned: 'Eid',
+  missing: 'Mangler',
+  ordered: 'Bestilt',
+  duplicate: 'Duplikat',
+  upgrade_needed: 'Oppgrader',
+};
+
+const MATCH_LABELS: Record<SlotForCard['matchedBy'], string> = {
+  target: 'Mål-kort',
+  assigned: 'Tilordnet holding',
 };
 
 export function mountCardDetailView(container: HTMLElement): void {
@@ -122,6 +144,7 @@ async function renderInto(container: HTMLElement): Promise<void> {
   root.appendChild(buildBody(card, set ?? null));
   root.appendChild(buildActions(cardId));
   root.appendChild(await buildHoldingsSection(cardId));
+  root.appendChild(await buildBindersSection(cardId));
   root.appendChild(await buildWishlistSection(cardId));
 }
 
@@ -378,6 +401,83 @@ function describeCondition(holding: HoldingRecord): string {
     return `${company} ${grade}`;
   }
   return holding.rawCondition ?? '–';
+}
+
+async function buildBindersSection(cardId: string): Promise<HTMLElement> {
+  const section = document.createElement('section');
+  section.className = 'card-detail-view__binders';
+
+  const heading = document.createElement('h3');
+  heading.textContent = 'Binder-lokasjoner';
+  section.appendChild(heading);
+
+  const db = getDb();
+  const service = createBinderSlotService(
+    createBindersRepo(db),
+    createBinderSlotsRepo(db),
+    createHoldingsRepo(db),
+    createCardsRepo(db),
+  );
+  const matches = await service.slotsForCardId(cardId);
+
+  if (matches.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'card-detail-view__binders-empty';
+    empty.textContent =
+      'Kortet er ikke tilordnet noen perm-slot. Åpne en perm fra "Permer" for å tilordne en holding.';
+    section.appendChild(empty);
+    return section;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'card-detail-view__binders-table';
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Perm</th>
+        <th>Side</th>
+        <th>Slot</th>
+        <th>Status</th>
+        <th>Match</th>
+        <th>Handlinger</th>
+      </tr>
+    </thead>
+    <tbody data-region="binders-body"></tbody>
+  `;
+  const body = table.querySelector<HTMLElement>('[data-region="binders-body"]');
+  if (body !== null) {
+    for (const match of matches) {
+      body.appendChild(buildBinderRow(match));
+    }
+  }
+  section.appendChild(table);
+  return section;
+}
+
+function buildBinderRow(match: SlotForCard): HTMLTableRowElement {
+  const tr = document.createElement('tr');
+  tr.dataset['binderId'] = match.binder.id;
+  tr.dataset['slotId'] = match.slot.id;
+
+  appendCell(tr, match.binder.name);
+  appendCell(tr, String(match.slot.pageNumber));
+  appendCell(tr, String(match.slot.slotNumber));
+  appendCell(tr, SLOT_STATUS_LABELS[match.slot.status]);
+  appendCell(tr, MATCH_LABELS[match.matchedBy]);
+
+  const actions = document.createElement('td');
+  actions.className = 'browse-table__actions';
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'browse-table__action';
+  open.textContent = 'Åpne perm';
+  open.addEventListener('click', () => {
+    navigateToBinder(match.binder.id);
+  });
+  actions.appendChild(open);
+  tr.appendChild(actions);
+
+  return tr;
 }
 
 async function buildWishlistSection(cardId: string): Promise<HTMLElement> {
