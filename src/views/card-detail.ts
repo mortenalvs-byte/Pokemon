@@ -14,7 +14,12 @@ import {
   extractTcgplayerPrices,
   type PriceRow,
 } from '../domain/price-extractors';
-import { getCurrentCardId, navigate, navigateToBinder } from '../router';
+import {
+  getCurrentCardId,
+  navigate,
+  navigateToBinder,
+  navigateToBinderSlot,
+} from '../router';
 import { createBindersRepo } from '../repositories/binders-repo';
 import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
 import { createCardsRepo } from '../repositories/cards-repo';
@@ -471,14 +476,28 @@ function buildBinderRow(match: SlotForCard): HTMLTableRowElement {
 
   const actions = document.createElement('td');
   actions.className = 'browse-table__actions';
+  // PR 17 — deep-link to the specific slot. Old behaviour navigated
+  // to the binder list view and made the user scroll to find the
+  // slot. Now we land on the binder with the slot scrolled into view
+  // and visually highlighted.
   const open = document.createElement('button');
   open.type = 'button';
   open.className = 'browse-table__action';
-  open.textContent = 'Åpne perm';
+  open.textContent = `Gå til side ${match.slot.pageNumber}.${match.slot.slotNumber}`;
   open.addEventListener('click', () => {
-    navigateToBinder(match.binder.id);
+    navigateToBinderSlot(match.binder.id, match.slot.id);
   });
   actions.appendChild(open);
+  // Keep a "go to binder list-view" fallback so users who want the
+  // overview have a one-click path too.
+  const openBinder = document.createElement('button');
+  openBinder.type = 'button';
+  openBinder.className = 'browse-table__action';
+  openBinder.textContent = 'Åpne perm';
+  openBinder.addEventListener('click', () => {
+    navigateToBinder(match.binder.id);
+  });
+  actions.appendChild(openBinder);
   tr.appendChild(actions);
 
   return tr;

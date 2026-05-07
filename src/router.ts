@@ -86,6 +86,28 @@ export function navigateToBinder(binderId: string): void {
   window.location.hash = `${BINDER_PATH_PREFIX}${encodeURIComponent(binderId)}`;
 }
 
+/**
+ * PR 17 — deep-link to a specific slot inside a binder. The hash
+ * encodes the slot id after the binder id with a `/slot/` separator
+ * so URLs like `#binder/abc/slot/xyz` are bookmarkable. Binder-detail
+ * reads the slot id via `getCurrentBinderSlotFocus()` on mount and
+ * scrolls that slot into view.
+ */
+export function navigateToBinderSlot(
+  binderId: string,
+  slotId: string,
+): void {
+  window.location.hash = `${BINDER_PATH_PREFIX}${encodeURIComponent(binderId)}/slot/${encodeURIComponent(slotId)}`;
+}
+
+/**
+ * Returns the slot id from a `#binder/<id>/slot/<slotId>` hash, or
+ * `null` for a plain `#binder/<id>` (or any other route).
+ */
+export function getCurrentBinderSlotFocus(): string | null {
+  return extractBinderSlotId(window.location.hash.slice(1));
+}
+
 export function navigateToLot(lotId: string): void {
   window.location.hash = `${LOT_PATH_PREFIX}${encodeURIComponent(lotId)}`;
 }
@@ -105,7 +127,38 @@ function extractCardId(hash: string): string | null {
 }
 
 function extractBinderId(hash: string): string | null {
-  return extractIdAfterPrefix(hash, BINDER_PATH_PREFIX);
+  // `#binder/<id>` AND `#binder/<id>/slot/<slotId>` both yield the
+  // binder id. The slot suffix is parsed separately by
+  // `extractBinderSlotId` (PR 17 deep-link).
+  if (!hash.startsWith(BINDER_PATH_PREFIX)) return null;
+  const rest = hash.slice(BINDER_PATH_PREFIX.length);
+  if (rest.length === 0) return null;
+  const slotMarker = '/slot/';
+  const slotAt = rest.indexOf(slotMarker);
+  const encoded = slotAt === -1 ? rest : rest.slice(0, slotAt);
+  if (encoded.length === 0) return null;
+  try {
+    const decoded = decodeURIComponent(encoded);
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractBinderSlotId(hash: string): string | null {
+  if (!hash.startsWith(BINDER_PATH_PREFIX)) return null;
+  const rest = hash.slice(BINDER_PATH_PREFIX.length);
+  const slotMarker = '/slot/';
+  const slotAt = rest.indexOf(slotMarker);
+  if (slotAt === -1) return null;
+  const encoded = rest.slice(slotAt + slotMarker.length);
+  if (encoded.length === 0) return null;
+  try {
+    const decoded = decodeURIComponent(encoded);
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    return null;
+  }
 }
 
 function extractLotId(hash: string): string | null {
