@@ -2460,8 +2460,79 @@ body {
 
 .lot-items-table__locked {
   font-size: 12px;
-  color: var(--color-fg-muted);
-  font-style: italic;
+  color: var(--color-success, #2e7d32);
+  font-weight: 600;
+}
+
+/* PR 18 — partial-materialise UI */
+.lot-items-table__check-col,
+.lot-items-table__check {
+  width: 32px;
+  text-align: center;
+  padding: 4px;
+}
+
+.lot-items-table__row--materialized {
+  /* Slightly stronger visual distinction so "in collection" rows
+     stand out at a glance during bulk review. */
+  background: rgba(31, 122, 61, 0.08);
+}
+
+.lot-items-table__action--primary {
+  border-color: var(--color-accent, var(--color-fg));
+  font-weight: 600;
+}
+
+.lot-detail-view__materialize-selected {
+  margin-left: var(--space-1);
+  padding: 6px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-accent, var(--color-fg));
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-fg);
+}
+
+.lot-detail-view__materialize-selected:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  font-weight: 400;
+  border-color: var(--color-border);
+}
+
+.lot-detail-view__pagination {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+  font-size: 13px;
+}
+
+.lot-detail-view__pagination button {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+.lot-detail-view__pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Lot form / lot item form / card picker */
