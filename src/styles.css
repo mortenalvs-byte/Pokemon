@@ -553,6 +553,107 @@ body {
   margin-top: var(--space-3);
 }
 
+/* PR 19 — bulk-mode toggle, action bar, and result summary. */
+.browse-view__bulk-toggle {
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  color: var(--color-fg);
+}
+
+.browse-view__bulk-toggle[aria-pressed='true'] {
+  background: var(--color-accent, var(--color-fg));
+  color: var(--color-bg);
+  border-color: var(--color-accent, var(--color-fg));
+}
+
+.browse-view__bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: rgba(46, 125, 50, 0.06);
+  border: 1px solid rgba(46, 125, 50, 0.25);
+  border-radius: var(--radius-1);
+  margin: var(--space-2) 0;
+  font-size: 13px;
+}
+
+.browse-view__bulk-action,
+.browse-view__bulk-clear {
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  color: var(--color-fg);
+}
+
+.browse-view__bulk-action {
+  border-color: var(--color-accent, var(--color-fg));
+  font-weight: 600;
+}
+
+.browse-view__bulk-action:disabled,
+.browse-view__bulk-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  font-weight: 400;
+  border-color: var(--color-border);
+}
+
+.browse-view__bulk-summary {
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-success, #2e7d32);
+  border-radius: var(--radius-1);
+  font-size: 13px;
+}
+
+.browse-view__bulk-summary-headline {
+  margin: 0 0 var(--space-1) 0;
+  font-weight: 500;
+}
+
+.browse-view__bulk-summary-failures {
+  margin: var(--space-1) 0;
+  padding-left: var(--space-4);
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.browse-view__bulk-summary-dismiss {
+  margin-top: var(--space-1);
+  padding: 2px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.browse-table__check-col,
+.browse-table__check {
+  width: 32px;
+  text-align: center;
+  padding: 4px;
+}
+
+.browse-table__check-skip {
+  color: var(--color-fg-muted);
+  cursor: help;
+}
+
 .browse-view__pagination button {
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--color-border);
