@@ -49,6 +49,7 @@ import type {
   CardFinish,
   CardRecord,
   HoldingRecord,
+  SlotsPerPage,
 } from '../domain/types';
 
 const STATUS_LABELS: Record<BinderSlotStatus, string> = {
@@ -734,14 +735,14 @@ function resolveCardFromHolding(
 
 async function openAssign(
   slot: BinderSlotRecord,
-  slotsPerPage: 9 | 18,
+  slotsPerPage: SlotsPerPage,
 ): Promise<void> {
   await openDialog(buildAssignHoldingModal({ slot, slotsPerPage }));
 }
 
 async function openMenu(
   slot: BinderSlotRecord,
-  slotsPerPage: 9 | 18,
+  slotsPerPage: SlotsPerPage,
 ): Promise<void> {
   await openDialog(buildSlotActionMenu({ slot, slotsPerPage }));
 }

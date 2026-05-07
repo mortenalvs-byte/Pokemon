@@ -19,11 +19,13 @@
 // not surface it, and the generator throws so a caller passing it can
 // never silently produce an empty template.
 
-import type { CardRecord, CompletionMode } from './types';
+import type { CardRecord, CompletionMode, SlotsPerPage } from './types';
 import {
   REVERSE_HOLO_TEMPLATE_MARKER,
   cardHasReverseHolo,
 } from './card-variants';
+
+const ALLOWED_SLOTS_PER_PAGE: readonly SlotsPerPage[] = [4, 9, 12, 16, 18];
 
 export interface SlotDraft {
   readonly pageNumber: number;
@@ -33,7 +35,7 @@ export interface SlotDraft {
 }
 
 export interface TemplateOptions {
-  readonly slotsPerPage: 9 | 18;
+  readonly slotsPerPage: SlotsPerPage;
   readonly completionMode: Exclude<CompletionMode, 'grand_master'>;
   /** Master-only. Ignored when `completionMode === 'standard'`. */
   readonly includeReverseHolos: boolean;
@@ -55,9 +57,11 @@ export function generateFromSetSlots(
   cards: readonly CardRecord[],
   options: TemplateOptions,
 ): TemplateResult {
-  if (options.slotsPerPage !== 9 && options.slotsPerPage !== 18) {
+  if (
+    !ALLOWED_SLOTS_PER_PAGE.includes(options.slotsPerPage as SlotsPerPage)
+  ) {
     throw new Error(
-      `slotsPerPage must be 9 or 18, got ${String(options.slotsPerPage)}`,
+      `slotsPerPage must be one of ${ALLOWED_SLOTS_PER_PAGE.join(', ')}, got ${String(options.slotsPerPage)}`,
     );
   }
   // The CompletionMode union still includes `grand_master` for future
@@ -157,7 +161,7 @@ function toIntOrNaN(value: string): number {
 
 function placeAt(
   index: number,
-  slotsPerPage: 9 | 18,
+  slotsPerPage: SlotsPerPage,
 ): { pageNumber: number; slotNumber: number } {
   const pageNumber = Math.floor(index / slotsPerPage) + 1;
   const slotNumber = (index % slotsPerPage) + 1;

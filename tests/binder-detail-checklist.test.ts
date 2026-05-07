@@ -114,6 +114,7 @@ describe('Binder detail — checklist + missing filter', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },
@@ -149,6 +150,7 @@ describe('Binder detail — checklist + missing filter', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'master',
         sourceSetId: 'base1',
       },
@@ -177,11 +179,19 @@ describe('Binder detail — checklist + missing filter', () => {
     const rows = root.querySelectorAll<HTMLTableRowElement>(
       '.checklist-table__row',
     );
-    expect(rows.length).toBe(2);
+    // PR 14: a from-set binder fills its full physical grid. With
+    // 2 drafts at 9 slots/page that becomes a 9-slot binder (2
+    // targets + 7 empty placeholders).
+    expect(rows.length).toBe(9);
 
-    // Row 0 = standard, row 1 = reverse-holo template
-    const finishCells = Array.from(rows).map((r) => r.cells[3]?.textContent);
-    const noteCells = Array.from(rows).map((r) => r.cells[8]?.textContent);
+    // Row 0 = standard target, row 1 = reverse-holo template, the
+    // rest are empty placeholders.
+    const targetRows = Array.from(rows).filter(
+      (r) => r.dataset['status'] !== 'empty',
+    );
+    expect(targetRows.length).toBe(2);
+    const finishCells = targetRows.map((r) => r.cells[3]?.textContent);
+    const noteCells = targetRows.map((r) => r.cells[8]?.textContent);
     expect(finishCells).toEqual(['–', 'Reverse holo']);
     expect(noteCells.every((c) => !c?.includes('template:reverse_holo'))).toBe(
       true,
@@ -195,6 +205,7 @@ describe('Binder detail — checklist + missing filter', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },
@@ -248,6 +259,7 @@ describe('Binder detail — checklist + missing filter', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },
@@ -298,6 +310,7 @@ describe('Binder detail — checklist + missing filter', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },
@@ -331,14 +344,20 @@ describe('Binder detail — checklist + missing filter', () => {
     filterSelect!.dispatchEvent(new Event('change'));
     await settle();
 
-    // All three slots still occupy a grid cell — only the matching ones
-    // are NOT marked filtered-out.
+    // PR 14: from-set binder mirrors the full physical grid (9 slots
+    // for slotsPerPage=9). Three of those carry targets; the rest are
+    // empty placeholders. All grid cells must remain visible.
     const tiles = root.querySelectorAll<HTMLElement>('.binder-slot');
-    expect(tiles.length).toBe(3);
+    expect(tiles.length).toBe(9);
     const filteredOutCount = root.querySelectorAll(
       '.binder-slot--filtered-out',
     ).length;
-    expect(filteredOutCount).toBe(1); // only slot 1 (the completed one) is muted
+    // missing filter matches: target slots that are NOT complete.
+    // - slot 1: target=base1-1, owned (holding live) → complete → filtered out
+    // - slots 2, 3: targets, not complete → matches → visible
+    // - slots 4-9: empty placeholders (no target) → filtered out
+    // Filtered-out total: 1 + 6 = 7.
+    expect(filteredOutCount).toBe(7);
   });
 
   it('Sider-view filtered-out slots have no interactive controls', async () => {
@@ -348,6 +367,7 @@ describe('Binder detail — checklist + missing filter', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },
@@ -421,6 +441,7 @@ describe('Binder detail — checklist + missing filter', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },

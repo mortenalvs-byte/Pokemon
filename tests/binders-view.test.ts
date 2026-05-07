@@ -56,6 +56,7 @@ describe('Binders list view', () => {
       binderType: 'VaultX',
       totalPages: 2,
       slotsPerPage: 9,
+      binderPreset: null,
       completionMode: 'standard',
       sourceSetId: null,
     });
@@ -95,6 +96,16 @@ describe('Binders list view', () => {
       'input[name="name"]',
     );
     nameInput!.value = 'Min nye perm';
+    // Drive a small custom binder so the test stays cheap.
+    const presetSelect = form!.querySelector<HTMLSelectElement>(
+      'select[name="binderPreset"]',
+    );
+    presetSelect!.value = 'custom';
+    presetSelect!.dispatchEvent(new Event('change'));
+    const slotsSelect = form!.querySelector<HTMLSelectElement>(
+      'select[name="slotsPerPage"]',
+    );
+    slotsSelect!.value = '9';
     const totalPagesInput = form!.querySelector<HTMLInputElement>(
       'input[name="totalPages"]',
     );
@@ -118,7 +129,7 @@ describe('Binders list view', () => {
       .where('binderId')
       .equals(binders[0]!.id)
       .toArray();
-    expect(slots.length).toBe(18); // 2 pages × 9 slots
+    expect(slots.length).toBe(18); // custom 2 pages × 9 slots
     expect(slots.every((s) => s.status === 'empty')).toBe(true);
   });
 
@@ -129,6 +140,7 @@ describe('Binders list view', () => {
       binderType: null,
       totalPages: 1,
       slotsPerPage: 9,
+      binderPreset: null,
       completionMode: 'standard',
       sourceSetId: null,
     });
@@ -144,5 +156,41 @@ describe('Binders list view', () => {
     expect(await db.binders.toArray()).toEqual(beforeBinders);
     expect(await db.binderSlots.toArray()).toEqual(beforeSlots);
     expect(await db.auditLog.toArray()).toEqual(beforeAudits);
+  });
+
+  // PR 14 review patch: a binder row that ended up in the database
+  // with `binderPreset: null` (e.g. via a tampered or pre-PR-14
+  // restore that bypassed the normaliser) must not crash the list
+  // view. The view treats `null` as "no preset chip" and keeps
+  // rendering the rest of the card.
+  it('list view does not crash when an existing row has binderPreset=null', async () => {
+    // Stuff the row in directly via the table so we sidestep the
+    // service's normalisation; this models a backup-loaded row that
+    // somehow escaped the restore guard.
+    await db.binders.put({
+      id: 'orphan-binder',
+      name: 'Old binder without preset',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 9,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: null,
+      createdAt: '2025-11-01T00:00:00.000Z',
+      updatedAt: '2025-11-01T00:00:00.000Z',
+      deletedAt: null,
+    });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountBindersView(root);
+    await settle();
+
+    const cards = root.querySelectorAll('.binder-card');
+    expect(cards.length).toBe(1);
+    expect(cards[0]?.textContent).toContain('Old binder without preset');
+    // No "Permtype" stat should be emitted for a null preset.
+    expect(cards[0]?.textContent ?? '').not.toContain('Permtype');
   });
 });

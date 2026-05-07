@@ -48,6 +48,29 @@ export type AllocationMethod = 'equal' | 'weighted_by_market_price' | 'manual';
 // MVP supports 'standard' and 'master'. 'grand_master' is reserved.
 export type CompletionMode = 'standard' | 'master' | 'grand_master';
 
+/**
+ * Slots per visible binder page. PR 14 introduced 4/12/16 to match
+ * physical Vault X products; `18` is kept as a legacy value for
+ * binders created before the Vault X presets shipped (it modelled a
+ * "double-page" layout, never a real Vault X size).
+ */
+export type SlotsPerPage = 4 | 9 | 12 | 16 | 18;
+
+/**
+ * Binder layout preset. Drives default `slotsPerPage` + `totalPages`
+ * + the "physical capacity" the from-set wizard fills. Definitions
+ * live in `domain/binder-presets.ts`. `legacy_18` is only assigned
+ * by the v1→v2 migration and the binder form never offers it as a
+ * choice for new binders.
+ */
+export type BinderPreset =
+  | 'vaultx_9_360'
+  | 'vaultx_12_480'
+  | 'vaultx_12xl_624'
+  | 'vaultx_16xxl_1088'
+  | 'custom'
+  | 'legacy_18';
+
 export type WishlistStatus = 'wanted' | 'ordered' | 'received' | 'cancelled';
 
 export type WishlistPriority = 'low' | 'medium' | 'high' | 'grail';
@@ -146,7 +169,17 @@ export interface BinderRecord {
   description: string | null;
   binderType: string | null;
   totalPages: number;
-  slotsPerPage: 9 | 18;
+  slotsPerPage: SlotsPerPage;
+  /**
+   * Layout preset. Required after PR 14 v1→v2 migration:
+   *   - existing 18-slot binders get `'legacy_18'`
+   *   - other existing binders get `'custom'`
+   *   - new binders pick a Vault X preset or `'custom'`
+   * Backups produced before PR 14 may carry rows with the field
+   * absent / null; the restore path normalises them via the same
+   * migration rules.
+   */
+  binderPreset: BinderPreset | null;
   completionMode: CompletionMode;
   sourceSetId: string | null;
   createdAt: IsoTimestamp;

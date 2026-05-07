@@ -96,6 +96,7 @@ async function seedUserData(db: PokemonTrackerDB): Promise<void> {
     binderType: null,
     totalPages: 1,
     slotsPerPage: 9,
+    binderPreset: null,
     completionMode: 'standard',
     sourceSetId: null,
   });

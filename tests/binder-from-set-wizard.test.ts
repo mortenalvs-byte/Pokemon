@@ -177,12 +177,20 @@ describe('binder-from-set wizard', () => {
     const dialogP = openDialog(buildBinderFromSetWizard());
     await settle();
 
-    // Pick base set in standard mode (3 cards → 3 slots).
+    // Pick base set in standard mode and a Vault X 9-pocket (smallest
+    // physical preset) so the test stays cheap. The wizard defaults
+    // to Vault X 12-pocket XL (624 slots) which would still pass but
+    // wastes test time.
     const setSelect = document.querySelector<HTMLSelectElement>(
       '[data-region="set-select"]',
     );
     setSelect!.value = 'base1';
     setSelect!.dispatchEvent(new Event('change'));
+    const presetSelect = document.querySelector<HTMLSelectElement>(
+      '[data-region="preset-select"]',
+    );
+    presetSelect!.value = 'vaultx_9_360';
+    presetSelect!.dispatchEvent(new Event('change'));
     await settle();
 
     const form = document.querySelector<HTMLFormElement>(
@@ -202,14 +210,22 @@ describe('binder-from-set wizard', () => {
     expect(binders.length).toBe(1);
     expect(binders[0]?.sourceSetId).toBe('base1');
     expect(binders[0]?.completionMode).toBe('standard');
+    expect(binders[0]?.binderPreset).toBe('vaultx_9_360');
+    expect(binders[0]?.totalPages).toBe(40);
+    expect(binders[0]?.slotsPerPage).toBe(9);
 
     const slots = await db.binderSlots
       .where('binderId')
       .equals(binders[0]!.id)
       .toArray();
-    expect(slots.length).toBe(3);
-    expect(slots.every((s) => s.targetCardId !== null)).toBe(true);
-    expect(slots.every((s) => s.status === 'wanted')).toBe(true);
+    // Full physical capacity = 360 slots; 3 carry targets, the rest
+    // are empty placeholders.
+    expect(slots.length).toBe(360);
+    const targetSlots = slots.filter((s) => s.targetCardId !== null);
+    expect(targetSlots.length).toBe(3);
+    expect(targetSlots.every((s) => s.status === 'wanted')).toBe(true);
+    const emptySlots = slots.filter((s) => s.targetCardId === null);
+    expect(emptySlots.every((s) => s.status === 'empty')).toBe(true);
 
     // Cleanup the dialog so it does not leak state.
     await dialogP;

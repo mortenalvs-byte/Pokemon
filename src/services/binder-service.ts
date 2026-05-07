@@ -11,11 +11,16 @@
 //       (`status='empty'`, `targetCardId=null`).
 //
 //   - createBinderFromSet({ binder, slots })
-//       Used by PR 8b's from-set wizard. The wizard runs
+//       Used by the from-set wizard. The wizard runs
 //       `binder-template.generateFromSetSlots()` against the cards
-//       fetched for the chosen set and hands the result here. The
-//       service derives `totalPages` from the slot drafts so the
-//       binder's metadata always matches what was actually written.
+//       fetched for the chosen set and hands the drafts here. PR 14
+//       changed the contract: the service now mirrors the chosen
+//       physical Vault X binder by creating the FULL slot grid (every
+//       page × slot in the chosen preset's capacity), placing the
+//       target drafts into the first N positions and leaving the
+//       rest empty. If the drafts exceed the preset's capacity the
+//       service throws a validation error before opening the
+//       transaction.
 //       Master-mode reverse-holo template slots arrive with
 //       `note = REVERSE_HOLO_TEMPLATE_MARKER` already set; the service
 //       does not interpret the marker — that is the UI's job.
@@ -25,6 +30,7 @@ import type { PokemonTrackerDB } from '../db/database';
 import { nowIso } from '../utils/dates';
 import { newId } from '../utils/ids';
 import {
+  ValidationError,
   validateBinderInput,
   validateBinderSlotInput,
   type BinderInput,
@@ -32,8 +38,10 @@ import {
 import type {
   BinderRecord,
   BinderSlotRecord,
+  SlotsPerPage,
 } from '../domain/types';
 import type { SlotDraft } from '../domain/binder-template';
+import { getBinderPresetDefinition } from '../domain/binder-presets';
 
 export interface FromSetBinderInput {
   /**
@@ -136,16 +144,84 @@ export function createBinderService(db: PokemonTrackerDB): BinderService {
       if (fromSetInput.slots.length === 0) {
         throw new Error('createBinderFromSet requires at least one slot');
       }
-      const totalPages = Math.max(
-        1,
-        Math.ceil(fromSetInput.slots.length / fromSetInput.binder.slotsPerPage),
-      );
+      const slotsPerPage: SlotsPerPage = fromSetInput.binder.slotsPerPage;
+      const preset = fromSetInput.binder.binderPreset;
+
+      // PR 14 — capacity-fill rule. For a Vault X (or legacy) preset
+      // the total page count is fixed by the physical product; we
+      // create every page × slot in that grid and place the drafts
+      // into the first positions. For `custom` (or null preset, e.g.
+      // restored old backups) we keep the previous behaviour and
+      // size the binder to the drafts.
+      let totalPages: number;
+      let capacity: number;
+      if (preset !== null && preset !== 'custom') {
+        const def = getBinderPresetDefinition(preset);
+        totalPages = def.totalPages;
+        capacity = def.capacity;
+        // Guard: sanity-check the preset's slotsPerPage matches what
+        // the wizard sent. The validator catches the same case but
+        // bailing out early gives a cleaner error.
+        if (def.slotsPerPage !== slotsPerPage) {
+          throw new ValidationError(
+            'slotsPerPage',
+            `preset ${preset} requires slotsPerPage=${def.slotsPerPage}`,
+          );
+        }
+      } else {
+        totalPages = Math.max(
+          1,
+          Math.ceil(fromSetInput.slots.length / slotsPerPage),
+        );
+        capacity = totalPages * slotsPerPage;
+      }
+
+      if (fromSetInput.slots.length > capacity) {
+        throw new ValidationError(
+          'slots',
+          `target slots (${fromSetInput.slots.length}) exceed binder capacity (${capacity})`,
+        );
+      }
+      // Reject any draft that points outside the chosen physical
+      // grid. The loop below would otherwise silently drop it,
+      // which would hide the user's mistake.
+      // Also reject duplicate physical positions: the placement loop
+      // uses a Map keyed by `page:slot`, so two drafts pointing at
+      // the same cell would have the second silently overwrite the
+      // first. That is exactly the kind of quiet data-loss the
+      // validator should catch up front.
+      const seenPositions = new Set<string>();
+      for (const draft of fromSetInput.slots) {
+        if (
+          !Number.isInteger(draft.pageNumber) ||
+          draft.pageNumber < 1 ||
+          draft.pageNumber > totalPages ||
+          !Number.isInteger(draft.slotNumber) ||
+          draft.slotNumber < 1 ||
+          draft.slotNumber > slotsPerPage
+        ) {
+          throw new ValidationError(
+            'slots',
+            `draft at page=${draft.pageNumber} slot=${draft.slotNumber} is outside the binder grid (${totalPages} pages × ${slotsPerPage} slots)`,
+          );
+        }
+        const key = `${draft.pageNumber}:${draft.slotNumber}`;
+        if (seenPositions.has(key)) {
+          throw new ValidationError(
+            'slots',
+            `duplicate draft at page=${draft.pageNumber} slot=${draft.slotNumber}`,
+          );
+        }
+        seenPositions.add(key);
+      }
+
       const binderInput: BinderInput = {
         name: fromSetInput.binder.name,
         description: fromSetInput.binder.description,
         binderType: fromSetInput.binder.binderType,
         totalPages,
-        slotsPerPage: fromSetInput.binder.slotsPerPage,
+        slotsPerPage,
+        binderPreset: preset,
         completionMode: fromSetInput.binder.completionMode,
         sourceSetId: fromSetInput.binder.sourceSetId,
       };
@@ -160,27 +236,42 @@ export function createBinderService(db: PokemonTrackerDB): BinderService {
         deletedAt: null,
       };
 
-      const slots: BinderSlotRecord[] = [];
+      // Build a quick lookup keyed by physical position so the drafts
+      // map cleanly into the full grid.
+      const draftByPosition = new Map<string, SlotDraft>();
       for (const draft of fromSetInput.slots) {
-        const slotInput = {
-          binderId: binder.id,
-          pageNumber: draft.pageNumber,
-          slotNumber: draft.slotNumber,
-          targetCardId: draft.targetCardId,
-          holdingId: null,
-          status: 'wanted' as const,
-          note: draft.note,
-        };
-        // Validate before opening the transaction so a bad shape never
-        // produces a half-rolled-back side effect on auditLog.
-        validateBinderSlotInput(slotInput, binderInput.slotsPerPage);
-        slots.push({
-          ...slotInput,
-          id: newId(),
-          createdAt: now,
-          updatedAt: now,
-          deletedAt: null,
-        });
+        draftByPosition.set(
+          `${draft.pageNumber}:${draft.slotNumber}`,
+          draft,
+        );
+      }
+
+      const slots: BinderSlotRecord[] = [];
+      let targetCount = 0;
+      for (let page = 1; page <= totalPages; page += 1) {
+        for (let slot = 1; slot <= slotsPerPage; slot += 1) {
+          const draft = draftByPosition.get(`${page}:${slot}`) ?? null;
+          const slotInput = {
+            binderId: binder.id,
+            pageNumber: page,
+            slotNumber: slot,
+            targetCardId: draft?.targetCardId ?? null,
+            holdingId: null,
+            status: (draft !== null ? 'wanted' : 'empty') as
+              | 'wanted'
+              | 'empty',
+            note: draft?.note ?? null,
+          };
+          validateBinderSlotInput(slotInput, slotsPerPage);
+          if (draft !== null) targetCount += 1;
+          slots.push({
+            ...slotInput,
+            id: newId(),
+            createdAt: now,
+            updatedAt: now,
+            deletedAt: null,
+          });
+        }
       }
 
       await db.transaction(
@@ -195,7 +286,12 @@ export function createBinderService(db: PokemonTrackerDB): BinderService {
             action: 'binder_created',
             entityType: 'binder',
             entityId: binder.id,
-            message: `created from-set binder "${binder.name}" (mode=${binderInput.completionMode}, set=${fromSetInput.binder.sourceSetId}) with ${slots.length} target slots`,
+            message:
+              `created from-set binder "${binder.name}" ` +
+              `(mode=${binderInput.completionMode}, ` +
+              `set=${fromSetInput.binder.sourceSetId}, ` +
+              `preset=${preset ?? 'custom'}) ` +
+              `with ${slots.length} slots, ${targetCount} targets`,
           });
         },
       );

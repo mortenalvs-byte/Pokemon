@@ -11,6 +11,7 @@ import { USER_DATA_CHANGED_EVENT } from '../components/events';
 import { buildBinderForm } from '../components/binder-form';
 import { buildBinderFromSetWizard } from '../components/binder-from-set-wizard';
 import { getDb } from '../db/database';
+import { getBinderPresetDefinition } from '../domain/binder-presets';
 import { navigateToBinder } from '../router';
 import { createBindersRepo } from '../repositories/binders-repo';
 import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
@@ -169,8 +170,17 @@ function buildBinderCard(summary: BinderSummary): HTMLElement {
 
   const stats = document.createElement('dl');
   stats.className = 'binder-card__stats';
+  if (summary.binder.binderPreset !== null) {
+    const def = getBinderPresetDefinition(summary.binder.binderPreset);
+    appendStat(stats, 'Permtype', def.label);
+  }
   appendStat(stats, 'Sider', String(summary.binder.totalPages));
   appendStat(stats, 'Slots/side', String(summary.binder.slotsPerPage));
+  appendStat(
+    stats,
+    'Kapasitet',
+    String(summary.binder.totalPages * summary.binder.slotsPerPage),
+  );
   appendStat(stats, 'Modus', COMPLETION_MODE_LABELS[summary.binder.completionMode]);
   appendStat(
     stats,

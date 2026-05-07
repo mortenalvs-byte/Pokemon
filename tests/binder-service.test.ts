@@ -30,6 +30,7 @@ describe('binder-service.createManualBinder', () => {
       binderType: 'VaultX',
       totalPages: 3,
       slotsPerPage: 9,
+      binderPreset: null,
       completionMode: 'standard',
       sourceSetId: null,
     });
@@ -76,6 +77,7 @@ describe('binder-service.createManualBinder', () => {
         binderType: null,
         totalPages: 1,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: null,
       }),
@@ -94,6 +96,7 @@ describe('binder-service.createManualBinder', () => {
       binderType: null,
       totalPages: 1,
       slotsPerPage: 18,
+      binderPreset: null,
       completionMode: 'standard',
       sourceSetId: null,
     });

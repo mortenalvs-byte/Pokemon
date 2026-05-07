@@ -21,6 +21,9 @@ describe('binder-service.createBinderFromSet', () => {
   });
 
   it('writes binder + every slot + one binder_created audit row in one transaction', async () => {
+    // Using `binderPreset: null` keeps the legacy "size-to-drafts"
+    // behaviour for this test. PR 14's capacity-fill kicks in only
+    // when a Vault X preset is supplied — covered by a separate test.
     const service = createBinderService(db);
     const result = await service.createBinderFromSet({
       binder: {
@@ -28,6 +31,7 @@ describe('binder-service.createBinderFromSet', () => {
         description: null,
         binderType: null,
         slotsPerPage: 18,
+        binderPreset: null,
         completionMode: 'master',
         sourceSetId: 'base1',
       },
@@ -46,18 +50,26 @@ describe('binder-service.createBinderFromSet', () => {
     expect(result.binder.id).toBeDefined();
     expect(result.binder.sourceSetId).toBe('base1');
     expect(result.binder.completionMode).toBe('master');
-    // totalPages derived from slots length (3 slots / 18 per page = 1)
+    // null preset → service sizes the binder to a single 18-slot
+    // page (ceil(3 / 18) = 1) and fills the remaining 15 as empty.
     expect(result.binder.totalPages).toBe(1);
-    expect(result.slots.length).toBe(3);
-    expect(result.slots[1]?.note).toBe(REVERSE_HOLO_TEMPLATE_MARKER);
-    expect(result.slots.every((s) => s.status === 'wanted')).toBe(true);
-    expect(result.slots.every((s) => s.holdingId === null)).toBe(true);
+    expect(result.slots.length).toBe(18);
+    const targetSlots = result.slots.filter((s) => s.targetCardId !== null);
+    expect(targetSlots.length).toBe(3);
+    expect(targetSlots.every((s) => s.status === 'wanted')).toBe(true);
+    const reverseHoloSlot = targetSlots.find(
+      (s) => s.note === REVERSE_HOLO_TEMPLATE_MARKER,
+    );
+    expect(reverseHoloSlot?.targetCardId).toBe('base1-1');
+    const emptySlots = result.slots.filter((s) => s.targetCardId === null);
+    expect(emptySlots.length).toBe(15);
+    expect(emptySlots.every((s) => s.status === 'empty')).toBe(true);
 
     const stored = await db.binderSlots
       .where('binderId')
       .equals(result.binder.id)
       .toArray();
-    expect(stored.length).toBe(3);
+    expect(stored.length).toBe(18);
 
     const audits = await db.auditLog
       .where('action')
@@ -67,7 +79,9 @@ describe('binder-service.createBinderFromSet', () => {
     expect(audits[0]?.message).toContain('from-set');
     expect(audits[0]?.message).toContain('base1');
     expect(audits[0]?.message).toContain('master');
-    expect(audits[0]?.message).toContain('3');
+    // Audit message reports total slots and target count, both > 0.
+    expect(audits[0]?.message).toContain('18 slots');
+    expect(audits[0]?.message).toContain('3 targets');
   });
 
   it('derives totalPages = ceil(slots / slotsPerPage)', async () => {
@@ -84,6 +98,7 @@ describe('binder-service.createBinderFromSet', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },
@@ -101,6 +116,7 @@ describe('binder-service.createBinderFromSet', () => {
           description: null,
           binderType: null,
           slotsPerPage: 9,
+          binderPreset: null,
           completionMode: 'standard',
           sourceSetId: 'base1',
         },
@@ -124,6 +140,7 @@ describe('binder-service.createBinderFromSet', () => {
           description: null,
           binderType: null,
           slotsPerPage: 9,
+          binderPreset: null,
           completionMode: 'standard',
           sourceSetId: 'base1',
         },
@@ -142,6 +159,7 @@ describe('binder-service.createBinderFromSet', () => {
           description: null,
           binderType: null,
           slotsPerPage: 9,
+          binderPreset: null,
           completionMode: 'standard',
           sourceSetId: 'base1',
         },

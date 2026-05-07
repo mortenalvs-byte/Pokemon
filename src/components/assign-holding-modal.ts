@@ -22,12 +22,13 @@ import type {
   BinderSlotRecord,
   CardRecord,
   HoldingRecord,
+  SlotsPerPage,
 } from '../domain/types';
 import type { DialogContent } from './dialog';
 
 export interface AssignHoldingModalOptions {
   readonly slot: BinderSlotRecord;
-  readonly slotsPerPage: 9 | 18;
+  readonly slotsPerPage: SlotsPerPage;
 }
 
 export function buildAssignHoldingModal(

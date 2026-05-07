@@ -222,6 +222,7 @@ describe('repositories', () => {
       binderType: 'VaultX XL',
       totalPages: 2,
       slotsPerPage: 9,
+      binderPreset: null,
       completionMode: 'master',
       sourceSetId: 'sv3pt5',
     });

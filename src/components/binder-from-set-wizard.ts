@@ -16,6 +16,11 @@ import { DIALOG_SUBMITTED_EVENT } from './dialog';
 import { USER_DATA_CHANGED_EVENT } from './events';
 import { getDb } from '../db/database';
 import {
+  getBinderPresetDefinition,
+  getCreatableBinderPresets,
+  type BinderPresetDefinition,
+} from '../domain/binder-presets';
+import {
   generateFromSetSlots,
   type TemplateResult,
 } from '../domain/binder-template';
@@ -23,16 +28,14 @@ import { ValidationError } from '../domain/validators';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
 import { createBinderService } from '../services/binder-service';
-import type { CardRecord, CompletionMode, SetRecord } from '../domain/types';
+import type {
+  BinderPreset,
+  CardRecord,
+  CompletionMode,
+  SetRecord,
+  SlotsPerPage,
+} from '../domain/types';
 import type { DialogContent } from './dialog';
-
-const SLOTS_PER_PAGE_OPTIONS: ReadonlyArray<{
-  readonly value: '9' | '18';
-  readonly label: string;
-}> = [
-  { value: '9', label: '9 (3×3)' },
-  { value: '18', label: '18 (3×3 dobbel)' },
-];
 
 const COMPLETION_MODES: ReadonlyArray<{
   readonly value: Exclude<CompletionMode, 'grand_master'>;
@@ -127,8 +130,8 @@ function buildSkeleton(): HTMLElement {
           <input type="text" name="name" data-region="name-input" required maxlength="120" />
         </label>
         <label class="binder-from-set-wizard__field">
-          <span>Slots per side</span>
-          <select name="slotsPerPage" data-region="slots-per-page"></select>
+          <span>Permtype</span>
+          <select name="binderPreset" data-region="preset-select"></select>
         </label>
         <label class="binder-from-set-wizard__field">
           <span>Completion-modus</span>
@@ -174,21 +177,24 @@ function populateSetSelect(
 }
 
 function populateLayoutSelects(form: HTMLFormElement): void {
-  const slots = form.querySelector<HTMLSelectElement>(
-    '[data-region="slots-per-page"]',
+  // Vault X presets + custom — same set as the manual binder form.
+  // We deliberately do not surface `legacy_18` here; from-set creation
+  // always picks a current physical layout.
+  const presetSelect = form.querySelector<HTMLSelectElement>(
+    '[data-region="preset-select"]',
   );
+  if (presetSelect !== null) {
+    presetSelect.replaceChildren();
+    for (const def of getCreatableBinderPresets()) {
+      const el = document.createElement('option');
+      el.value = def.id;
+      el.textContent = def.label;
+      presetSelect.appendChild(el);
+    }
+  }
   const mode = form.querySelector<HTMLSelectElement>(
     '[data-region="completion-mode"]',
   );
-  if (slots !== null) {
-    slots.replaceChildren();
-    for (const opt of SLOTS_PER_PAGE_OPTIONS) {
-      const el = document.createElement('option');
-      el.value = opt.value;
-      el.textContent = opt.label;
-      slots.appendChild(el);
-    }
-  }
   if (mode !== null) {
     mode.replaceChildren();
     for (const opt of COMPLETION_MODES) {
@@ -207,7 +213,9 @@ function setDefaults(
   const firstSet = sets[0];
   if (firstSet === undefined) return;
   setSelectValue(form, 'set-select', firstSet.id);
-  setSelectValue(form, 'slots-per-page', '18');
+  // Default to Vault X 12-pocket XL — the user's most common physical
+  // binder for a master set. Wizard never offers `legacy_18`.
+  setSelectValue(form, 'preset-select', 'vaultx_12xl_624');
   setSelectValue(form, 'completion-mode', 'standard');
   const nameInput = form.querySelector<HTMLInputElement>(
     '[data-region="name-input"]',
@@ -250,10 +258,10 @@ function attachEventListeners(
     void refreshPreview(form, state);
   });
 
-  const slotsSelect = form.querySelector<HTMLSelectElement>(
-    '[data-region="slots-per-page"]',
+  const presetSelect = form.querySelector<HTMLSelectElement>(
+    '[data-region="preset-select"]',
   );
-  slotsSelect?.addEventListener('change', () => {
+  presetSelect?.addEventListener('change', () => {
     void refreshPreview(form, state);
   });
 
@@ -302,27 +310,33 @@ async function refreshPreview(
   if (previewList === null) return;
 
   const setId = readValue(form, 'set-select');
-  const slotsPerPageStr = readValue(form, 'slots-per-page');
-  const slotsPerPage: 9 | 18 = slotsPerPageStr === '18' ? 18 : 9;
+  const preset = (readValue(form, 'preset-select') ||
+    'vaultx_12xl_624') as BinderPreset;
+  const def = getBinderPresetDefinition(preset);
+  const slotsPerPage: SlotsPerPage = def.slotsPerPage;
   const mode = readValue(form, 'completion-mode') as 'standard' | 'master';
   const includeReverseHolos = readChecked(form, 'include-reverse-holo');
 
   if (setId.length === 0) {
-    renderPreview(previewList, null);
+    renderPreview(previewList, null, def);
     return;
   }
 
   const cards = await loadCardsForSet(state, setId);
   if (cards.length === 0) {
-    renderPreview(previewList, {
-      slots: [],
-      summary: {
-        baseSlotCount: 0,
-        reverseHoloSlotCount: 0,
-        totalSlotCount: 0,
-        totalPages: 0,
+    renderPreview(
+      previewList,
+      {
+        slots: [],
+        summary: {
+          baseSlotCount: 0,
+          reverseHoloSlotCount: 0,
+          totalSlotCount: 0,
+          totalPages: 0,
+        },
       },
-    });
+      def,
+    );
     return;
   }
 
@@ -331,7 +345,18 @@ async function refreshPreview(
     completionMode: mode,
     includeReverseHolos,
   });
-  renderPreview(previewList, result);
+  renderPreview(previewList, result, def);
+
+  // Submit must be blocked when targets exceed the chosen physical
+  // binder's capacity. Per the plan: "If target count > capacity,
+  // submit is blocked with clear error."
+  const submitButton = form.querySelector<HTMLButtonElement>(
+    '.binder-from-set-wizard__submit',
+  );
+  if (submitButton !== null) {
+    const overCapacity = result.summary.totalSlotCount > def.capacity;
+    submitButton.disabled = overCapacity;
+  }
 }
 
 async function loadCardsForSet(
@@ -348,8 +373,10 @@ async function loadCardsForSet(
 function renderPreview(
   list: HTMLElement,
   result: TemplateResult | null,
+  preset: BinderPresetDefinition,
 ): void {
   list.replaceChildren();
+  appendDt(list, 'Permtype', preset.label);
   if (result === null) {
     appendDt(list, 'Sett', 'Ingen valgt');
     return;
@@ -366,8 +393,41 @@ function renderPreview(
       String(result.summary.reverseHoloSlotCount),
     );
   }
-  appendDt(list, 'Totalt slots', String(result.summary.totalSlotCount));
-  appendDt(list, 'Sider', String(result.summary.totalPages));
+  appendDt(
+    list,
+    'Mål-slots totalt',
+    String(result.summary.totalSlotCount),
+  );
+
+  // Vault X presets have a fixed physical capacity. Show that as the
+  // primary "Perm-sider" / "Permkapasitet"; the target list's own
+  // page count is only useful as "how much of the physical binder
+  // the targets fill", so we surface it as "Mål bruker ca." instead
+  // of the bare "Sider" we showed previously (which was misleading —
+  // a Vault X 12-pocket XL is always 52 pages regardless of what
+  // you put in it).
+  if (preset.id !== 'custom') {
+    appendDt(list, 'Perm-sider', String(preset.totalPages));
+    appendDt(list, 'Permkapasitet', String(preset.capacity));
+    const targetPagesUsed = Math.ceil(
+      result.summary.totalSlotCount / preset.slotsPerPage,
+    );
+    appendDt(list, 'Mål bruker ca.', `${targetPagesUsed} sider`);
+    const remaining = preset.capacity - result.summary.totalSlotCount;
+    if (remaining >= 0) {
+      appendDt(list, 'Ledige slots', String(remaining));
+    } else {
+      appendDt(
+        list,
+        'For mange mål-slots',
+        `${-remaining} mer enn permen rommer`,
+      );
+    }
+  } else {
+    // Custom binder — no fixed physical size, so the target's own
+    // page count is what the user gets.
+    appendDt(list, 'Sider', String(result.summary.totalPages));
+  }
 }
 
 function appendDt(list: HTMLElement, label: string, value: string): void {
@@ -409,7 +469,10 @@ async function handleSubmit(
     return;
   }
 
-  const slotsPerPage: 9 | 18 = readValue(form, 'slots-per-page') === '18' ? 18 : 9;
+  const preset = (readValue(form, 'preset-select') ||
+    'vaultx_12xl_624') as BinderPreset;
+  const presetDef = getBinderPresetDefinition(preset);
+  const slotsPerPage: SlotsPerPage = presetDef.slotsPerPage;
   const mode = readValue(form, 'completion-mode') as 'standard' | 'master';
   const includeReverseHolos = readChecked(form, 'include-reverse-holo');
 
@@ -434,6 +497,17 @@ async function handleSubmit(
     return;
   }
 
+  // Capacity guard: physical Vault X presets have a fixed slot count.
+  // The service also enforces this, but the wizard can give a clearer
+  // error pointing at the preset.
+  if (preset !== 'custom' && template.summary.totalSlotCount > presetDef.capacity) {
+    showError(
+      form,
+      `Mål-slots (${template.summary.totalSlotCount}) er flere enn ${presetDef.label} rommer (${presetDef.capacity}). Velg en større permtype eller bytt completion-mode.`,
+    );
+    return;
+  }
+
   if (submitButton !== null) submitButton.disabled = true;
   try {
     await createBinderService(getDb()).createBinderFromSet({
@@ -442,6 +516,7 @@ async function handleSubmit(
         description: null,
         binderType: null,
         slotsPerPage,
+        binderPreset: preset,
         completionMode: mode,
         sourceSetId: set.id,
       },

@@ -111,6 +111,7 @@ describe('binder-csv-export', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },
@@ -121,7 +122,10 @@ describe('binder-csv-export', () => {
     });
     const result = await buildExporter().build(created.binder.id);
     expect(result).not.toBeNull();
-    expect(result!.rowCount).toBe(2);
+    // PR 14: a from-set binder mirrors the physical binder; for the
+    // null preset that means ceil(2/9) = 1 page × 9 slots = 9 rows
+    // (2 with targets, 7 empty).
+    expect(result!.rowCount).toBe(9);
     expect(result!.content.charCodeAt(0)).toBe(0xfeff);
     const lines = result!.content.replace(/^﻿/, '').split('\r\n');
     expect(lines[0]).toBe(
@@ -146,7 +150,8 @@ describe('binder-csv-export', () => {
         'updated_at',
       ].join(','),
     );
-    expect(lines.length).toBe(4); // header + 2 rows + trailing empty
+    // header + 9 rows + trailing empty
+    expect(lines.length).toBe(11);
     expect(lines[1]).toContain('base1-1');
     expect(lines[1]).toContain('Card 1');
     expect(lines[1]).toContain('base1');
@@ -160,6 +165,7 @@ describe('binder-csv-export', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'master',
         sourceSetId: 'base1',
       },
@@ -176,8 +182,8 @@ describe('binder-csv-export', () => {
     const result = await buildExporter().build(created.binder.id);
     expect(result).not.toBeNull();
     const lines = result!.content.replace(/^﻿/, '').split('\r\n');
-    // Header + 2 rows + trailing empty
-    expect(lines.length).toBe(4);
+    // PR 14: full grid (1 page × 9 slots) + header + trailing empty.
+    expect(lines.length).toBe(11);
     // Row 1 (page=1, slot=1) is normal: finish empty (no holding), slot_note empty
     // Row 2 (page=1, slot=2) is reverse-holo template: finish=reverse_holo, slot_note empty
     expect(lines[2]).toContain(',reverse_holo,');
@@ -192,6 +198,7 @@ describe('binder-csv-export', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },
@@ -223,6 +230,7 @@ describe('binder-csv-export', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'master',
         sourceSetId: 'base1',
       },
@@ -249,6 +257,7 @@ describe('binder-csv-export', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },
@@ -268,6 +277,7 @@ describe('binder-csv-export', () => {
     expect(audits.length).toBe(1);
     expect(audits[0]?.entityId).toBe(created.binder.id);
     expect(audits[0]?.message).toContain('Audit binder');
-    expect(audits[0]?.message).toContain('1');
+    // PR 14: 1 draft → full 9-slot page (custom/null preset).
+    expect(audits[0]?.message).toContain('9 rows');
   });
 });
