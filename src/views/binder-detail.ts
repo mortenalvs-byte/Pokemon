@@ -97,7 +97,36 @@ interface ViewState {
    * matches everything.
    */
   search: string;
+  /**
+   * PR 20 — Sider mode currently-rendered page (1-indexed). The
+   * physical-binder model already pages by sheet, so we render only
+   * the current page's slots instead of the whole 1088-slot DOM
+   * tree. Filter / search still operate across all pages — when the
+   * filter excludes the current page entirely, we jump to the first
+   * page that has matching slots.
+   *
+   * Sjekkliste mode does not use this — it is a flat table sorted
+   * by physical slot order. PR 20 paginates Sjekkliste at 50 rows
+   * per page via `checklistPage`.
+   */
+  pagesPage: number;
+  /**
+   * PR 20 — Sjekkliste mode currently-rendered page (0-indexed),
+   * 50 rows per page.
+   */
+  checklistPage: number;
+  /**
+   * PR 20 — cached `BinderDetail` for the current binder. Pagination
+   * clicks (Forrige / Neste / mode toggle / filter / search) reuse
+   * this instead of re-fetching the entire 20k-card cards repo via
+   * `binder-slot-service.getDetail`. `null` means "needs fetch on
+   * next render". `USER_DATA_CHANGED_EVENT` invalidates by setting
+   * this back to `null`, so user-data writes still see fresh data.
+   */
+  cachedDetail: BinderDetail | null;
 }
+
+const CHECKLIST_PAGE_SIZE = 50;
 
 const FILTER_LABELS: ReadonlyArray<{ readonly value: SlotFilter; readonly label: string }> = [
   { value: 'all', label: 'Alle' },
@@ -114,15 +143,27 @@ export function mountBinderDetailView(
 ): void {
   // Per-mount view state so toggles survive USER_DATA_CHANGED_EVENT
   // refreshes but reset when the route is unmounted.
-  const state: ViewState = { mode: 'pages', filter: 'all', search: '' };
+  const state: ViewState = {
+    mode: 'pages',
+    filter: 'all',
+    search: '',
+    pagesPage: 1,
+    checklistPage: 0,
+    cachedDetail: null,
+  };
 
   void renderInto(container, state);
 
+  // PR 15A — F-3: router signal drops this listener on next route.
+  // PR 20: a user-data change must invalidate the cached BinderDetail
+  // so the next render sees fresh holdings/slots. Pagination /
+  // filter / search clicks reuse the cache; only writes punch
+  // through.
   const refresh = (): void => {
     if (!container.isConnected) return;
+    state.cachedDetail = null;
     void renderInto(container, state);
   };
-  // PR 15A — F-3: router signal drops this listener on next route.
   onUserDataChanged(refresh, signal);
 }
 
@@ -155,20 +196,30 @@ async function renderInto(
     return;
   }
 
-  const db = getDb();
-  const service = createBinderSlotService(
-    createBindersRepo(db),
-    createBinderSlotsRepo(db),
-    createHoldingsRepo(db),
-    createCardsRepo(db),
-  );
-  const detail = await service.getDetail(binderId);
+  // PR 20 — reuse the cached BinderDetail when available. Pagination
+  // / filter / search / mode-toggle hit this path; only the initial
+  // mount and `USER_DATA_CHANGED_EVENT` (which sets cachedDetail to
+  // null) trigger the slow `getDetail` call. For a 1088-slot binder
+  // with 20k cards in cache, the difference is roughly ~1 s vs
+  // ~10 ms per click.
+  let detail: BinderDetail | null = state.cachedDetail;
   if (detail === null) {
-    appendMessage(
-      root,
-      'Permen finnes ikke (eller er slettet). Gå tilbake til Permer-listen.',
+    const db = getDb();
+    const service = createBinderSlotService(
+      createBindersRepo(db),
+      createBinderSlotsRepo(db),
+      createHoldingsRepo(db),
+      createCardsRepo(db),
     );
-    return;
+    detail = await service.getDetail(binderId);
+    if (detail === null) {
+      appendMessage(
+        root,
+        'Permen finnes ikke (eller er slettet). Gå tilbake til Permer-listen.',
+      );
+      return;
+    }
+    state.cachedDetail = detail;
   }
 
   root.appendChild(buildSummary(detail));
@@ -181,10 +232,63 @@ async function renderInto(
     slotMatchesFilter(slot, state.filter, detail) &&
     slotMatchesSearch(slot, detail, state.search);
 
-  if (state.mode === 'checklist') {
-    root.appendChild(buildChecklist(detail, slotPredicate));
+  // PR 20 — deep-link via `#binder/<id>/slot/<slotId>` should jump
+  // straight to the page containing that slot. Without this the
+  // user lands on page 1 and has to click through 60+ pages.
+  const slotFocusId = getCurrentBinderSlotFocus();
+  if (slotFocusId !== null) {
+    const targetSlot = detail.slots.find((s) => s.id === slotFocusId);
+    if (targetSlot !== undefined) {
+      if (state.mode === 'pages') {
+        // Pages mode: pagesPage is 1-indexed by physical page number.
+        // The slot's pageNumber IS the page index in the sorted list
+        // (pages are 1..N contiguous in our schema).
+        state.pagesPage = targetSlot.pageNumber;
+      } else {
+        // Checklist mode: find the slot's index in the filtered list
+        // and translate to its 0-indexed page.
+        const filteredOrdered = detail.slots
+          .filter((s) => slotPredicate(s))
+          .slice()
+          .sort((a, b) => {
+            if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+            return a.slotNumber - b.slotNumber;
+          });
+        const idx = filteredOrdered.findIndex((s) => s.id === slotFocusId);
+        if (idx >= 0) {
+          state.checklistPage = Math.floor(idx / CHECKLIST_PAGE_SIZE);
+        }
+      }
+    }
   } else {
-    root.appendChild(buildPagesGrid(detail, slotPredicate));
+    // PR 20 — when an active filter / search hides every slot on the
+    // currently-selected page but matches exist elsewhere, jump to
+    // the first page that has matches. Otherwise the user sees an
+    // empty page and has to manually click through to find a hit.
+    // Only applies in pages mode and only when the user has not
+    // explicitly arrived via the deep-link (handled above).
+    if (state.mode === 'pages') {
+      const hasMatch = (slot: BinderSlotRecord): boolean => slotPredicate(slot);
+      const anyMatch = detail.slots.some(hasMatch);
+      if (anyMatch) {
+        const slotsOnCurrentPage = detail.slots.filter(
+          (s) => s.pageNumber === state.pagesPage,
+        );
+        const currentPageHasMatch = slotsOnCurrentPage.some(hasMatch);
+        if (!currentPageHasMatch) {
+          const firstMatchPage = detail.slots.find(hasMatch)?.pageNumber;
+          if (firstMatchPage !== undefined) {
+            state.pagesPage = firstMatchPage;
+          }
+        }
+      }
+    }
+  }
+
+  if (state.mode === 'checklist') {
+    root.appendChild(buildChecklist(detail, slotPredicate, state, container));
+  } else {
+    root.appendChild(buildPagesGrid(detail, slotPredicate, state, container));
   }
 
   // PR 17 — deep-link from card-detail's "Binder-lokasjoner". When
@@ -192,7 +296,6 @@ async function renderInto(
   // and add a transient highlight. The router's hashchange listener
   // calls renderInto on every navigation, so this runs once per
   // mount.
-  const slotFocusId = getCurrentBinderSlotFocus();
   if (slotFocusId !== null) {
     queueMicrotask(() => {
       focusSlotInDom(root, slotFocusId);
@@ -492,6 +595,8 @@ function slotMatchesSearch(
 function buildPagesGrid(
   detail: BinderDetail,
   matches: (slot: BinderSlotRecord) => boolean,
+  state: ViewState,
+  container: HTMLElement,
 ): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'binder-detail-view__pages';
@@ -514,15 +619,84 @@ function buildPagesGrid(
     }
     page.push(slot);
   }
-
   const sortedPageNumbers = [...slotsByPage.keys()].sort((a, b) => a - b);
-  for (const pageNumber of sortedPageNumbers) {
-    const slotsForPage = slotsByPage.get(pageNumber);
-    if (slotsForPage === undefined) continue;
-    wrap.appendChild(buildPage(detail, pageNumber, slotsForPage, matches));
+
+  // PR 20 — render only the current page. Vault X 16-pocket binders
+  // have 68 pages × 16 slots = 1088 slot tiles, and rendering them
+  // all blew ~1 s per render in QA. Page-at-a-time keeps the DOM
+  // around 16 tiles plus the nav strip.
+  const totalPages = sortedPageNumbers.length;
+  // Clamp the page index in case the user just toggled a filter.
+  if (state.pagesPage < 1) state.pagesPage = 1;
+  if (state.pagesPage > totalPages) state.pagesPage = totalPages;
+  const currentPageNumber = sortedPageNumbers[state.pagesPage - 1] ?? 1;
+  const slotsForPage = slotsByPage.get(currentPageNumber);
+  if (slotsForPage !== undefined) {
+    wrap.appendChild(buildPage(detail, currentPageNumber, slotsForPage, matches));
+  }
+
+  // Filter feedback: if the visible page has no matching slots, tell
+  // the user that the filter is still in effect — they can use the
+  // nav buttons to scan or clear the filter.
+  const hasMatchOnPage = (slotsForPage ?? []).some((s) => matches(s));
+  if (!hasMatchOnPage && totalPages > 0) {
+    const note = document.createElement('p');
+    note.className = 'binder-detail-view__filter-note';
+    note.textContent =
+      'Ingen slots på denne siden matcher filteret. Bruk Forrige / Neste for å bla.';
+    wrap.appendChild(note);
+  }
+
+  if (totalPages > 1) {
+    wrap.appendChild(
+      buildPagesNav(state, totalPages, container),
+    );
   }
 
   return wrap;
+}
+
+function buildPagesNav(
+  state: ViewState,
+  totalPages: number,
+  container: HTMLElement,
+): HTMLElement {
+  const nav = document.createElement('nav');
+  nav.className = 'binder-detail-view__pages-nav';
+  nav.setAttribute('aria-label', 'Bla mellom permsider');
+
+  const prev = document.createElement('button');
+  prev.type = 'button';
+  prev.dataset['action'] = 'pages-prev';
+  prev.textContent = 'Forrige';
+  prev.disabled = state.pagesPage <= 1;
+  prev.addEventListener('click', () => {
+    if (state.pagesPage > 1) {
+      state.pagesPage -= 1;
+      void renderInto(container, state);
+    }
+  });
+  nav.appendChild(prev);
+
+  const summary = document.createElement('span');
+  summary.dataset['region'] = 'pages-summary';
+  summary.textContent = `Side ${state.pagesPage} av ${totalPages}`;
+  nav.appendChild(summary);
+
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.dataset['action'] = 'pages-next';
+  next.textContent = 'Neste';
+  next.disabled = state.pagesPage >= totalPages;
+  next.addEventListener('click', () => {
+    if (state.pagesPage < totalPages) {
+      state.pagesPage += 1;
+      void renderInto(container, state);
+    }
+  });
+  nav.appendChild(next);
+
+  return nav;
 }
 
 function buildPage(
@@ -679,6 +853,8 @@ function buildSlot(
 function buildChecklist(
   detail: BinderDetail,
   matches: (slot: BinderSlotRecord) => boolean,
+  state: ViewState,
+  container: HTMLElement,
 ): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'binder-detail-view__checklist';
@@ -712,6 +888,19 @@ function buildChecklist(
     return wrap;
   }
 
+  // PR 20 — paginate checklist mode at 50 rows per page. A 1088-slot
+  // binder with all slots passing the filter previously rendered a
+  // 1088-row table; now we render at most 50 rows + a nav strip.
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filteredSlots.length / CHECKLIST_PAGE_SIZE),
+  );
+  if (state.checklistPage < 0) state.checklistPage = 0;
+  if (state.checklistPage >= totalPages) state.checklistPage = totalPages - 1;
+  const start = state.checklistPage * CHECKLIST_PAGE_SIZE;
+  const end = Math.min(filteredSlots.length, start + CHECKLIST_PAGE_SIZE);
+  const visibleSlots = filteredSlots.slice(start, end);
+
   const table = document.createElement('table');
   table.className = 'checklist-table';
   table.innerHTML = `
@@ -733,12 +922,68 @@ function buildChecklist(
   `;
   const body = table.querySelector<HTMLElement>('[data-region="checklist-body"]');
   if (body !== null) {
-    for (const slot of filteredSlots) {
+    for (const slot of visibleSlots) {
       body.appendChild(buildChecklistRow(detail, slot));
     }
   }
   wrap.appendChild(table);
+
+  if (totalPages > 1) {
+    wrap.appendChild(
+      buildChecklistNav(state, totalPages, filteredSlots.length, container),
+    );
+  }
+
   return wrap;
+}
+
+function buildChecklistNav(
+  state: ViewState,
+  totalPages: number,
+  totalRows: number,
+  container: HTMLElement,
+): HTMLElement {
+  const nav = document.createElement('nav');
+  nav.className = 'binder-detail-view__checklist-nav';
+  nav.setAttribute('aria-label', 'Sjekkliste-paginering');
+
+  const prev = document.createElement('button');
+  prev.type = 'button';
+  prev.dataset['action'] = 'checklist-prev';
+  prev.textContent = 'Forrige';
+  prev.disabled = state.checklistPage === 0;
+  prev.addEventListener('click', () => {
+    if (state.checklistPage > 0) {
+      state.checklistPage -= 1;
+      void renderInto(container, state);
+    }
+  });
+  nav.appendChild(prev);
+
+  const summary = document.createElement('span');
+  summary.dataset['region'] = 'checklist-summary';
+  const startIdx = state.checklistPage * CHECKLIST_PAGE_SIZE + 1;
+  const endIdx = Math.min(
+    totalRows,
+    (state.checklistPage + 1) * CHECKLIST_PAGE_SIZE,
+  );
+  summary.textContent = `Side ${state.checklistPage + 1} av ${totalPages} — viser ${startIdx}–${endIdx} av ${totalRows}`;
+  nav.appendChild(summary);
+
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.dataset['action'] = 'checklist-next';
+  next.textContent = 'Neste';
+  next.disabled = state.checklistPage + 1 >= totalPages;
+  next.addEventListener('click', () => {
+    if (state.checklistPage + 1 < totalPages) {
+      state.checklistPage += 1;
+      void renderInto(container, state);
+    }
+  });
+  nav.appendChild(next);
+
+  return nav;
 }
 
 function buildChecklistRow(

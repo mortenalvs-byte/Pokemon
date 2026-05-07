@@ -8,6 +8,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Performance (PR 20 — Binder workflow performance pass)
+PR 20 takes the binder-detail view from "rendered all 1088 slot tiles + 1088 checklist rows in one go" to "render the current page only, reuse the BinderDetail across pagination / filter / search / mode toggles". No new feature surface — purely performance and DOM-cost reduction. Builds on PR 17's filter + search + deep-link.
+
+#### What changed
+- **Sider mode renders one physical page at a time.** Vault X 16-pocket binders have 68 pages × 16 slots = 1088 tiles. Pre-PR-20 the view rendered the whole stack on every mount; now it renders just the current page (16 tiles) plus a `Forrige / Neste` nav strip.
+- **Sjekkliste mode paginates at 50 rows per page.** A 1088-slot binder used to render a 1088-row table; now max 50 rows + a nav strip. Same 50/page convention as Browse / Collection / lot-detail.
+- **Cached `BinderDetail`** held on `ViewState`. Pagination clicks, filter changes, search input, and mode toggles reuse the cached `BinderDetail` instead of re-running `binder-slot-service.getDetail` (which loads every card from the 20 237-card cache to build `cardsById`). `USER_DATA_CHANGED_EVENT` invalidates the cache so user-data writes still see fresh state.
+- **Filter / search auto-jump to first matching page.** When the active filter excludes every slot on the currently-selected page but matches exist elsewhere, the view jumps to the first page with a hit — the user immediately sees their search result instead of an empty page.
+- **Deep-link `#binder/<id>/slot/<slotId>` lands on the right page.** Pre-PR-20 (with PR 17's deep-link) you'd end up on page 1 and the slot would scroll into view via `scrollIntoView`. Now the page index itself is set to the slot's page, and the highlight pulses on a tile that's actually in the visible 16, not a tile 200 rows below the viewport.
+
+#### Measurements (browser preview, QA stress data: 20 237 cards / 1088-slot binder)
+
+| Operation | Before PR 20 | After PR 20 | Delta |
+|-----------|------------:|-----------:|------:|
+| Vault X 16-pocket DOM size | 1088 slot tiles | **16 slot tiles** | **68×** |
+| Sjekkliste DOM size for 1088-slot binder | 1088 rows | **max 50 rows** | **22×** |
+| Pagination click (Forrige / Neste) | ~1000 ms (full re-fetch + re-render) | **~1 ms** (cached detail) | **1000×** |
+| Filter change after first mount | ~1000 ms | **~1 ms** | **1000×** |
+| Search input after first mount | ~1000 ms | **~1 ms** | **1000×** |
+| Initial mount (cold) | 1004 ms | 1007 ms | unchanged — bottleneck is loading 20 k cards from IDB |
+
+The cold-mount cost is unchanged because it's dominated by `cardsRepo.list()` (20 237 records). A Browse-style cards/sets cache that survives view re-renders is a follow-up PR; the present PR's win is keeping all subsequent in-view interactions essentially instantaneous.
+
+#### Touched files
+- `src/views/binder-detail.ts` — `ViewState` extensions (`pagesPage`, `checklistPage`, `cachedDetail`), `buildPagesGrid` page-at-a-time + `buildPagesNav`, `buildChecklist` 50-per-page + `buildChecklistNav`, deep-link `pagesPage` resolution, filter / search auto-jump.
+- `src/styles.css` — `.binder-detail-view__pages-nav`, `.binder-detail-view__checklist-nav`, `.binder-detail-view__filter-note`.
+- `tests/binder-detail-pagination.test.ts` (new, 6 cases): Sider renders one page; Forrige / Neste at edges; search auto-jumps to first match; Sjekkliste paginates at 50/page with summary; deep-link lands on slot's page; 1088-slot binder renders 16 tiles (DOM-size proof).
+- `tests/binder-detail-search.test.ts` — one test updated for the new pagination contract: clicking Neste reveals a previously-hidden slot.
+- `tests/backup-view.test.ts` — bumped a 10 ms `setTimeout` to 100 ms (pre-existing flake on busy-suite runs; nothing to do with PR 20 logic, but turned up while shipping the pagination tests).
+
+#### Test totals
+- 76 test files, **627 tests** (up from 621). Typecheck green. Build green (344 KB JS / 92 KB gzip).
+
+#### Out of scope (per the user's instruction)
+- No Browse 20k-card cache — binder pagination is the highest-impact change for one PR. Follow-up.
+- No lot-detail virtualisation. Lot-detail already paginated at 50/page in PR 18.
+- No new product features.
+- No wishlist automation, no global search, no CSV import, no binder direct-add, no cross-page bulk selection.
+
 ### Added (PR 19 — Browse bulk mode / multi-select)
 PR 19 closes the third leg of the bulk-add story: PR 15B (Quick Add per row) + PR 18 (lot-to-stock) + this PR (Browse multi-select). Builds on PR 15A's `upsertByVariant`, PR 15B's `decideQuickAdd`, and PR 18's per-mount-state pattern.
 

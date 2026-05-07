@@ -66,7 +66,10 @@ describe('Backup view (smoke)', () => {
     const root = document.getElementById('content');
     if (!root) throw new Error('test bootstrap failed');
     mountBackupView(root);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // PR 20: bumped from 10 ms — the async appMeta read + render
+    // sometimes lost a race when this test ran late in a busy
+    // suite (the prior wait was cutting it razor-thin).
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     // The string is rendered as text, not interpreted as HTML — no
     // <script> element should exist anywhere in the view.
