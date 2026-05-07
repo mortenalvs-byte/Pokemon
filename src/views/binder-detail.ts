@@ -1,31 +1,52 @@
-// Binder detail view. Renders the page/slot grid for a single binder
-// reached via the `#binder/<id>` sub-route. Each slot tile shows its
-// page/slot index, a status badge, and (when applicable) the assigned
-// card thumbnail + name. Slot tiles open the slot action menu; an
-// explicit "Tilordne holding" button opens the assign modal.
+// Binder detail view. Renders the binder reached via `#binder/<id>` in
+// one of two modes:
 //
-// Reads via `binder-slot-service`. Mutations are dispatched by the
-// dialogs (slot-action-menu, assign-holding-modal) which all go through
-// `binder-slots-repo` so validation + audit run.
+//   - "Sider" — page/slot grid; mirrors the physical binder. Filtered
+//     slots remain in their grid cell as muted placeholders so cell
+//     positions never shift; this matters because users navigate the
+//     view by physical slot index.
+//
+//   - "Sjekkliste" — flat table sorted by physical slot order. Useful
+//     for quickly finding what's missing or eyeballing condition.
+//
+// A single filter strip applies to both modes
+// (`alle | mangler | bestilt | duplikater | ferdig`). "Mangler" is the
+// inverse of KRAVSPEC §6 completion; "ferdig" is the §6-complete set.
+//
+// Master-mode reverse-holo template slots are flagged in the data via
+// `slot.note === REVERSE_HOLO_TEMPLATE_MARKER` (see
+// `domain/card-variants.ts`). The view derives a "Reverse holo" finish
+// label from that marker but never shows the raw token to the user;
+// the slot-note display drops the marker entirely.
+//
+// Reads via `binder-slot-service`. CSV export goes through
+// `createBinderCsvExporter`. All slot mutations still flow through
+// `slot-action-menu` and `assign-holding-modal`, both unchanged from
+// PR 8a.
 
 import { openDialog } from '../components/dialog';
 import { USER_DATA_CHANGED_EVENT } from '../components/events';
 import { buildAssignHoldingModal } from '../components/assign-holding-modal';
 import { buildSlotActionMenu } from '../components/slot-action-menu';
 import { getDb } from '../db/database';
+import { isReverseHoloTemplateSlot } from '../domain/card-variants';
 import { getCurrentBinderId, navigate, navigateToCard } from '../router';
 import { createBindersRepo } from '../repositories/binders-repo';
 import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createHoldingsRepo } from '../repositories/holdings-repo';
+import { createSetsRepo } from '../repositories/sets-repo';
+import { createBinderCsvExporter } from '../services/binder-csv-export';
 import {
   createBinderSlotService,
   type BinderDetail,
 } from '../services/binder-slot-service';
 import { createLazyImage } from '../utils/lazy-image';
+import { downloadTextFile } from '../utils/download';
 import type {
   BinderSlotRecord,
   BinderSlotStatus,
+  CardFinish,
   CardRecord,
   HoldingRecord,
 } from '../domain/types';
@@ -40,20 +61,55 @@ const STATUS_LABELS: Record<BinderSlotStatus, string> = {
   upgrade_needed: 'Oppgrader',
 };
 
-export function mountBinderDetailView(container: HTMLElement): void {
-  void renderInto(container);
+const FINISH_LABELS: Record<CardFinish, string> = {
+  normal: 'Normal',
+  holo: 'Holo',
+  reverse_holo: 'Reverse holo',
+  non_holo: 'Non-holo',
+  stamped: 'Stamped',
+  unknown: 'Ukjent',
+};
 
-  // Same pattern as Card Detail: refresh on user-data changes from any
-  // dialog or other view. The `isConnected` guard skips updates after
-  // the route has unmounted.
+type ViewMode = 'pages' | 'checklist';
+
+type SlotFilter =
+  | 'all'
+  | 'missing'
+  | 'ordered'
+  | 'duplicate'
+  | 'completed';
+
+interface ViewState {
+  mode: ViewMode;
+  filter: SlotFilter;
+}
+
+const FILTER_LABELS: ReadonlyArray<{ readonly value: SlotFilter; readonly label: string }> = [
+  { value: 'all', label: 'Alle' },
+  { value: 'missing', label: 'Mangler' },
+  { value: 'ordered', label: 'Bestilt' },
+  { value: 'duplicate', label: 'Duplikater' },
+  { value: 'completed', label: 'Ferdig' },
+];
+
+export function mountBinderDetailView(container: HTMLElement): void {
+  // Per-mount view state so toggles survive USER_DATA_CHANGED_EVENT
+  // refreshes but reset when the route is unmounted.
+  const state: ViewState = { mode: 'pages', filter: 'all' };
+
+  void renderInto(container, state);
+
   const refresh = (): void => {
     if (!container.isConnected) return;
-    void renderInto(container);
+    void renderInto(container, state);
   };
   window.addEventListener(USER_DATA_CHANGED_EVENT, refresh);
 }
 
-async function renderInto(container: HTMLElement): Promise<void> {
+async function renderInto(
+  container: HTMLElement,
+  state: ViewState,
+): Promise<void> {
   container.innerHTML = '';
   const binderId = getCurrentBinderId();
 
@@ -88,12 +144,21 @@ async function renderInto(container: HTMLElement): Promise<void> {
   );
   const detail = await service.getDetail(binderId);
   if (detail === null) {
-    appendMessage(root, 'Permen finnes ikke (eller er slettet). Gå tilbake til Permer-listen.');
+    appendMessage(
+      root,
+      'Permen finnes ikke (eller er slettet). Gå tilbake til Permer-listen.',
+    );
     return;
   }
 
   root.appendChild(buildSummary(detail));
-  root.appendChild(buildPagesGrid(detail));
+  root.appendChild(buildToolbar(detail, state, container));
+
+  if (state.mode === 'checklist') {
+    root.appendChild(buildChecklist(detail, state.filter));
+  } else {
+    root.appendChild(buildPagesGrid(detail, state.filter));
+  }
 }
 
 function appendMessage(root: HTMLElement, text: string): void {
@@ -157,6 +222,115 @@ function buildSummary(detail: BinderDetail): HTMLElement {
   return summary;
 }
 
+function buildToolbar(
+  detail: BinderDetail,
+  state: ViewState,
+  container: HTMLElement,
+): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'binder-detail-view__toolbar';
+
+  // View-mode toggle
+  const toggleGroup = document.createElement('div');
+  toggleGroup.className = 'binder-detail-view__toggle';
+  toggleGroup.setAttribute('role', 'tablist');
+
+  const pagesBtn = makeToggleButton('pages', 'Sider', state.mode === 'pages');
+  pagesBtn.addEventListener('click', () => {
+    if (state.mode === 'pages') return;
+    state.mode = 'pages';
+    void renderInto(container, state);
+  });
+  toggleGroup.appendChild(pagesBtn);
+
+  const checklistBtn = makeToggleButton(
+    'checklist',
+    'Sjekkliste',
+    state.mode === 'checklist',
+  );
+  checklistBtn.addEventListener('click', () => {
+    if (state.mode === 'checklist') return;
+    state.mode = 'checklist';
+    void renderInto(container, state);
+  });
+  toggleGroup.appendChild(checklistBtn);
+  wrap.appendChild(toggleGroup);
+
+  // Filter
+  const filterLabel = document.createElement('label');
+  filterLabel.className = 'binder-detail-view__filter';
+  const filterText = document.createElement('span');
+  filterText.textContent = 'Filter';
+  filterLabel.appendChild(filterText);
+  const filterSelect = document.createElement('select');
+  filterSelect.dataset['region'] = 'filter-select';
+  for (const opt of FILTER_LABELS) {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    filterSelect.appendChild(o);
+  }
+  filterSelect.value = state.filter;
+  filterSelect.addEventListener('change', () => {
+    state.filter = filterSelect.value as SlotFilter;
+    void renderInto(container, state);
+  });
+  filterLabel.appendChild(filterSelect);
+  wrap.appendChild(filterLabel);
+
+  // Export button
+  const exportBtn = document.createElement('button');
+  exportBtn.type = 'button';
+  exportBtn.className = 'binder-detail-view__export';
+  exportBtn.dataset['action'] = 'export-csv';
+  exportBtn.textContent = 'Eksporter sjekkliste (CSV)';
+  exportBtn.addEventListener('click', () => {
+    void handleExportCsv(detail.binder.id);
+  });
+  wrap.appendChild(exportBtn);
+
+  return wrap;
+}
+
+function makeToggleButton(
+  mode: ViewMode,
+  label: string,
+  active: boolean,
+): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.dataset['mode'] = mode;
+  btn.className = active
+    ? 'binder-detail-view__toggle-btn binder-detail-view__toggle-btn--active'
+    : 'binder-detail-view__toggle-btn';
+  btn.setAttribute('role', 'tab');
+  btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  btn.textContent = label;
+  return btn;
+}
+
+async function handleExportCsv(binderId: string): Promise<void> {
+  const db = getDb();
+  const exporter = createBinderCsvExporter(
+    db,
+    createBindersRepo(db),
+    createBinderSlotsRepo(db),
+    createHoldingsRepo(db),
+    createCardsRepo(db),
+    createSetsRepo(db),
+  );
+  const result = await exporter.build(binderId);
+  if (result === null) return;
+  // Hand the content to the download helper FIRST. The audit row says
+  // "the CSV was generated and a download was started" — write it
+  // after the call so a thrown error in download still leaves an
+  // audit-correct trail (or no trail at all on failure).
+  downloadTextFile(result.filename, result.content, { mimeType: 'text/csv' });
+  const binder = await createBindersRepo(db).get(binderId);
+  if (binder === undefined) return;
+  await exporter.recordExport(binder, result.rowCount);
+}
+
 function appendStat(dl: HTMLDListElement, label: string, value: string): void {
   const dt = document.createElement('dt');
   dt.textContent = label;
@@ -166,7 +340,48 @@ function appendStat(dl: HTMLDListElement, label: string, value: string): void {
   dl.appendChild(dd);
 }
 
-function buildPagesGrid(detail: BinderDetail): HTMLElement {
+// ---------------------------------------------------------------------
+// Filter math (KRAVSPEC §6)
+
+function isSlotComplete(
+  slot: BinderSlotRecord,
+  detail: BinderDetail,
+): boolean {
+  if (slot.targetCardId === null) return false;
+  if (slot.status !== 'owned') return false;
+  if (slot.holdingId === null) return false;
+  return detail.holdingsById.has(slot.holdingId);
+}
+
+function slotMatchesFilter(
+  slot: BinderSlotRecord,
+  filter: SlotFilter,
+  detail: BinderDetail,
+): boolean {
+  switch (filter) {
+    case 'all':
+      return true;
+    case 'completed':
+      return isSlotComplete(slot, detail);
+    case 'missing':
+      // Missing = target slot that is NOT complete. Slots without a
+      // target (blank manual slots) are not part of the completion
+      // denominator, so they are not "missing" either.
+      return slot.targetCardId !== null && !isSlotComplete(slot, detail);
+    case 'ordered':
+      return slot.status === 'ordered';
+    case 'duplicate':
+      return slot.status === 'duplicate';
+  }
+}
+
+// ---------------------------------------------------------------------
+// Pages mode
+
+function buildPagesGrid(
+  detail: BinderDetail,
+  filter: SlotFilter,
+): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'binder-detail-view__pages';
 
@@ -193,9 +408,7 @@ function buildPagesGrid(detail: BinderDetail): HTMLElement {
   for (const pageNumber of sortedPageNumbers) {
     const slotsForPage = slotsByPage.get(pageNumber);
     if (slotsForPage === undefined) continue;
-    wrap.appendChild(
-      buildPage(detail, pageNumber, slotsForPage),
-    );
+    wrap.appendChild(buildPage(detail, pageNumber, slotsForPage, filter));
   }
 
   return wrap;
@@ -205,6 +418,7 @@ function buildPage(
   detail: BinderDetail,
   pageNumber: number,
   slots: readonly BinderSlotRecord[],
+  filter: SlotFilter,
 ): HTMLElement {
   const page = document.createElement('section');
   page.className = 'binder-page';
@@ -218,7 +432,8 @@ function buildPage(
   const grid = document.createElement('div');
   grid.className = `binder-page__grid binder-page__grid--${detail.binder.slotsPerPage}`;
   for (const slot of slots) {
-    grid.appendChild(buildSlot(detail, slot));
+    const matches = slotMatchesFilter(slot, filter, detail);
+    grid.appendChild(buildSlot(detail, slot, matches));
   }
   page.appendChild(grid);
   return page;
@@ -227,13 +442,24 @@ function buildPage(
 function buildSlot(
   detail: BinderDetail,
   slot: BinderSlotRecord,
+  matchesFilter: boolean,
 ): HTMLElement {
   const tile = document.createElement('article');
-  tile.className = `binder-slot binder-slot--${slot.status}`;
+  const isReverseTemplate = isReverseHoloTemplateSlot(slot.note);
+  tile.className = `binder-slot binder-slot--${slot.status}${
+    !matchesFilter ? ' binder-slot--filtered-out' : ''
+  }${isReverseTemplate ? ' binder-slot--reverse-template' : ''}`;
   tile.dataset['slotId'] = slot.id;
   tile.dataset['status'] = slot.status;
   tile.dataset['pageNumber'] = String(slot.pageNumber);
   tile.dataset['slotNumber'] = String(slot.slotNumber);
+  tile.dataset['matchesFilter'] = matchesFilter ? 'true' : 'false';
+  if (isReverseTemplate) {
+    tile.dataset['reverseHoloTemplate'] = 'true';
+  }
+  if (!matchesFilter) {
+    tile.setAttribute('aria-hidden', 'true');
+  }
 
   const indexLabel = document.createElement('span');
   indexLabel.className = 'binder-slot__index';
@@ -245,6 +471,13 @@ function buildSlot(
   statusBadge.dataset['region'] = 'status-badge';
   statusBadge.textContent = STATUS_LABELS[slot.status];
   tile.appendChild(statusBadge);
+
+  if (isReverseTemplate) {
+    const finishBadge = document.createElement('span');
+    finishBadge.className = 'binder-slot__finish-badge';
+    finishBadge.textContent = 'Reverse holo';
+    tile.appendChild(finishBadge);
+  }
 
   const card = resolveCardForSlot(detail, slot);
   if (card !== null) {
@@ -311,6 +544,152 @@ function buildSlot(
   tile.appendChild(actions);
   return tile;
 }
+
+// ---------------------------------------------------------------------
+// Checklist mode
+
+function buildChecklist(
+  detail: BinderDetail,
+  filter: SlotFilter,
+): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'binder-detail-view__checklist';
+
+  if (detail.slots.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'binder-detail-view__empty';
+    empty.textContent = 'Permen har ingen slots ennå.';
+    wrap.appendChild(empty);
+    return wrap;
+  }
+
+  const filteredSlots = detail.slots.filter((s) =>
+    slotMatchesFilter(s, filter, detail),
+  );
+
+  if (filteredSlots.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'binder-detail-view__empty';
+    empty.textContent = 'Ingen slots matcher filteret.';
+    wrap.appendChild(empty);
+    return wrap;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'checklist-table';
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Kortnavn</th>
+        <th>Sett #</th>
+        <th>Finish</th>
+        <th>Mål-status</th>
+        <th>Eid</th>
+        <th>Side.Slot</th>
+        <th>Tilstand</th>
+        <th>Notat</th>
+        <th>Handlinger</th>
+      </tr>
+    </thead>
+    <tbody data-region="checklist-body"></tbody>
+  `;
+  const body = table.querySelector<HTMLElement>('[data-region="checklist-body"]');
+  if (body !== null) {
+    for (const slot of filteredSlots) {
+      body.appendChild(buildChecklistRow(detail, slot));
+    }
+  }
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function buildChecklistRow(
+  detail: BinderDetail,
+  slot: BinderSlotRecord,
+): HTMLTableRowElement {
+  const tr = document.createElement('tr');
+  const isReverseTemplate = isReverseHoloTemplateSlot(slot.note);
+  tr.className = 'checklist-table__row';
+  tr.dataset['slotId'] = slot.id;
+  tr.dataset['status'] = slot.status;
+  if (isReverseTemplate) {
+    tr.dataset['reverseHoloTemplate'] = 'true';
+  }
+
+  const card = resolveCardForSlot(detail, slot);
+  const holding =
+    slot.holdingId !== null
+      ? (detail.holdingsById.get(slot.holdingId) ?? null)
+      : null;
+
+  appendCell(tr, card?.number ?? '');
+  appendCell(tr, card?.name ?? slot.targetCardId ?? '–');
+  appendCell(tr, card?.id ?? '');
+
+  const finishLabel = isReverseTemplate
+    ? 'Reverse holo'
+    : (holding !== null ? FINISH_LABELS[holding.finish] : '–');
+  appendCell(tr, finishLabel);
+
+  appendCell(tr, STATUS_LABELS[slot.status]);
+  appendCell(tr, isSlotComplete(slot, detail) ? '✓' : '–');
+  appendCell(tr, `${slot.pageNumber}.${slot.slotNumber}`);
+  appendCell(tr, describeCondition(holding));
+  appendCell(tr, displaySlotNote(slot));
+
+  const actions = document.createElement('td');
+  actions.className = 'checklist-table__actions';
+  const assign = document.createElement('button');
+  assign.type = 'button';
+  assign.className = 'checklist-table__action';
+  assign.dataset['action'] = 'assign';
+  assign.textContent = slot.holdingId === null ? 'Tilordne' : 'Bytt';
+  assign.addEventListener('click', (event) => {
+    event.stopPropagation();
+    void openAssign(slot, detail.binder.slotsPerPage);
+  });
+  actions.appendChild(assign);
+  const menu = document.createElement('button');
+  menu.type = 'button';
+  menu.className = 'checklist-table__action';
+  menu.dataset['action'] = 'open-menu';
+  menu.textContent = 'Status';
+  menu.addEventListener('click', (event) => {
+    event.stopPropagation();
+    void openMenu(slot, detail.binder.slotsPerPage);
+  });
+  actions.appendChild(menu);
+  tr.appendChild(actions);
+
+  return tr;
+}
+
+function describeCondition(holding: HoldingRecord | null): string {
+  if (holding === null) return '–';
+  if (holding.conditionType === 'graded') {
+    const company = holding.gradingCompany ?? '?';
+    const grade = holding.grade !== null ? holding.grade.toFixed(1) : '?';
+    return `${company} ${grade}`;
+  }
+  return holding.rawCondition ?? '–';
+}
+
+function displaySlotNote(slot: BinderSlotRecord): string {
+  // Hide the internal reverse-holo template marker from the note
+  // column. User-authored notes pass through unchanged.
+  if (isReverseHoloTemplateSlot(slot.note)) return '';
+  return slot.note ?? '';
+}
+
+function appendCell(tr: HTMLTableRowElement, value: string): void {
+  const td = document.createElement('td');
+  td.textContent = value;
+  tr.appendChild(td);
+}
+
+// ---------------------------------------------------------------------
+// Shared helpers (slot → card resolution, dialog openers)
 
 function resolveCardForSlot(
   detail: BinderDetail,
