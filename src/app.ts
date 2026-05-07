@@ -4,7 +4,7 @@ import { mountBindersView } from './views/binders';
 import { mountBrowseView } from './views/browse';
 import { mountCardDetailView } from './views/card-detail';
 import { mountCollectionView } from './views/collection';
-import { renderDashboard } from './views/dashboard';
+import { mountDashboardView } from './views/dashboard';
 import { mountLotDetailView } from './views/lot-detail';
 import { mountLotsView } from './views/lots';
 import { mountSettingsView, SYNC_STATUS_CHANGED_EVENT } from './views/settings';
@@ -16,9 +16,7 @@ import { getDb } from './db/database';
 type ViewMounter = (container: HTMLElement) => void;
 
 const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
-  dashboard: (container) => {
-    container.innerHTML = renderDashboard();
-  },
+  dashboard: mountDashboardView,
   browse: mountBrowseView,
   collection: mountCollectionView,
   binders: mountBindersView,

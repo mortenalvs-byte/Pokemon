@@ -9,6 +9,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- **PR 10 — Dashboard MVP + MVP CSV exports.** Closes the MVP feature surface. The dashboard is a read-only control panel that aggregates the seven sections from `DASHBOARD_SPEC.md` plus an action-needed strip; the four MVP CSV exports (`collection`, `wishlist`, `duplicates`, `missing-cards`) called out by `MVP_ACCEPTANCE.md` ship from the same PR. **No schema changes.**
+  - `src/domain/dashboard-actions.ts` (new) — pure rules engine. `computeActionItems(snapshot)` returns `ActionItem[]` with three severities (`info | warning | critical`); the strip filter `filterStripItems()` drops `info` so the top strip stays focused on items that genuinely require attention. Rules: never-backed-up (critical), `daysSinceLastBackup > 7` (warning), `lastMigrationAt > lastBackupAt` (warning), `holdingsSinceLastBackup > 50` (warning), persistent storage not granted (warning), `lastSyncStatus === 'failed'` (warning), partial/unallocated lots (warning), missing condition / missing value / not-in-binder / incomplete binder slots (info).
+  - `src/services/dashboard-service.ts` (new) — read-only aggregation. **Performance contract:** `cards.count()` and `sets.count()` only — never `cardsRepo.list()`. Holdings / binderSlots / lots / lotItems / wishlist use `toArray()` because their MVP volumes are small. Builds a single `DashboardSnapshot` covering Database Health, Sync, Backup, Collection, Binders (with avg completion + top 3), Lots (totals grouped per currency), Wishlist (with top 5 grail), and embeds the `actions` array from the rules engine. `now` is injectable for deterministic tests.
+  - `src/services/mvp-csv-export.ts` (new) — four MVP CSV builders + audit recorder. Reuses `utils/csv.ts` (BOM + CRLF + RFC 4180 + slugified filename). `build*()` functions are read-only; `recordCsvExported(kind, rowCount)` writes a single audit row in a narrow `auditLog`-only transaction **after** the view has handed the content to `downloadTextFile`.
+    - `collection.csv` — every live holding with full identity, condition, currency, value-source, source/lotId, tags, status. **No tax / profit / accounting columns.**
+    - `wishlist.csv` — every live wishlist entry with priority, target condition, target price + currency, status.
+    - `duplicates.csv` — groups by canonical key (`cardId | finish | edition | language | condition`); a row is reported when the group has 2+ entries OR at least one is explicitly `status='duplicate'`. Aggregates `count`, `total_quantity`, `statuses_observed`, plus duplicate / upgrade-needed counters.
+    - `missing-cards.csv` — cross-binder shopping list. Every live binder slot whose target is set AND that is not KRAVSPEC §6 complete. Includes a `finish_hint=reverse_holo` column when the slot carries the reverse-holo template marker from PR 8b.
+  - `src/views/dashboard.ts` (replaces placeholder) — switches from string render to `mountDashboardView(container)`. Initial "Laster …" state, error panel with recovery links if the snapshot throws, action strip at the top (or a green "Ingenting krever oppmerksomhet" state when nothing needs attention), then a CSS grid of seven section cards. Each card has an "Åpne"-button that navigates to the relevant sidebar view. The Collection card hosts `collection.csv` + `duplicates.csv` exports; the Binders card hosts `missing-cards.csv`; the Wishlist card hosts `wishlist.csv`. Refreshes on `USER_DATA_CHANGED_EVENT` and `SYNC_STATUS_CHANGED_EVENT` with the standard `isConnected` guard. Top-3 binders + top-5 grail wishlist link directly to the relevant binder / card detail.
+  - `src/app.ts` — `dashboard` route now mounts the real `mountDashboardView` (was a `string` placeholder via `renderDashboard()`).
+  - `src/styles.css` — dashboard grid, action strip with severity-coloured borders, section cards, top-N lists, error panel, "ok"-state strip.
+
+### New audit actions
+- `collection_csv_exported`
+- `wishlist_csv_exported`
+- `duplicates_csv_exported`
+- `missing_cards_csv_exported`
+
+Each is written exactly once per `recordCsvExported(kind, rowCount)` call, in a narrow rw-transaction over `auditLog` only. Audit semantics: "CSV content was generated and a download was started", consistent with PR 8b's binder CSV and PR 9's lot CSV exports.
+
+### Tests (426 / 426 across 63 files)
+- `tests/dashboard-actions.test.ts` — never-backup is critical; backup-old triggers strictly above 7 days (boundary); schema-migrated-since-backup; `holdings_since_backup > 50` (boundary); storage not persistent; sync_failed (with error message); lots_unallocated; info-severity for collection/binders triggers; severity ordering puts critical first, info last; `filterStripItems` drops info.
+- `tests/dashboard-service.test.ts` — empty DB returns zero-counts and a critical `backup_never` action; cards via `count()` (200-card seed never appears in snapshot JSON); collection raw/graded/missing counts and not-in-binder; binder average completion + top-3 ordering; lots per-currency totals; wishlist counts + grail filter (cancelled grails excluded); appMeta join (lastBackupAt / lastSyncAt / lastSyncError / persistentStorageGranted) with injected `now`; `schemaMigratedSinceLastBackup` boolean.
+- `tests/dashboard-view.test.ts` — seven section cards render, action strip filters info, "Ingenting krever oppmerksomhet" state when no warnings, "Åpne"-button navigates via hash, **no 20k-card row leak** (200-card seed; "Card 5" never appears in DOM but the count does), refresh on `USER_DATA_CHANGED_EVENT` re-renders.
+- `tests/mvp-csv-export.test.ts` — collection.csv has BOM + CRLF + currency-code columns + no `tax` / `profit` headers; wishlist.csv excludes soft-deleted entries and includes priority + target columns; duplicates.csv groups by canonical key + respects `status='duplicate'` for singletons; missing-cards.csv lists every incomplete target slot across binders; `recordCsvExported` writes one audit row per kind.
+- All PR 1–9 tests including `tests/backup-roundtrip.test.ts` and `tests/browse-readonly-invariant.test.ts` remain green.
+
+### MVP acceptance
+With PR 10 merged, `MVP_ACCEPTANCE.md` is satisfied: app starts locally, IndexedDB initialises with `schemaVersion`, card/set sync works, offline after first sync, holdings add/edit, binders + slot assignment + completion %, wishlist + missing, lots/bulk with three allocation modes, JSON backup + restore, **dashboard with all seven sections**, user data survives reload, API sync never overwrites user data, no localStorage for collection data, **collection / binder-checklist / missing-cards / duplicates / wishlist CSVs** all available, no tax/accounting features.
+
+### Known limitations (PR 10)
+- **CSV audit semantics** mean "CSV content was generated and a download was started" — the browser cannot reliably observe whether the user actually saved the file. Same caveat as PR 8b/9.
+- The dashboard does **not** trigger sync or backup directly. The action strip and section cards link to Settings / Backup / etc., where the actual mutation paths live. This keeps "what writes to user data" provably one place per concern.
+- The dashboard's "missing card" cross-binder list is exposed via `missing-cards.csv` only — there's no in-app "missing across all binders"-page. The binder detail's `Mangler`-filter from PR 8b covers per-binder.
+- `duplicates.csv` groups by canonical condition key only (no per-binder grouping). A holding that is marked `status='duplicate'` in isolation still appears so the user can find it.
+- No charts / graphs / AI / profit / tax. Out of scope per KRAVSPEC.
+
+### Added
 - **PR 9 — Lots / bulk-purchases: list, detail, three allocation modes, materialise, CSV.** Closes the lot/bulk feature surface for MVP. The `Lotter` sidebar route is no longer a placeholder. Bulk purchases can be split into items, allocated across them with one of three modes, and converted into real holdings (`source='lot'`, `lotId`) atomically. Owned-status, soft-delete-only, and the no-permanent-delete rule from earlier PRs all hold.
   - `src/router.ts` — adds the `#lot/<encodedLotId>` sub-route alongside the existing card and binder paths. Bare `#lot/` and malformed encodings fall back safely; `lot-detail` is not a sidebar route.
   - `src/domain/lot-allocation.ts` (new) — pure `allocateLot(lot, candidates)` for the three KRAVSPEC modes:

@@ -1,9 +1,540 @@
-export function renderDashboard(): string {
-  return `
-    <section class="placeholder">
-      <h1>Dashboard</h1>
-      <p>App-skallet er på plass. Innholdet kommer i PR 10 etter at databasen, sync-en og samlingsfunksjonene er bygget.</p>
-      <p class="placeholder__hint">Bruk navigasjonen til venstre for å se de andre stubbene.</p>
-    </section>
-  `;
+// Dashboard MVP. Read-only control panel over the existing database.
+// Renders the seven sections from DASHBOARD_SPEC plus an action strip
+// at the top for warning + critical items. Refreshes on
+// USER_DATA_CHANGED_EVENT and SYNC_STATUS_CHANGED_EVENT (the same
+// events the rest of the app already dispatches), with the standard
+// `isConnected` guard.
+//
+// The dashboard never writes to user-owned stores. The "Eksporter"
+// buttons trigger CSV builds via `mvp-csv-export`, hand the content
+// to `downloadTextFile`, then write a single audit row through the
+// exporter's `recordCsvExported` (audit-only rw-transaction). All
+// other actions are pure navigation links.
+
+import { USER_DATA_CHANGED_EVENT } from '../components/events';
+import { getDb } from '../db/database';
+import {
+  filterStripItems,
+  type ActionItem,
+  type ActionSeverity,
+} from '../domain/dashboard-actions';
+import { createAppMetaRepo } from '../repositories/app-meta-repo';
+import { createBindersRepo } from '../repositories/binders-repo';
+import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
+import { createCardsRepo } from '../repositories/cards-repo';
+import { createHoldingsRepo } from '../repositories/holdings-repo';
+import { createLotItemsRepo } from '../repositories/lot-items-repo';
+import { createLotsRepo } from '../repositories/lots-repo';
+import { createSetsRepo } from '../repositories/sets-repo';
+import { createWishlistRepo } from '../repositories/wishlist-repo';
+import { navigate, navigateToBinder, navigateToCard } from '../router';
+import {
+  createDashboardService,
+  type BindersSection,
+  type DashboardSnapshot,
+} from '../services/dashboard-service';
+import {
+  createMvpCsvExporter,
+  type MvpCsvKind,
+} from '../services/mvp-csv-export';
+import { downloadTextFile } from '../utils/download';
+import { SYNC_STATUS_CHANGED_EVENT } from './settings';
+import type { SidebarRoute } from '../router';
+
+const SEVERITY_CHIP_CLASS: Record<ActionSeverity, string> = {
+  critical: 'status-chip status-chip--danger',
+  warning: 'status-chip status-chip--warning',
+  info: 'status-chip status-chip--info',
+};
+
+export function mountDashboardView(container: HTMLElement): void {
+  void renderInto(container);
+  const refresh = (): void => {
+    if (!container.isConnected) return;
+    void renderInto(container);
+  };
+  window.addEventListener(USER_DATA_CHANGED_EVENT, refresh);
+  window.addEventListener(SYNC_STATUS_CHANGED_EVENT, refresh);
+}
+
+async function renderInto(container: HTMLElement): Promise<void> {
+  container.innerHTML = '';
+  const root = document.createElement('section');
+  root.className = 'dashboard-view';
+  container.appendChild(root);
+
+  const heading = document.createElement('h1');
+  heading.className = 'dashboard-view__heading';
+  heading.textContent = 'Dashboard';
+  root.appendChild(heading);
+
+  const loading = document.createElement('p');
+  loading.className = 'dashboard-view__loading';
+  loading.dataset['region'] = 'loading';
+  loading.textContent = 'Laster …';
+  root.appendChild(loading);
+
+  let snapshot: DashboardSnapshot;
+  try {
+    snapshot = await buildSnapshot();
+  } catch (caught) {
+    loading.remove();
+    root.appendChild(buildErrorPanel(caught));
+    return;
+  }
+  loading.remove();
+
+  root.appendChild(buildActionStrip(snapshot));
+  const grid = document.createElement('div');
+  grid.className = 'dashboard-view__grid';
+  grid.appendChild(buildDatabaseHealthCard(snapshot));
+  grid.appendChild(buildSyncCard(snapshot));
+  grid.appendChild(buildBackupCard(snapshot));
+  grid.appendChild(buildCollectionCard(snapshot));
+  grid.appendChild(buildBindersCard(snapshot));
+  grid.appendChild(buildLotsCard(snapshot));
+  grid.appendChild(buildWishlistCard(snapshot));
+  root.appendChild(grid);
+}
+
+async function buildSnapshot(): Promise<DashboardSnapshot> {
+  const db = getDb();
+  const service = createDashboardService({
+    appMetaRepo: createAppMetaRepo(db),
+    cardsRepo: createCardsRepo(db),
+    setsRepo: createSetsRepo(db),
+    holdingsRepo: createHoldingsRepo(db),
+    bindersRepo: createBindersRepo(db),
+    binderSlotsRepo: createBinderSlotsRepo(db),
+    lotsRepo: createLotsRepo(db),
+    lotItemsRepo: createLotItemsRepo(db),
+    wishlistRepo: createWishlistRepo(db),
+  });
+  return service.buildSnapshot();
+}
+
+function buildErrorPanel(caught: unknown): HTMLElement {
+  const wrap = document.createElement('section');
+  wrap.className = 'dashboard-view__error';
+  wrap.dataset['region'] = 'error';
+  const heading = document.createElement('h2');
+  heading.textContent = 'Kunne ikke laste dashboard';
+  wrap.appendChild(heading);
+  const message = document.createElement('p');
+  message.textContent =
+    caught instanceof Error
+      ? `Feil: ${caught.message}`
+      : 'En ukjent feil hindret innhenting av data.';
+  wrap.appendChild(message);
+  const recovery = document.createElement('p');
+  recovery.textContent =
+    'Samlingen din er trygg. Gå til Backup og eksporter en sikkerhetskopi, deretter til Innstillinger for å sjekke databasestatus.';
+  wrap.appendChild(recovery);
+  const actions = document.createElement('div');
+  actions.className = 'dashboard-view__error-actions';
+  actions.appendChild(navButton('Til Backup', 'backup'));
+  actions.appendChild(navButton('Til Innstillinger', 'settings'));
+  wrap.appendChild(actions);
+  return wrap;
+}
+
+// ---------------------------------------------------------------------
+// Action strip
+
+function buildActionStrip(snapshot: DashboardSnapshot): HTMLElement {
+  const strip = document.createElement('section');
+  strip.className = 'dashboard-strip';
+  strip.dataset['region'] = 'action-strip';
+
+  const items = filterStripItems(snapshot.actions);
+  if (items.length === 0) {
+    strip.classList.add('dashboard-strip--empty');
+    const ok = document.createElement('p');
+    ok.className = 'dashboard-strip__ok';
+    ok.textContent = 'Ingenting krever oppmerksomhet akkurat nå.';
+    strip.appendChild(ok);
+    return strip;
+  }
+
+  const heading = document.createElement('h2');
+  heading.className = 'dashboard-strip__heading';
+  heading.textContent = `${items.length} sak${items.length === 1 ? '' : 'er'} krever oppmerksomhet`;
+  strip.appendChild(heading);
+
+  const list = document.createElement('ul');
+  list.className = 'dashboard-strip__list';
+  for (const item of items) {
+    list.appendChild(buildActionItem(item));
+  }
+  strip.appendChild(list);
+  return strip;
+}
+
+function buildActionItem(item: ActionItem): HTMLElement {
+  const li = document.createElement('li');
+  li.className = `dashboard-strip__item dashboard-strip__item--${item.severity}`;
+  li.dataset['actionId'] = item.id;
+  li.dataset['severity'] = item.severity;
+
+  const chip = document.createElement('span');
+  chip.className = SEVERITY_CHIP_CLASS[item.severity];
+  chip.textContent = item.severity === 'critical' ? 'critical' : 'warning';
+  li.appendChild(chip);
+
+  const body = document.createElement('div');
+  body.className = 'dashboard-strip__item-body';
+  const title = document.createElement('p');
+  title.className = 'dashboard-strip__item-title';
+  title.textContent = item.title;
+  body.appendChild(title);
+  const message = document.createElement('p');
+  message.className = 'dashboard-strip__item-message';
+  message.textContent = item.message;
+  body.appendChild(message);
+  li.appendChild(body);
+
+  if (item.goTo !== undefined) {
+    li.appendChild(navButton('Gå til', item.goTo));
+  }
+  return li;
+}
+
+// ---------------------------------------------------------------------
+// Section cards
+
+function buildDatabaseHealthCard(snapshot: DashboardSnapshot): HTMLElement {
+  const card = sectionCard('Database Health', 'database-health', 'settings');
+  const stats = document.createElement('dl');
+  stats.className = 'dashboard-card__stats';
+  appendStat(stats, 'Schema version', snapshot.databaseHealth.schemaVersion === null ? '–' : `v${snapshot.databaseHealth.schemaVersion}`);
+  appendStat(
+    stats,
+    'Persistent storage',
+    snapshot.databaseHealth.persistentStorageGranted ? 'innvilget' : 'ikke innvilget',
+  );
+  appendStat(stats, 'Card cache', String(snapshot.databaseHealth.cardCacheCount));
+  appendStat(stats, 'Set cache', String(snapshot.databaseHealth.setCacheCount));
+  appendStat(stats, 'Live holdings', String(snapshot.databaseHealth.liveHoldingsCount));
+  appendStat(stats, 'Live binders', String(snapshot.databaseHealth.liveBindersCount));
+  appendStat(stats, 'Live lots', String(snapshot.databaseHealth.liveLotsCount));
+  card.appendChild(stats);
+  return card;
+}
+
+function buildSyncCard(snapshot: DashboardSnapshot): HTMLElement {
+  const card = sectionCard('Sync', 'sync', 'settings');
+  const stats = document.createElement('dl');
+  stats.className = 'dashboard-card__stats';
+  appendStat(
+    stats,
+    'Siste sync',
+    snapshot.sync.lastSyncAt === null
+      ? 'aldri'
+      : snapshot.sync.lastSyncAt.slice(0, 10),
+  );
+  appendStat(
+    stats,
+    'Status',
+    snapshot.sync.lastSyncStatus === null ? '–' : snapshot.sync.lastSyncStatus,
+  );
+  appendStat(stats, 'Cards', String(snapshot.sync.cardCacheCount));
+  appendStat(stats, 'Sets', String(snapshot.sync.setCacheCount));
+  card.appendChild(stats);
+  if (snapshot.sync.lastSyncError !== null) {
+    const err = document.createElement('p');
+    err.className = 'dashboard-card__warning';
+    err.textContent = `Feil: ${snapshot.sync.lastSyncError}`;
+    card.appendChild(err);
+  }
+  return card;
+}
+
+function buildBackupCard(snapshot: DashboardSnapshot): HTMLElement {
+  const card = sectionCard('Backup', 'backup', 'backup');
+  const stats = document.createElement('dl');
+  stats.className = 'dashboard-card__stats';
+  appendStat(
+    stats,
+    'Siste backup',
+    snapshot.backup.lastBackupAt === null
+      ? 'aldri'
+      : snapshot.backup.lastBackupAt.slice(0, 10),
+  );
+  appendStat(
+    stats,
+    'Holdings ved siste backup',
+    snapshot.backup.lastBackupHoldingCount === null
+      ? '–'
+      : String(snapshot.backup.lastBackupHoldingCount),
+  );
+  appendStat(
+    stats,
+    'Holdings nå',
+    String(snapshot.backup.liveHoldingsCount),
+  );
+  appendStat(
+    stats,
+    'Endring',
+    snapshot.backup.holdingsSinceLastBackup === 0
+      ? '0'
+      : snapshot.backup.holdingsSinceLastBackup > 0
+        ? `+${snapshot.backup.holdingsSinceLastBackup}`
+        : String(snapshot.backup.holdingsSinceLastBackup),
+  );
+  if (snapshot.backup.daysSinceLastBackup !== null) {
+    appendStat(
+      stats,
+      'Dager siden',
+      String(snapshot.backup.daysSinceLastBackup),
+    );
+  }
+  card.appendChild(stats);
+  return card;
+}
+
+function buildCollectionCard(snapshot: DashboardSnapshot): HTMLElement {
+  const card = sectionCard('Collection', 'collection', 'collection');
+  const stats = document.createElement('dl');
+  stats.className = 'dashboard-card__stats';
+  const c = snapshot.collection;
+  appendStat(stats, 'Live holdings', String(c.liveCount));
+  appendStat(stats, 'Slettede', String(c.deletedCount));
+  appendStat(stats, 'Unike kort', String(c.uniqueCardIds));
+  appendStat(stats, 'Raw / Graded', `${c.rawCount} / ${c.gradedCount}`);
+  appendStat(stats, 'Mangler tilstand', String(c.missingConditionCount));
+  appendStat(stats, 'Mangler verdi', String(c.missingValueCount));
+  appendStat(stats, 'Ikke i perm', String(c.notInBinderCount));
+  appendStat(stats, 'Duplikater', String(c.duplicateStatusCount));
+  appendStat(stats, 'Trenger oppgradering', String(c.upgradeNeededCount));
+  card.appendChild(stats);
+  card.appendChild(
+    csvButton('Eksporter collection.csv', 'collection'),
+  );
+  card.appendChild(
+    csvButton('Eksporter duplicates.csv', 'duplicates'),
+  );
+  return card;
+}
+
+function buildBindersCard(snapshot: DashboardSnapshot): HTMLElement {
+  const card = sectionCard('Binders', 'binders', 'binders');
+  const stats = document.createElement('dl');
+  stats.className = 'dashboard-card__stats';
+  appendStat(stats, 'Antall', String(snapshot.binders.count));
+  appendStat(
+    stats,
+    'Snitt completion',
+    `${snapshot.binders.averageCompletionPercent}%`,
+  );
+  appendStat(
+    stats,
+    'Mål-slots',
+    String(snapshot.binders.totalTargetSlots),
+  );
+  appendStat(
+    stats,
+    'Fullført',
+    String(snapshot.binders.totalCompletedSlots),
+  );
+  appendStat(
+    stats,
+    'Mangler',
+    String(snapshot.binders.totalMissingSlots),
+  );
+  card.appendChild(stats);
+
+  if (snapshot.binders.topByCompletion.length > 0) {
+    const topHeading = document.createElement('h3');
+    topHeading.className = 'dashboard-card__sub-heading';
+    topHeading.textContent = 'Top 3 binders';
+    card.appendChild(topHeading);
+    card.appendChild(buildTopBindersList(snapshot.binders));
+  }
+  card.appendChild(csvButton('Eksporter missing-cards.csv', 'missing-cards'));
+  return card;
+}
+
+function buildTopBindersList(binders: BindersSection): HTMLElement {
+  const list = document.createElement('ul');
+  list.className = 'dashboard-card__top-list';
+  for (const summary of binders.topByCompletion) {
+    const li = document.createElement('li');
+    li.className = 'dashboard-card__top-item';
+    const name = document.createElement('button');
+    name.type = 'button';
+    name.className = 'dashboard-card__top-name';
+    name.textContent = summary.binder.name;
+    name.addEventListener('click', () => navigateToBinder(summary.binder.id));
+    li.appendChild(name);
+    const pct = document.createElement('span');
+    pct.className = 'dashboard-card__top-percent';
+    pct.textContent = `${summary.completion.percentage}%`;
+    li.appendChild(pct);
+    list.appendChild(li);
+  }
+  return list;
+}
+
+function buildLotsCard(snapshot: DashboardSnapshot): HTMLElement {
+  const card = sectionCard('Lots / Bulk', 'lots', 'lots');
+  const stats = document.createElement('dl');
+  stats.className = 'dashboard-card__stats';
+  appendStat(stats, 'Antall', String(snapshot.lots.count));
+  appendStat(
+    stats,
+    'Ufordelte',
+    String(snapshot.lots.unallocatedCount),
+  );
+  appendStat(
+    stats,
+    'Materialiserte',
+    String(snapshot.lots.materializedCount),
+  );
+  appendStat(
+    stats,
+    'Ubalanserte',
+    String(snapshot.lots.imbalancedCount),
+  );
+  card.appendChild(stats);
+  if (snapshot.lots.totalsByCurrency.length > 0) {
+    const totals = document.createElement('p');
+    totals.className = 'dashboard-card__totals';
+    totals.textContent =
+      'Total kjøpsverdi: ' +
+      snapshot.lots.totalsByCurrency
+        .map((row) => `${row.total.toFixed(2)} ${row.currency}`)
+        .join(' · ');
+    card.appendChild(totals);
+  }
+  return card;
+}
+
+function buildWishlistCard(snapshot: DashboardSnapshot): HTMLElement {
+  const card = sectionCard(
+    'Wishlist / Action Needed',
+    'wishlist',
+    'wishlist',
+  );
+  const stats = document.createElement('dl');
+  stats.className = 'dashboard-card__stats';
+  appendStat(stats, 'Wanted', String(snapshot.wishlist.wantedCount));
+  appendStat(stats, 'Ordered', String(snapshot.wishlist.orderedCount));
+  appendStat(stats, 'Received', String(snapshot.wishlist.receivedCount));
+  appendStat(stats, 'Cancelled', String(snapshot.wishlist.cancelledCount));
+  card.appendChild(stats);
+
+  if (snapshot.wishlist.grailItems.length > 0) {
+    const heading = document.createElement('h3');
+    heading.className = 'dashboard-card__sub-heading';
+    heading.textContent = 'Grail-items';
+    card.appendChild(heading);
+    const list = document.createElement('ul');
+    list.className = 'dashboard-card__top-list';
+    for (const entry of snapshot.wishlist.grailItems) {
+      const li = document.createElement('li');
+      li.className = 'dashboard-card__top-item';
+      const link = document.createElement('button');
+      link.type = 'button';
+      link.className = 'dashboard-card__top-name';
+      link.textContent = entry.cardId;
+      link.addEventListener('click', () => navigateToCard(entry.cardId));
+      li.appendChild(link);
+      const status = document.createElement('span');
+      status.className = 'dashboard-card__top-percent';
+      status.textContent = entry.status;
+      li.appendChild(status);
+      list.appendChild(li);
+    }
+    card.appendChild(list);
+  }
+  card.appendChild(csvButton('Eksporter wishlist.csv', 'wishlist'));
+  return card;
+}
+
+// ---------------------------------------------------------------------
+// Reusable bits
+
+function sectionCard(
+  title: string,
+  region: string,
+  goTo: SidebarRoute,
+): HTMLElement {
+  const card = document.createElement('article');
+  card.className = 'dashboard-card';
+  card.dataset['region'] = `card-${region}`;
+
+  const header = document.createElement('header');
+  header.className = 'dashboard-card__header';
+  const heading = document.createElement('h2');
+  heading.className = 'dashboard-card__title';
+  heading.textContent = title;
+  header.appendChild(heading);
+  header.appendChild(navButton('Åpne', goTo));
+  card.appendChild(header);
+  return card;
+}
+
+function navButton(label: string, route: SidebarRoute): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'dashboard-card__nav';
+  btn.dataset['action'] = 'nav';
+  btn.dataset['route'] = route;
+  btn.textContent = label;
+  btn.addEventListener('click', () => navigate(route));
+  return btn;
+}
+
+function csvButton(label: string, kind: MvpCsvKind): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'dashboard-card__csv';
+  btn.dataset['action'] = 'export-csv';
+  btn.dataset['kind'] = kind;
+  btn.textContent = label;
+  btn.addEventListener('click', () => {
+    void handleCsvExport(kind);
+  });
+  return btn;
+}
+
+function appendStat(dl: HTMLDListElement, label: string, value: string): void {
+  const dt = document.createElement('dt');
+  dt.textContent = label;
+  dl.appendChild(dt);
+  const dd = document.createElement('dd');
+  dd.textContent = value;
+  dl.appendChild(dd);
+}
+
+async function handleCsvExport(kind: MvpCsvKind): Promise<void> {
+  const db = getDb();
+  const exporter = createMvpCsvExporter({
+    db,
+    holdingsRepo: createHoldingsRepo(db),
+    bindersRepo: createBindersRepo(db),
+    binderSlotsRepo: createBinderSlotsRepo(db),
+    cardsRepo: createCardsRepo(db),
+    setsRepo: createSetsRepo(db),
+    wishlistRepo: createWishlistRepo(db),
+  });
+  let result;
+  switch (kind) {
+    case 'collection':
+      result = await exporter.buildCollection();
+      break;
+    case 'wishlist':
+      result = await exporter.buildWishlist();
+      break;
+    case 'duplicates':
+      result = await exporter.buildDuplicates();
+      break;
+    case 'missing-cards':
+      result = await exporter.buildMissingCards();
+      break;
+  }
+  downloadTextFile(result.filename, result.content, {
+    mimeType: 'text/csv',
+  });
+  await exporter.recordCsvExported(kind, result.rowCount);
 }
