@@ -399,11 +399,20 @@ function renderPreview(
     String(result.summary.totalSlotCount),
   );
 
-  // Vault X presets have a fixed physical capacity. Show it so the
-  // user can see how much room is left and whether their target list
-  // fits.
+  // Vault X presets have a fixed physical capacity. Show that as the
+  // primary "Perm-sider" / "Permkapasitet"; the target list's own
+  // page count is only useful as "how much of the physical binder
+  // the targets fill", so we surface it as "Mål bruker ca." instead
+  // of the bare "Sider" we showed previously (which was misleading —
+  // a Vault X 12-pocket XL is always 52 pages regardless of what
+  // you put in it).
   if (preset.id !== 'custom') {
-    appendDt(list, 'Permkapasitet', `${preset.capacity}`);
+    appendDt(list, 'Perm-sider', String(preset.totalPages));
+    appendDt(list, 'Permkapasitet', String(preset.capacity));
+    const targetPagesUsed = Math.ceil(
+      result.summary.totalSlotCount / preset.slotsPerPage,
+    );
+    appendDt(list, 'Mål bruker ca.', `${targetPagesUsed} sider`);
     const remaining = preset.capacity - result.summary.totalSlotCount;
     if (remaining >= 0) {
       appendDt(list, 'Ledige slots', String(remaining));
@@ -414,8 +423,11 @@ function renderPreview(
         `${-remaining} mer enn permen rommer`,
       );
     }
+  } else {
+    // Custom binder — no fixed physical size, so the target's own
+    // page count is what the user gets.
+    appendDt(list, 'Sider', String(result.summary.totalPages));
   }
-  appendDt(list, 'Sider', String(result.summary.totalPages));
 }
 
 function appendDt(list: HTMLElement, label: string, value: string): void {

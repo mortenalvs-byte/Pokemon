@@ -244,4 +244,111 @@ describe('replaceRestore', () => {
     const stillThere = await db.holdings.get(created.id);
     expect(stillThere).toBeDefined();
   });
+
+  // PR 14 — pre-PR-14 backups carry binder rows without the
+  // `binderPreset` field. Restore must back-fill it before persisting,
+  // so the binders list view's `binderPreset !== null` guard does not
+  // crash on an `undefined` value.
+  it('back-fills binderPreset = legacy_18 when an old backup row has slotsPerPage 18', async () => {
+    const legacyBinder = {
+      id: 'legacy-binder-1',
+      name: 'Old 18-slot perm',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 18,
+      // Intentionally NO binderPreset key — simulates a pre-PR-14
+      // backup payload where the field did not exist.
+      completionMode: 'standard',
+      sourceSetId: null,
+      createdAt: '2025-12-01T00:00:00.000Z',
+      updatedAt: '2025-12-01T00:00:00.000Z',
+      deletedAt: null,
+    } as unknown as BackupFile['binders'][number];
+
+    const backup = emptyBackup({ binders: [legacyBinder] });
+    await replaceRestore(db, backup, {
+      preRestoreBackup: okPreRestoreBackup,
+    });
+
+    const restored = await db.binders.get('legacy-binder-1');
+    expect(restored?.binderPreset).toBe('legacy_18');
+    expect(restored?.slotsPerPage).toBe(18);
+    expect(restored?.name).toBe('Old 18-slot perm');
+  });
+
+  it('back-fills binderPreset = custom when an old backup row has slotsPerPage 9', async () => {
+    const legacyBinder = {
+      id: 'legacy-binder-2',
+      name: 'Old 9-slot perm',
+      description: null,
+      binderType: null,
+      totalPages: 4,
+      slotsPerPage: 9,
+      completionMode: 'standard',
+      sourceSetId: null,
+      createdAt: '2025-12-01T00:00:00.000Z',
+      updatedAt: '2025-12-01T00:00:00.000Z',
+      deletedAt: null,
+    } as unknown as BackupFile['binders'][number];
+
+    const backup = emptyBackup({ binders: [legacyBinder] });
+    await replaceRestore(db, backup, {
+      preRestoreBackup: okPreRestoreBackup,
+    });
+
+    const restored = await db.binders.get('legacy-binder-2');
+    expect(restored?.binderPreset).toBe('custom');
+    expect(restored?.slotsPerPage).toBe(9);
+  });
+
+  it('back-fills binderPreset when the field is explicitly null (legacy export with the field present)', async () => {
+    const legacyBinder = {
+      id: 'legacy-binder-3',
+      name: 'Explicit null',
+      description: null,
+      binderType: null,
+      totalPages: 2,
+      slotsPerPage: 18,
+      binderPreset: null,
+      completionMode: 'master',
+      sourceSetId: null,
+      createdAt: '2025-12-01T00:00:00.000Z',
+      updatedAt: '2025-12-01T00:00:00.000Z',
+      deletedAt: null,
+    } as unknown as BackupFile['binders'][number];
+
+    const backup = emptyBackup({ binders: [legacyBinder] });
+    await replaceRestore(db, backup, {
+      preRestoreBackup: okPreRestoreBackup,
+    });
+
+    const restored = await db.binders.get('legacy-binder-3');
+    expect(restored?.binderPreset).toBe('legacy_18');
+  });
+
+  it('preserves a non-null binderPreset that the backup already carries', async () => {
+    const moderBinder = {
+      id: 'modern-binder',
+      name: 'Vault X 9-pocket',
+      description: null,
+      binderType: null,
+      totalPages: 40,
+      slotsPerPage: 9,
+      binderPreset: 'vaultx_9_360',
+      completionMode: 'standard',
+      sourceSetId: null,
+      createdAt: '2026-05-06T00:00:00.000Z',
+      updatedAt: '2026-05-06T00:00:00.000Z',
+      deletedAt: null,
+    } as unknown as BackupFile['binders'][number];
+
+    const backup = emptyBackup({ binders: [moderBinder] });
+    await replaceRestore(db, backup, {
+      preRestoreBackup: okPreRestoreBackup,
+    });
+
+    const restored = await db.binders.get('modern-binder');
+    expect(restored?.binderPreset).toBe('vaultx_9_360');
+  });
 });

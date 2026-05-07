@@ -97,7 +97,11 @@ async function seedFixtures(db: PokemonTrackerDB): Promise<void> {
     binderType: null,
     totalPages: 1,
     slotsPerPage: 9,
-    binderPreset: null,
+    // PR 14: modern binders always carry a real preset. Restore's
+    // legacy back-fill (null → 'custom' for 9-slot rows) is verified
+    // separately in tests/backup-restore.test.ts; here we want a
+    // genuine identity round-trip with no normalisation drift.
+    binderPreset: 'custom',
     completionMode: 'master',
     sourceSetId: 'base1',
   });

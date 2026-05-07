@@ -185,6 +185,12 @@ export function createBinderService(db: PokemonTrackerDB): BinderService {
       // Reject any draft that points outside the chosen physical
       // grid. The loop below would otherwise silently drop it,
       // which would hide the user's mistake.
+      // Also reject duplicate physical positions: the placement loop
+      // uses a Map keyed by `page:slot`, so two drafts pointing at
+      // the same cell would have the second silently overwrite the
+      // first. That is exactly the kind of quiet data-loss the
+      // validator should catch up front.
+      const seenPositions = new Set<string>();
       for (const draft of fromSetInput.slots) {
         if (
           !Number.isInteger(draft.pageNumber) ||
@@ -199,6 +205,14 @@ export function createBinderService(db: PokemonTrackerDB): BinderService {
             `draft at page=${draft.pageNumber} slot=${draft.slotNumber} is outside the binder grid (${totalPages} pages × ${slotsPerPage} slots)`,
           );
         }
+        const key = `${draft.pageNumber}:${draft.slotNumber}`;
+        if (seenPositions.has(key)) {
+          throw new ValidationError(
+            'slots',
+            `duplicate draft at page=${draft.pageNumber} slot=${draft.slotNumber}`,
+          );
+        }
+        seenPositions.add(key);
       }
 
       const binderInput: BinderInput = {

@@ -8,6 +8,7 @@
 // mid-transaction failure leaves the original database intact.
 
 import { isIsoTimestamp, nowIso } from '../utils/dates';
+import { presetForLegacyRow } from '../domain/binder-presets';
 import {
   APP_META_KEYS,
   SETTINGS_KEYS,
@@ -30,6 +31,27 @@ import { tryPreRestoreAutoBackup } from './auto-backup';
 import type { AutoBackupResult } from './auto-backup';
 import type { PokemonTrackerDB } from './database';
 import { SCHEMA_VERSION } from './schema';
+
+/**
+ * Restore-time normalisation for binder rows. Pre-PR-14 backups and
+ * any tampered JSON may carry rows where `binderPreset` is missing or
+ * `null`; the rest of the app (binders list view, binder form, etc.)
+ * branches on `binderPreset !== null`, which is true for `undefined`
+ * — so feeding `undefined` straight in would crash
+ * `getBinderPresetDefinition()` later.
+ *
+ * Same rule as the v1→v2 schema upgrade hook in `db/schema.ts`:
+ *   slotsPerPage === 18 → legacy_18, else custom.
+ */
+function normaliseBackupBinder(binder: BinderRecord): BinderRecord {
+  if (binder.binderPreset !== undefined && binder.binderPreset !== null) {
+    return binder;
+  }
+  return {
+    ...binder,
+    binderPreset: presetForLegacyRow(binder.slotsPerPage),
+  };
+}
 
 // ---------------------------------------------------------------------
 // Errors
@@ -336,7 +358,13 @@ export async function replaceRestore(
         await db.lotItems.bulkPut(validatedBackup.lotItems);
       }
       if (validatedBackup.binders.length > 0) {
-        await db.binders.bulkPut(validatedBackup.binders);
+        // Normalise `binderPreset` on every binder row before
+        // persisting. Pre-PR-14 backups omit the field; without this
+        // pass the resulting rows would carry `undefined`, which
+        // breaks the binders list view's `binderPreset !== null`
+        // guard the moment the user opens Permer.
+        const normalised = validatedBackup.binders.map(normaliseBackupBinder);
+        await db.binders.bulkPut(normalised);
       }
       if (validatedBackup.binderSlots.length > 0) {
         await db.binderSlots.bulkPut(validatedBackup.binderSlots);

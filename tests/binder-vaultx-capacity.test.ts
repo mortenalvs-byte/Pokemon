@@ -207,4 +207,31 @@ describe('binder-service.createBinderFromSet — Vault X capacity-fill', () => {
     ).rejects.toBeInstanceOf(ValidationError);
     expect(await db.binders.count()).toBe(0);
   });
+
+  // PR 14 review patch: two drafts pointing at the exact same physical
+  // cell would otherwise be silently merged by the placement Map (the
+  // second overwrites the first), losing user data without any signal.
+  // The service must reject the input before opening the transaction.
+  it('rejects two drafts that target the same physical slot', async () => {
+    await expect(
+      createBinderService(db).createBinderFromSet({
+        binder: {
+          name: 'Dup',
+          description: null,
+          binderType: null,
+          slotsPerPage: 9,
+          binderPreset: 'vaultx_9_360',
+          completionMode: 'standard',
+          sourceSetId: 'base1',
+        },
+        slots: [
+          { pageNumber: 1, slotNumber: 1, targetCardId: 'a', note: null },
+          { pageNumber: 1, slotNumber: 1, targetCardId: 'b', note: null },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(await db.binders.count()).toBe(0);
+    expect(await db.binderSlots.count()).toBe(0);
+    expect(await db.auditLog.count()).toBe(0);
+  });
 });
