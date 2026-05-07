@@ -6,10 +6,12 @@
 // pagination / navigation paths still never write.
 
 import { openDialog } from '../components/dialog';
-import { onUserDataChanged } from '../components/events';
+import { onUserDataChanged, USER_DATA_CHANGED_EVENT } from '../components/events';
 import { buildHoldingForm } from '../components/holding-form';
 import { buildWishlistForm } from '../components/wishlist-form';
+import { decideQuickAdd, type QuickAddDefault } from '../components/quick-add';
 import { getDb } from '../db/database';
+import { ValidationError } from '../domain/validators';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createHoldingsRepo } from '../repositories/holdings-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
@@ -27,6 +29,11 @@ import {
 import { navigate, navigateToCard } from '../router';
 import { createLazyImage } from '../utils/lazy-image';
 
+interface QuickAddFeedback {
+  readonly kind: 'created' | 'merged' | 'error';
+  readonly text: string;
+}
+
 interface BrowseState {
   search: string;
   setId: string;
@@ -37,6 +44,13 @@ interface BrowseState {
   sortDirection: SortDirection;
   page: number;
   pageSize: BrowsePageSize;
+  /**
+   * PR 15B — per-card feedback chip state for Quick Add. Held on the
+   * view state (not on the DOM) so a `USER_DATA_CHANGED_EVENT`
+   * rerender re-applies it to the freshly built row instead of
+   * wiping it.
+   */
+  quickAddFeedback: Map<string, QuickAddFeedback>;
 }
 
 const SEARCH_DEBOUNCE_MS = 150;
@@ -143,6 +157,7 @@ export function mountBrowseView(
     sortDirection: 'desc',
     page: 0,
     pageSize: 50,
+    quickAddFeedback: new Map(),
   };
 
   const service = createBrowseService(
@@ -377,7 +392,7 @@ async function rerenderRows(
     refs.rowsRegion.appendChild(tr);
   } else {
     for (const row of result.rows) {
-      refs.rowsRegion.appendChild(buildRow(row));
+      refs.rowsRegion.appendChild(buildRow(row, state));
     }
   }
 
@@ -387,7 +402,7 @@ async function rerenderRows(
   refs.nextButton.disabled = state.page + 1 >= totalPages;
 }
 
-function buildRow(row: BrowseCardRow): HTMLTableRowElement {
+function buildRow(row: BrowseCardRow, state: BrowseState): HTMLTableRowElement {
   const tr = document.createElement('tr');
   tr.className = 'browse-table__row';
   tr.dataset['cardId'] = row.card.id;
@@ -430,6 +445,44 @@ function buildRow(row: BrowseCardRow): HTMLTableRowElement {
   // Actions
   const actionsCell = document.createElement('td');
   actionsCell.className = 'browse-table__actions';
+
+  // PR 15B — Quick Add Raw. Single click adds a raw NM holding for
+  // the row's verified default finish/edition via
+  // `holdingsRepo.upsertByVariant`, so a second click on the same
+  // card increments the quantity instead of creating a duplicate
+  // row. Disabled when the card has no API-verified variant — the
+  // user is sent to the full form for those.
+  const quickAddDecision = decideQuickAdd(row.card);
+  const quickAdd = document.createElement('button');
+  quickAdd.type = 'button';
+  quickAdd.dataset['action'] = 'quick-add-raw';
+  quickAdd.className = 'browse-table__action browse-table__action--quick-add';
+  quickAdd.textContent = '+1 raw';
+  if (quickAddDecision.canQuickAdd && quickAddDecision.defaults !== null) {
+    quickAdd.dataset['finish'] = quickAddDecision.defaults.finish;
+    quickAdd.dataset['edition'] = quickAddDecision.defaults.edition;
+    quickAdd.title = `Legg til 1 raw NM (${quickAddDecision.defaults.finish}, ${quickAddDecision.defaults.edition}). Klikk igjen for å øke antall.`;
+  } else {
+    quickAdd.disabled = true;
+    quickAdd.title = quickAddDecision.reason;
+  }
+  actionsCell.appendChild(quickAdd);
+
+  // Feedback chip rendered next to Quick Add. Empty until the first
+  // click fires; cleared on a timeout. Persists across rerenders by
+  // reading from `state.quickAddFeedback` so a USER_DATA_CHANGED_EVENT
+  // refresh does not wipe the chip mid-animation.
+  const feedback = document.createElement('span');
+  feedback.className = 'browse-table__quick-add-feedback';
+  feedback.dataset['region'] = 'quick-add-feedback';
+  feedback.setAttribute('role', 'status');
+  feedback.setAttribute('aria-live', 'polite');
+  const persisted = state.quickAddFeedback.get(row.card.id);
+  if (persisted !== undefined) {
+    feedback.textContent = persisted.text;
+    feedback.classList.add(`browse-table__quick-add-feedback--${persisted.kind}`);
+  }
+  actionsCell.appendChild(feedback);
 
   const addCollection = document.createElement('button');
   addCollection.type = 'button';
@@ -558,6 +611,23 @@ function attachEventListeners(
         void openAddToWishlist(cardId);
         return;
       }
+      if (action === 'quick-add-raw') {
+        const finish = button.dataset['finish'];
+        const edition = button.dataset['edition'];
+        if (finish === undefined || edition === undefined) return;
+        void runQuickAddRaw(
+          cardId,
+          button,
+          {
+            finish: finish as QuickAddDefault['finish'],
+            edition: edition as QuickAddDefault['edition'],
+          },
+          state,
+          refs,
+          service,
+        );
+        return;
+      }
       // Unknown enabled button: do not navigate.
       return;
     }
@@ -586,4 +656,104 @@ async function openAddToCollection(cardId: string): Promise<void> {
 
 async function openAddToWishlist(cardId: string): Promise<void> {
   await openDialog(buildWishlistForm({ mode: 'add', cardId }));
+}
+
+const QUICK_ADD_FEEDBACK_TIMEOUT_MS = 2500;
+
+/**
+ * PR 15B Quick Add Raw. Builds a minimal raw-NM `HoldingInput` from
+ * the row's verified defaults and calls `holdingsRepo.upsertByVariant`.
+ * The repo runs the full variant validator at submit time, so a user
+ * who tampered with the data attribute via devtools is rejected the
+ * same way the holding form's repo bypass test in PR 13 confirms.
+ *
+ * The feedback chip next to the button shows:
+ *   - "Lagt til" when a fresh holding row was created
+ *   - "+N → M" (e.g. "+1 → 4") when an existing row's quantity grew
+ *   - "Feil" when the repo throws (typically a `ValidationError`).
+ *     The button's tooltip carries the message.
+ */
+async function runQuickAddRaw(
+  cardId: string,
+  button: HTMLElement,
+  defaults: QuickAddDefault,
+  state: BrowseState,
+  refs: ViewRefs,
+  service: BrowseService,
+): Promise<void> {
+  // Disable the button for the duration of the write so a double-tap
+  // can't fire two requests against the same row.
+  if (button instanceof HTMLButtonElement) button.disabled = true;
+  try {
+    const repo = createHoldingsRepo(getDb());
+    const result = await repo.upsertByVariant({
+      cardId,
+      quantity: 1,
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      certNumber: null,
+      certUrl: null,
+      gradedDate: null,
+      finish: defaults.finish,
+      edition: defaults.edition,
+      language: 'en',
+      purchasePrice: null,
+      purchaseCurrency: null,
+      estimatedValue: null,
+      valueCurrency: null,
+      valueSource: 'unknown',
+      valueNote: null,
+      valueUpdatedAt: null,
+      source: 'manual',
+      note: null,
+      specialVariant: false,
+      tags: [],
+      lotId: null,
+      status: 'owned',
+    });
+    if (result.action === 'merged') {
+      const previous = result.previousQuantity ?? 0;
+      state.quickAddFeedback.set(cardId, {
+        kind: 'merged',
+        text: `+1 → ${result.holding.quantity} (var ${previous})`,
+      });
+    } else {
+      state.quickAddFeedback.set(cardId, {
+        kind: 'created',
+        text: 'Lagt til',
+      });
+    }
+    // Cross-view refresh: Card detail / Collection / Dashboard listen
+    // for this. PR 15A's AbortController contract ensures only the
+    // currently-mounted view re-renders. Browse's own listener also
+    // fires — `buildRow` reads `state.quickAddFeedback` so the chip
+    // survives the rerender.
+    window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
+  } catch (caught) {
+    state.quickAddFeedback.set(cardId, { kind: 'error', text: 'Feil' });
+    if (button instanceof HTMLButtonElement) {
+      button.title =
+        caught instanceof ValidationError
+          ? `Quick Add avvist: ${caught.message}`
+          : caught instanceof Error
+            ? `Quick Add feilet: ${caught.message}`
+            : 'Quick Add feilet av en ukjent grunn.';
+    }
+    // Trigger a Browse-only rerender to surface the chip even when
+    // we did not dispatch USER_DATA_CHANGED_EVENT (no data was
+    // written, so other views shouldn't refresh).
+    void rerenderRows(refs, service, state);
+  } finally {
+    if (button instanceof HTMLButtonElement) button.disabled = false;
+  }
+
+  setTimeout(() => {
+    state.quickAddFeedback.delete(cardId);
+    // Only rerender if the Browse view is still mounted.
+    if (refs.rowsRegion.isConnected) {
+      void rerenderRows(refs, service, state);
+    }
+  }, QUICK_ADD_FEEDBACK_TIMEOUT_MS);
 }
