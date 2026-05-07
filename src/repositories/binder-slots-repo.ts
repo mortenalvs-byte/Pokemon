@@ -103,10 +103,16 @@ export function createBinderSlotsRepo(db: PokemonTrackerDB): BinderSlotsRepo {
       validateBinderSlotInput(merged, slotsPerPage);
       await db.binderSlots.put(merged);
 
+      // Audit precedence: an assignment (holdingId set to a real id) is the
+      // most meaningful event, so it wins even when status also changes.
+      // A bare status flip (e.g. wanted -> ordered) is the next most
+      // interesting; everything else is a generic update.
       const action =
-        changes.status !== undefined
-          ? 'binder_slot_status_changed'
-          : 'binder_slot_updated';
+        changes.holdingId !== undefined && changes.holdingId !== null
+          ? 'binder_slot_assigned'
+          : changes.status !== undefined
+            ? 'binder_slot_status_changed'
+            : 'binder_slot_updated';
       await appendAudit(db, {
         action,
         entityType: 'binderSlot',
