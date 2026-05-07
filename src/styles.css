@@ -1975,6 +1975,47 @@ body {
   font-size: 13px;
 }
 
+/* PR 20 — page-at-a-time pagination for Sider and Sjekkliste modes
+   in binder detail. Renders only the current page's slots / 50 rows
+   so a 1088-slot Vault X 16-pocket binder stays cheap. */
+.binder-detail-view__pages-nav,
+.binder-detail-view__checklist-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+}
+
+.binder-detail-view__pages-nav button,
+.binder-detail-view__checklist-nav button {
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  cursor: pointer;
+  font: inherit;
+}
+
+.binder-detail-view__pages-nav button:disabled,
+.binder-detail-view__checklist-nav button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.binder-detail-view__filter-note {
+  margin: var(--space-2) 0;
+  padding: var(--space-2);
+  background: rgba(255, 167, 38, 0.08);
+  border-left: 3px solid var(--color-warning, #ef6c00);
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
 /* PR 17 — search inside binder. */
 .binder-detail-view__search {
   display: flex;

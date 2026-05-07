@@ -184,12 +184,28 @@ describe('Binder detail (PR 17 — search, filters, deep-link)', () => {
     return !tile.classList.contains('binder-slot--filtered-out');
   }
 
-  it('renders all slots when filter=all and search is empty', async () => {
+  it('renders the current page\'s slots when filter=all and search is empty', async () => {
+    // PR 20 — Sider mode now paginates one physical page at a time.
+    // Page 1 holds Alakazam, Charizard, blank manual slot.
+    // Page 2 holds Pikachu — visible only after clicking Neste.
     mountBinderDetailView(root());
     await settle();
     expect(slotIsVisible(charizardSlotId)).toBe(true);
     expect(slotIsVisible(alakazamSlotId)).toBe(true);
     expect(slotIsVisible(blakeSlotId)).toBe(true);
+    // Page 2 slots are not in DOM until the user paginates.
+    expect(
+      root().querySelector(
+        `[data-slot-id="${escapeSelectorValue(pikachuSlotId)}"]`,
+      ),
+    ).toBeNull();
+    // Click Neste — Pikachu now renders.
+    const next = root().querySelector<HTMLButtonElement>(
+      '[data-action="pages-next"]',
+    );
+    expect(next).not.toBeNull();
+    next!.click();
+    await settle();
     expect(slotIsVisible(pikachuSlotId)).toBe(true);
   });
 
