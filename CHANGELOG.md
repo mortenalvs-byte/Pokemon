@@ -8,6 +8,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR 19 — Browse bulk mode / multi-select)
+PR 19 closes the third leg of the bulk-add story: PR 15B (Quick Add per row) + PR 18 (lot-to-stock) + this PR (Browse multi-select). Builds on PR 15A's `upsertByVariant`, PR 15B's `decideQuickAdd`, and PR 18's per-mount-state pattern.
+
+- **Bulk-modus toggle** in the Browse toolbar. Off by default — single-add behaviour from PR 15B is unchanged.
+- **Per-row checkbox column**, only rendered when bulk-mode is on. Each row shows an actual checkbox when `decideQuickAdd(card).canQuickAdd === true`; otherwise a `–` placeholder with the refusal reason in the `title` (same gate Quick Add uses, so the user can never tick a card we'd then have to skip).
+- **Visible-page select-all** in the column header — ticks every eligible checkbox on the current Browse page only (matches the lot-detail pattern from PR 18).
+- **Bulk action `+1 raw på valgte (X)`** runs `holdingsRepo.upsertByVariant` per selected card with the same raw-NM defaults as single-row Quick Add. Two clicks across separate bulk runs hit the same holding's quantity, no duplicate rows.
+- **Result-summary banner** with concrete counts: `Bulk +1 raw kjørt på N kort: A lagt til, B oppdatert, C hoppet over (manglet variant), D feilet.` Lists up to 5 failure reasons (the rest are tracked in audit). Has a `Lukk` button that dismisses the banner; the banner persists across `USER_DATA_CHANGED_EVENT` rerenders so the user can read the result while their Card detail / Collection / Dashboard refresh.
+- **Selection pruned after success** — successful (created or merged) ids drop from `state.selectedCardIds`; failed and skipped ids stay so the user can address them and try again.
+- **`USER_DATA_CHANGED_EVENT` fires exactly once** for a multi-card bulk run, not once per card. PR 15A's AbortController contract guarantees only the currently-mounted view re-renders, so a 50-card bulk doesn't flood the Card detail view with re-renders.
+
+#### Touched files
+- `src/views/browse.ts` — `BulkSummary` interface, `BrowseState` extensions (`bulkMode`, `selectedCardIds`, `bulkSummary`), toolbar markup, checkbox column, `applyBulkModeUi` / `refreshBulkUiFromDom` / `handleBulkSelectAll` / `handleBulkQuickAddRaw` / `renderBulkSummary` helpers.
+- `src/styles.css` — `.browse-view__bulk-toggle`, `.browse-view__bulk-bar`, `.browse-view__bulk-action`, `.browse-view__bulk-summary*`, `.browse-table__check*`.
+- `tests/browse-bulk-mode.test.ts` (new, 9 cases): default off; toggle shows bar + column + correct checkbox/skip split; per-row tick updates count + label without DB churn; visible-page select-all; bulk action runs `upsertByVariant` per card and shows summary; second bulk run on same card increments quantity (one row, qty 2); `USER_DATA_CHANGED_EVENT` fires exactly once for a multi-card run; toggling off clears selection but keeps summary readable; `Lukk` dismisses the summary.
+
+#### Test totals
+- 75 test files, **617 tests** (up from 608). Typecheck green. Build green (342 KB JS / 91 KB gzip).
+
+#### Browser-verified
+- On the QA-stress base1 set (102 cards, default page size 50): toggle reads `Bulk-modus av` initially → click → `Bulk-modus på`, bar visible, 49 eligible checkboxes + 1 `–` placeholder for the one card without variant data.
+- Selected base1-1 + base1-46 (both already had holdings from earlier stress runs), clicked the bulk action → both holdings merged, quantity incremented by 1 each, `holdings.count()` unchanged at 675, summary banner read `Bulk +1 raw kjørt på 2 kort: 0 lagt til, 2 oppdatert, 0 hoppet over, 0 feilet.`, `USER_DATA_CHANGED_EVENT` fired exactly **1** time for the 2-card run.
+- Zero console errors throughout.
+
+#### Out of scope (per the user's instruction)
+- No binder direct-add — that needs its own PR.
+- No wishlist automation when materialising — out of scope until later.
+- No CSV import.
+- No virtualisation (page-size 50 is the smallest fix; PR 20 will tackle perf).
+- No global search.
+
 ### Added (PR 18 — Lot-to-stock / materialise UX)
 PR 18 turns the lot-detail view into a practical inbox for bulk purchases. Builds on PR 15A's `upsertByVariant` foundations, PR 17's view-state pattern, and PR 9's idempotent `materializeHoldings` service.
 

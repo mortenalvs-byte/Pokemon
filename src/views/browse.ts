@@ -34,6 +34,20 @@ interface QuickAddFeedback {
   readonly text: string;
 }
 
+/**
+ * PR 19 — summary of a bulk Quick Add Raw run. Rendered as a banner
+ * above the table so the user can see the outcome at a glance:
+ *   "Bulk: 5 lagt til, 3 oppdatert, 2 hoppet over (manglet variant), 0 feilet."
+ */
+interface BulkSummary {
+  readonly created: number;
+  readonly merged: number;
+  readonly skippedNoVariant: number;
+  readonly failed: number;
+  /** Names + ids of the cards that failed, for the user to follow up. */
+  readonly failures: readonly { readonly cardId: string; readonly message: string }[];
+}
+
 interface BrowseState {
   search: string;
   setId: string;
@@ -51,6 +65,24 @@ interface BrowseState {
    * wiping it.
    */
   quickAddFeedback: Map<string, QuickAddFeedback>;
+  /**
+   * PR 19 — bulk-mode toggle. When `true`, every Quick-Add-eligible
+   * row renders a checkbox and the toolbar shows a bulk-action
+   * panel. When `false`, the view behaves exactly as before
+   * PR 19 so the single-add flow stays untouched.
+   */
+  bulkMode: boolean;
+  /**
+   * PR 19 — selected card ids in bulk mode. The bulk +1 raw action
+   * iterates this set and calls `holdingsRepo.upsertByVariant` per
+   * card. Cleared after a successful bulk run.
+   */
+  selectedCardIds: Set<string>;
+  /**
+   * PR 19 — last bulk-action result. Rendered as a non-modal banner
+   * until the user dismisses it or navigates away.
+   */
+  bulkSummary: BulkSummary | null;
 }
 
 const SEARCH_DEBOUNCE_MS = 150;
@@ -121,10 +153,26 @@ export function mountBrowseView(
             <option value="100">100</option>
           </select>
         </label>
+        <button type="button" class="browse-view__bulk-toggle" data-action="toggle-bulk-mode" data-region="bulk-toggle" aria-pressed="false">
+          Bulk-modus av
+        </button>
       </div>
+      <div class="browse-view__bulk-bar" data-region="bulk-bar" hidden>
+        <span data-region="bulk-count">0 valgte</span>
+        <button type="button" class="browse-view__bulk-action" data-action="bulk-quick-add" data-region="bulk-action" disabled>
+          +1 raw på valgte (0)
+        </button>
+        <button type="button" class="browse-view__bulk-clear" data-action="bulk-clear" data-region="bulk-clear">
+          Nullstill utvalg
+        </button>
+      </div>
+      <div class="browse-view__bulk-summary" data-region="bulk-summary" hidden role="status" aria-live="polite"></div>
       <table class="browse-table" data-region="table" hidden>
         <thead>
           <tr>
+            <th scope="col" class="browse-table__check-col" data-region="bulk-head" hidden>
+              <input type="checkbox" data-region="bulk-select-all" aria-label="Velg alle synlige" />
+            </th>
             <th scope="col" class="browse-table__image-col"></th>
             <th scope="col">Navn</th>
             <th scope="col">Sett</th>
@@ -158,6 +206,9 @@ export function mountBrowseView(
     page: 0,
     pageSize: 50,
     quickAddFeedback: new Map(),
+    bulkMode: false,
+    selectedCardIds: new Set(),
+    bulkSummary: null,
   };
 
   const service = createBrowseService(
@@ -196,6 +247,15 @@ interface ViewRefs {
   readonly pageSummary: HTMLElement;
   readonly prevButton: HTMLButtonElement;
   readonly nextButton: HTMLButtonElement;
+  // PR 19 — bulk-mode regions
+  readonly bulkToggle: HTMLButtonElement;
+  readonly bulkBar: HTMLElement;
+  readonly bulkCount: HTMLElement;
+  readonly bulkActionBtn: HTMLButtonElement;
+  readonly bulkClearBtn: HTMLButtonElement;
+  readonly bulkSummaryRegion: HTMLElement;
+  readonly bulkHeadCell: HTMLElement;
+  readonly bulkSelectAll: HTMLInputElement;
 }
 
 function collectRefs(container: HTMLElement): ViewRefs | null {
@@ -222,6 +282,17 @@ function collectRefs(container: HTMLElement): ViewRefs | null {
   const pageSummary = get<HTMLElement>('[data-region="page-summary"]');
   const prevButton = get<HTMLButtonElement>('[data-action="prev-page"]');
   const nextButton = get<HTMLButtonElement>('[data-action="next-page"]');
+  // PR 19 bulk-mode refs
+  const bulkToggle = get<HTMLButtonElement>('[data-region="bulk-toggle"]');
+  const bulkBar = get<HTMLElement>('[data-region="bulk-bar"]');
+  const bulkCount = get<HTMLElement>('[data-region="bulk-count"]');
+  const bulkActionBtn = get<HTMLButtonElement>('[data-region="bulk-action"]');
+  const bulkClearBtn = get<HTMLButtonElement>('[data-region="bulk-clear"]');
+  const bulkSummaryRegion = get<HTMLElement>('[data-region="bulk-summary"]');
+  const bulkHeadCell = get<HTMLElement>('[data-region="bulk-head"]');
+  const bulkSelectAll = get<HTMLInputElement>(
+    '[data-region="bulk-select-all"]',
+  );
 
   if (
     !emptyStateRegion ||
@@ -239,7 +310,15 @@ function collectRefs(container: HTMLElement): ViewRefs | null {
     !paginationRegion ||
     !pageSummary ||
     !prevButton ||
-    !nextButton
+    !nextButton ||
+    !bulkToggle ||
+    !bulkBar ||
+    !bulkCount ||
+    !bulkActionBtn ||
+    !bulkClearBtn ||
+    !bulkSummaryRegion ||
+    !bulkHeadCell ||
+    !bulkSelectAll
   ) {
     return null;
   }
@@ -261,6 +340,14 @@ function collectRefs(container: HTMLElement): ViewRefs | null {
     pageSummary,
     prevButton,
     nextButton,
+    bulkToggle,
+    bulkBar,
+    bulkCount,
+    bulkActionBtn,
+    bulkClearBtn,
+    bulkSummaryRegion,
+    bulkHeadCell,
+    bulkSelectAll,
   };
 }
 
@@ -385,7 +472,11 @@ async function rerenderRows(
   if (result.rows.length === 0) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 6;
+    // PR 19 — column count grew by 1 (checkbox col is hidden when
+    // bulk-mode is off, but the colSpan still needs to match the
+    // actual <th> count to render the empty row across the full
+    // width when a filter has zero hits).
+    td.colSpan = state.bulkMode ? 7 : 6;
     td.className = 'browse-table__empty-row';
     td.textContent = 'Ingen kort matcher filtrene.';
     tr.appendChild(td);
@@ -400,6 +491,103 @@ async function rerenderRows(
   refs.pageSummary.textContent = `Side ${state.page + 1} av ${totalPages} — ${result.total} kort`;
   refs.prevButton.disabled = state.page === 0;
   refs.nextButton.disabled = state.page + 1 >= totalPages;
+
+  // PR 19 — refresh the bulk-mode UI in lockstep with the rows. Each
+  // rerender prunes the selection of cards no longer in the result
+  // (filtered out / paginated away) so the count never claims rows
+  // the user can't see.
+  applyBulkModeUi(refs, state, result.rows);
+}
+
+function applyBulkModeUi(
+  refs: ViewRefs,
+  state: BrowseState,
+  visibleRows: readonly BrowseCardRow[],
+): void {
+  const bulkOn = state.bulkMode;
+  refs.bulkBar.hidden = !bulkOn;
+  refs.bulkHeadCell.hidden = !bulkOn;
+  refs.bulkToggle.textContent = bulkOn ? 'Bulk-modus på' : 'Bulk-modus av';
+  refs.bulkToggle.setAttribute('aria-pressed', bulkOn ? 'true' : 'false');
+
+  if (bulkOn) {
+    // Quick-Add-eligible visible rows. The checkbox column hides the
+    // checkbox for ineligible cards (no verified variant), so
+    // "Velg alle synlige" and the action count must match.
+    const eligibleVisible = visibleRows
+      .filter((r) => decideQuickAdd(r.card).canQuickAdd)
+      .map((r) => r.card.id);
+
+    // PR 19 review patch — prune selection to the current visible
+    // eligible set. When the user changes page / search / filter,
+    // any selection that referred to a now-hidden card is dropped
+    // BEFORE a bulk action could fire on it. This is the safest
+    // first-version model: bulk is strictly about what the user can
+    // see right now. Cross-page selection requires a deliberate UX
+    // affordance ("X valgt på tvers av sider", "Clear all"), and
+    // none of those are in this PR.
+    const eligibleVisibleSet = new Set(eligibleVisible);
+    for (const id of [...state.selectedCardIds]) {
+      if (!eligibleVisibleSet.has(id)) {
+        state.selectedCardIds.delete(id);
+      }
+    }
+
+    const allEligibleSelected =
+      eligibleVisible.length > 0 &&
+      eligibleVisible.every((id) => state.selectedCardIds.has(id));
+    refs.bulkSelectAll.checked = allEligibleSelected;
+    refs.bulkSelectAll.disabled = eligibleVisible.length === 0;
+
+    const total = state.selectedCardIds.size;
+    refs.bulkCount.textContent = `${total} ${total === 1 ? 'valgt' : 'valgte'}`;
+    refs.bulkActionBtn.textContent = `+1 raw på valgte (${total})`;
+    refs.bulkActionBtn.disabled = total === 0;
+    refs.bulkClearBtn.disabled = total === 0;
+  }
+
+  renderBulkSummary(refs, state);
+}
+
+function renderBulkSummary(refs: ViewRefs, state: BrowseState): void {
+  const summary = state.bulkSummary;
+  const region = refs.bulkSummaryRegion;
+  region.replaceChildren();
+  if (summary === null) {
+    region.hidden = true;
+    return;
+  }
+  region.hidden = false;
+  const total =
+    summary.created +
+    summary.merged +
+    summary.skippedNoVariant +
+    summary.failed;
+  const headline = document.createElement('p');
+  headline.className = 'browse-view__bulk-summary-headline';
+  headline.textContent =
+    `Bulk +1 raw kjørt på ${total} ${total === 1 ? 'kort' : 'kort'}: ` +
+    `${summary.created} lagt til, ` +
+    `${summary.merged} oppdatert, ` +
+    `${summary.skippedNoVariant} hoppet over (manglet variant), ` +
+    `${summary.failed} feilet.`;
+  region.appendChild(headline);
+  if (summary.failures.length > 0) {
+    const list = document.createElement('ul');
+    list.className = 'browse-view__bulk-summary-failures';
+    for (const f of summary.failures.slice(0, 5)) {
+      const li = document.createElement('li');
+      li.textContent = `${f.cardId}: ${f.message}`;
+      list.appendChild(li);
+    }
+    region.appendChild(list);
+  }
+  const dismiss = document.createElement('button');
+  dismiss.type = 'button';
+  dismiss.className = 'browse-view__bulk-summary-dismiss';
+  dismiss.dataset['action'] = 'bulk-summary-dismiss';
+  dismiss.textContent = 'Lukk';
+  region.appendChild(dismiss);
 }
 
 function buildRow(row: BrowseCardRow, state: BrowseState): HTMLTableRowElement {
@@ -409,6 +597,37 @@ function buildRow(row: BrowseCardRow, state: BrowseState): HTMLTableRowElement {
   tr.tabIndex = 0;
   tr.setAttribute('role', 'button');
   tr.setAttribute('aria-label', `Vis detaljer for ${row.card.name}`);
+
+  // PR 19 — per-row checkbox cell. Only rendered when bulk-mode is
+  // on. Checkboxes only appear for cards that pass `decideQuickAdd`
+  // — same gate as Quick Add itself, so the user can't tick a card
+  // we'd then have to skip on the bulk run.
+  if (state.bulkMode) {
+    const checkCell = document.createElement('td');
+    checkCell.className = 'browse-table__check';
+    const decision = decideQuickAdd(row.card);
+    if (decision.canQuickAdd) {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.dataset['action'] = 'bulk-select';
+      cb.dataset['cardId'] = row.card.id;
+      cb.checked = state.selectedCardIds.has(row.card.id);
+      cb.setAttribute(
+        'aria-label',
+        `Velg ${row.card.name} for bulk +1 raw`,
+      );
+      checkCell.appendChild(cb);
+    } else {
+      // Visually-disabled placeholder so the column stays aligned.
+      const skip = document.createElement('span');
+      skip.className = 'browse-table__check-skip';
+      skip.title = decision.reason;
+      skip.setAttribute('aria-hidden', 'true');
+      skip.textContent = '–';
+      checkCell.appendChild(skip);
+    }
+    tr.appendChild(checkCell);
+  }
 
   // Image cell
   const imageCell = document.createElement('td');
@@ -583,6 +802,44 @@ function attachEventListeners(
     void rerenderRows(refs, service, state);
   });
 
+  // PR 19 — bulk-mode controls
+  refs.bulkToggle.addEventListener('click', () => {
+    state.bulkMode = !state.bulkMode;
+    if (!state.bulkMode) {
+      // Leaving bulk mode — drop the selection so it doesn't surprise
+      // the user on next entry. Summary banner stays so they can read
+      // the last result.
+      state.selectedCardIds.clear();
+    }
+    void rerenderRows(refs, service, state);
+  });
+
+  refs.bulkSelectAll.addEventListener('change', () => {
+    void handleBulkSelectAll(refs, service, state);
+  });
+
+  refs.bulkClearBtn.addEventListener('click', () => {
+    state.selectedCardIds.clear();
+    state.bulkSummary = null;
+    void rerenderRows(refs, service, state);
+  });
+
+  refs.bulkActionBtn.addEventListener('click', () => {
+    void handleBulkQuickAddRaw(refs, service, state);
+  });
+
+  refs.bulkSummaryRegion.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    if (
+      target?.closest<HTMLButtonElement>(
+        '[data-action="bulk-summary-dismiss"]',
+      ) !== null
+    ) {
+      state.bulkSummary = null;
+      renderBulkSummary(refs, state);
+    }
+  });
+
   // Row click → card detail. Disabled buttons stop early without
   // navigating. Action buttons handle their own behaviour:
   //   view-details → navigate to card detail
@@ -590,6 +847,19 @@ function attachEventListeners(
   refs.rowsRegion.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
     if (target === null) return;
+    // PR 19 — checkbox clicks must NOT navigate to card detail.
+    if (target instanceof HTMLInputElement && target.type === 'checkbox') {
+      const cardId = target.dataset['cardId'];
+      if (cardId === undefined || cardId.length === 0) return;
+      if (target.checked) state.selectedCardIds.add(cardId);
+      else state.selectedCardIds.delete(cardId);
+      // Refresh the bulk UI without re-fetching from the service —
+      // checkbox ticks are common and a query round-trip per tick
+      // would feel laggy on a 20k-card cache. Re-derive the visible
+      // rows from the DOM (each row carries `data-card-id`).
+      refreshBulkUiFromDom(refs, state);
+      return;
+    }
     const button = target.closest<HTMLElement>('button');
     const row = target.closest<HTMLTableRowElement>('tr.browse-table__row');
     if (row === null) return;
@@ -756,4 +1026,180 @@ async function runQuickAddRaw(
       void rerenderRows(refs, service, state);
     }
   }, QUICK_ADD_FEEDBACK_TIMEOUT_MS);
+}
+
+// ---------------------------------------------------------------------
+// PR 19 — bulk Quick Add Raw
+
+/**
+ * Updates the bulk-mode toolbar (count, select-all checkbox, action
+ * button label) based on the current `state.selectedCardIds` and the
+ * card ids currently rendered in the rows region. Read directly from
+ * the DOM rather than re-fetching from the browse service so each
+ * checkbox tick stays sub-millisecond.
+ */
+function refreshBulkUiFromDom(refs: ViewRefs, state: BrowseState): void {
+  if (!state.bulkMode) return;
+  // Visible *eligible* card ids = rows that rendered an actual
+  // checkbox (ineligible rows render the "–" placeholder, see
+  // buildRow).
+  const eligibleVisible: string[] = [];
+  refs.rowsRegion
+    .querySelectorAll<HTMLInputElement>('input[data-action="bulk-select"]')
+    .forEach((cb) => {
+      const id = cb.dataset['cardId'];
+      if (id !== undefined && id.length > 0) eligibleVisible.push(id);
+    });
+  refs.bulkSelectAll.checked =
+    eligibleVisible.length > 0 &&
+    eligibleVisible.every((id) => state.selectedCardIds.has(id));
+  refs.bulkSelectAll.disabled = eligibleVisible.length === 0;
+
+  const total = state.selectedCardIds.size;
+  refs.bulkCount.textContent = `${total} ${total === 1 ? 'valgt' : 'valgte'}`;
+  refs.bulkActionBtn.textContent = `+1 raw på valgte (${total})`;
+  refs.bulkActionBtn.disabled = total === 0;
+  refs.bulkClearBtn.disabled = total === 0;
+}
+
+async function handleBulkSelectAll(
+  refs: ViewRefs,
+  service: BrowseService,
+  state: BrowseState,
+): Promise<void> {
+  const visibleIds: string[] = [];
+  refs.rowsRegion
+    .querySelectorAll<HTMLInputElement>('input[data-action="bulk-select"]')
+    .forEach((cb) => {
+      const id = cb.dataset['cardId'];
+      if (id !== undefined && id.length > 0) visibleIds.push(id);
+    });
+  if (refs.bulkSelectAll.checked) {
+    for (const id of visibleIds) state.selectedCardIds.add(id);
+  } else {
+    for (const id of visibleIds) state.selectedCardIds.delete(id);
+  }
+  await rerenderRows(refs, service, state);
+}
+
+/**
+ * Run +1 raw against every selected card. Each card goes through
+ * `holdingsRepo.upsertByVariant` (PR 15A — F-7), so two clicks on
+ * the same card across different bulk runs increment the same
+ * holding's quantity instead of creating duplicate rows.
+ *
+ * The repo's variant validator is the final gate: if a tampered
+ * data attribute (or a card that lost its tcgplayer.prices since
+ * the row was rendered) makes it through `decideQuickAdd`, the repo
+ * still rejects it and the failure shows up in the summary.
+ *
+ * Dispatches `USER_DATA_CHANGED_EVENT` exactly once at the end so
+ * the rest of the app (Card detail / Collection / Dashboard)
+ * refreshes once, not once per item.
+ */
+async function handleBulkQuickAddRaw(
+  refs: ViewRefs,
+  service: BrowseService,
+  state: BrowseState,
+): Promise<void> {
+  if (state.selectedCardIds.size === 0) return;
+  refs.bulkActionBtn.disabled = true;
+  const repo = createHoldingsRepo(getDb());
+  const cardsRepo = createCardsRepo(getDb());
+  let created = 0;
+  let merged = 0;
+  let skippedNoVariant = 0;
+  let failed = 0;
+  const failures: { cardId: string; message: string }[] = [];
+
+  // Snapshot the selection so concurrent ticks (extremely unlikely
+  // since the button is disabled, but cheap) can't corrupt the loop.
+  const ids = [...state.selectedCardIds];
+  for (const cardId of ids) {
+    const card = await cardsRepo.get(cardId);
+    if (card === undefined) {
+      failed += 1;
+      failures.push({ cardId, message: 'Kort ikke i lokal cache' });
+      continue;
+    }
+    const decision = decideQuickAdd(card);
+    if (!decision.canQuickAdd || decision.defaults === null) {
+      skippedNoVariant += 1;
+      continue;
+    }
+    try {
+      const result = await repo.upsertByVariant({
+        cardId,
+        quantity: 1,
+        conditionType: 'raw',
+        rawCondition: 'NM',
+        gradingCompany: null,
+        grade: null,
+        certNumber: null,
+        certUrl: null,
+        gradedDate: null,
+        finish: decision.defaults.finish,
+        edition: decision.defaults.edition,
+        language: 'en',
+        purchasePrice: null,
+        purchaseCurrency: null,
+        estimatedValue: null,
+        valueCurrency: null,
+        valueSource: 'unknown',
+        valueNote: null,
+        valueUpdatedAt: null,
+        source: 'manual',
+        note: null,
+        specialVariant: false,
+        tags: [],
+        lotId: null,
+        status: 'owned',
+      });
+      if (result.action === 'merged') merged += 1;
+      else created += 1;
+    } catch (caught) {
+      failed += 1;
+      const message =
+        caught instanceof Error ? caught.message : 'ukjent feil';
+      failures.push({ cardId, message });
+    }
+  }
+
+  state.bulkSummary = {
+    created,
+    merged,
+    skippedNoVariant,
+    failed,
+    failures,
+  };
+  // Drop ids that were either created or merged from the selection
+  // so the user sees a clean slate for the next bulk run. Ids that
+  // were skipped or failed stay selected so the user can address
+  // them and try again.
+  for (const cardId of ids) {
+    const card = state.selectedCardIds.has(cardId);
+    if (!card) continue;
+    const failureFound = failures.some((f) => f.cardId === cardId);
+    // We don't track skippedNoVariant per-card precisely — the
+    // simplest rule that matches user expectation is: drop ids
+    // that succeeded (no failure entry) AND were not skipped (the
+    // card still had a verified variant when we checked above).
+    // Re-check decideQuickAdd to determine.
+    if (failureFound) continue;
+    // If the row was skipped because of variant we don't drop —
+    // user may want to fix the cache and retry.
+    const cardRecord = await cardsRepo.get(cardId);
+    if (cardRecord === undefined) continue;
+    const stillValid = decideQuickAdd(cardRecord).canQuickAdd;
+    if (!stillValid) continue;
+    state.selectedCardIds.delete(cardId);
+  }
+
+  // Single cross-view refresh, regardless of how many holdings were
+  // touched. PR 15A's AbortController contract ensures only the
+  // currently-mounted view re-renders.
+  if (created + merged > 0) {
+    window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
+  }
+  await rerenderRows(refs, service, state);
 }
