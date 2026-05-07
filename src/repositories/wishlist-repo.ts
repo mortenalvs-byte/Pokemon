@@ -3,6 +3,7 @@ import { newId } from '../utils/ids';
 import type { WishlistRecord } from '../domain/types';
 import {
   validateWishlistInput,
+  validateWishlistVariants,
   type WishlistInput,
 } from '../domain/validators';
 import { appendAudit } from '../db/audit';
@@ -31,6 +32,8 @@ export function createWishlistRepo(db: PokemonTrackerDB): WishlistRepo {
   return {
     async create(input) {
       validateWishlistInput(input);
+      const card = (await db.cards.get(input.cardId)) ?? null;
+      validateWishlistVariants(input, { card });
       const now = nowIso();
       const record: WishlistRecord = {
         ...input,
@@ -82,6 +85,8 @@ export function createWishlistRepo(db: PokemonTrackerDB): WishlistRepo {
         updatedAt: nowIso(),
       };
       validateWishlistInput(merged);
+      const card = (await db.cards.get(merged.cardId)) ?? null;
+      validateWishlistVariants(merged, { card });
       await db.wishlist.put(merged);
       await appendAudit(db, {
         action: 'wishlist_item_updated',

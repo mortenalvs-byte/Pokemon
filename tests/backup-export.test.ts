@@ -50,6 +50,30 @@ describe('backup export', () => {
   beforeEach(async () => {
     db = await freshDb();
     await initializeDataLayer({ db, skipPersistentStorage: true });
+    // PR 11 strict variant validation requires the cards in the cache
+    // before holdings can be persisted.
+    const cardBase = {
+      setId: 'base1',
+      name: 'Test card',
+      number: '4',
+      rarity: 'Rare',
+      supertype: 'Pokémon',
+      subtypes: [],
+      types: [],
+      imageSmall: null,
+      imageLarge: null,
+      tcgplayer: {
+        prices: {
+          normal: { market: 1 },
+          holofoil: { market: 1 },
+          reverseHolofoil: { market: 1 },
+        },
+      },
+      cardmarket: null,
+      updatedAt: '2026-05-06T00:00:00.000Z',
+    };
+    await db.cards.put({ ...cardBase, id: 'base1-4' });
+    await db.cards.put({ ...cardBase, id: 'base1-5' });
   });
 
   afterEach(async () => {

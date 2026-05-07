@@ -29,7 +29,11 @@ import { appendAudit } from '../db/audit';
 import type { PokemonTrackerDB } from '../db/database';
 import { allocateLot, round2 } from '../domain/lot-allocation';
 import type { AllocationResult } from '../domain/lot-allocation';
-import { validateHoldingInput, type HoldingInput } from '../domain/validators';
+import {
+  validateHoldingInput,
+  validateHoldingVariants,
+  type HoldingInput,
+} from '../domain/validators';
 import type { HoldingRecord, LotItemRecord, LotRecord } from '../domain/types';
 import { nowIso } from '../utils/dates';
 import { newId } from '../utils/ids';
@@ -185,12 +189,24 @@ export function createLotService(db: PokemonTrackerDB): LotService {
           valueUpdatedAt: null,
           source: 'lot',
           note: item.note,
-          specialVariant: false,
+          // Lot-items already enforce strict variant validation; if the
+          // item used an escape-hatch finish/edition, it had a manual
+          // marker (note) which we propagate. specialVariant=true here
+          // when the item is missing a note, so the holding clears
+          // strict variant validation by the same rule.
+          specialVariant: item.note === null || item.note.trim().length === 0,
           tags: [],
           lotId: lot.id,
           status: 'owned',
         };
         validateHoldingInput(input);
+        // Same strict variant rule as the holdings repo runs: a lot
+        // item with finish/edition that the API doesn't list will have
+        // already failed at lot-item create, so this is a defence in
+        // depth that catches legacy lot items imported via JSON
+        // restore from before PR 11.
+        const card = (await db.cards.get(item.cardId)) ?? null;
+        validateHoldingVariants(input, { card });
         drafts.push({ item, input });
       }
 

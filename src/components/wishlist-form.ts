@@ -9,6 +9,7 @@
 import { DIALOG_SUBMITTED_EVENT } from './dialog';
 import { USER_DATA_CHANGED_EVENT } from './events';
 import { getDb } from '../db/database';
+import { availableVariants } from '../domain/card-variants';
 import { ValidationError } from '../domain/validators';
 import {
   type CardFinish,
@@ -24,14 +25,14 @@ import { createWishlistRepo } from '../repositories/wishlist-repo';
 import type { WishlistInput } from '../domain/validators';
 import type { DialogContent } from './dialog';
 
-const FINISHES: ReadonlyArray<{ readonly value: CardFinish; readonly label: string }> = [
-  { value: 'normal', label: 'Normal' },
-  { value: 'holo', label: 'Holo' },
-  { value: 'reverse_holo', label: 'Reverse holo' },
-  { value: 'non_holo', label: 'Non-holo' },
-  { value: 'stamped', label: 'Stamped' },
-  { value: 'unknown', label: 'Ukjent' },
-];
+const FINISH_LABELS: Record<CardFinish, string> = {
+  normal: 'Normal',
+  holo: 'Holo',
+  reverse_holo: 'Reverse holo',
+  non_holo: 'Non-holo',
+  stamped: 'Stamped (manuell — krever notat)',
+  unknown: 'Ukjent (krever notat)',
+};
 
 const PRIORITIES: ReadonlyArray<{ readonly value: WishlistPriority; readonly label: string }> = [
   { value: 'grail', label: 'Grail' },
@@ -120,6 +121,7 @@ function buildSkeleton(): HTMLElement {
 
       <fieldset class="wishlist-form__section">
         <legend>Hva ønsker du</legend>
+        <p class="wishlist-form__hint" data-region="variant-hint" hidden></p>
         <label class="wishlist-form__field">
           <span>Finish</span>
           <select name="finish"></select>
@@ -191,7 +193,28 @@ function populateForm(
     }
   }
 
-  populateSelect(form, 'finish', FINISHES);
+  // Strict variant rules (PR 11): narrow finish to verified options
+  // for the chosen card. Always include Stamped + Unknown as escape
+  // hatches (require a non-empty note, enforced at submit by repo).
+  const variants = card === null
+    ? { verified: false as const, finishes: new Set<CardFinish>(), editions: new Set<never>() }
+    : availableVariants(card);
+  const finishOrder: readonly CardFinish[] = [
+    'normal',
+    'holo',
+    'reverse_holo',
+    'non_holo',
+    'stamped',
+    'unknown',
+  ];
+  const visibleFinishes = finishOrder.filter(
+    (f) => variants.finishes.has(f) || f === 'stamped' || f === 'unknown',
+  );
+  populateSelect(
+    form,
+    'finish',
+    visibleFinishes.map((value) => ({ value, label: FINISH_LABELS[value] })),
+  );
   populateSelect(form, 'priority', PRIORITIES);
   populateSelect(form, 'targetCondition', TARGET_CONDITIONS);
   populateSelect(form, 'status', STATUS_OPTIONS);
@@ -211,11 +234,32 @@ function populateForm(
     if (e.targetCurrency !== null) setValue(form, 'targetCurrency', e.targetCurrency);
     if (e.note !== null) setValue(form, 'note', e.note);
   } else {
-    // Sensible defaults for add mode.
-    setValue(form, 'finish', 'unknown');
+    // Sensible defaults for add mode. Pick the first verified finish
+    // when the card has API data; fall back to 'unknown' (escape
+    // hatch) when it does not.
+    const defaultFinish: CardFinish = (
+      ['normal', 'holo', 'reverse_holo'] as const
+    ).find((f) => variants.finishes.has(f)) ?? 'unknown';
+    setValue(form, 'finish', defaultFinish);
     setValue(form, 'priority', 'medium');
     setValue(form, 'targetCondition', '');
     setValue(form, 'status', 'wanted');
+  }
+
+  const hintRegion = form.querySelector<HTMLElement>(
+    '[data-region="variant-hint"]',
+  );
+  if (hintRegion !== null) {
+    if (!variants.verified) {
+      hintRegion.textContent =
+        card === null
+          ? 'Kortet er ikke i lokal cache. Velg "Ukjent" og fyll inn et notat for å registrere.'
+          : 'Pokémon TCG API har ingen variant-data for dette kortet. Velg "Ukjent" og fyll inn et notat.';
+      hintRegion.hidden = false;
+    } else {
+      hintRegion.textContent = '';
+      hintRegion.hidden = true;
+    }
   }
 }
 
@@ -293,7 +337,11 @@ function collectFormInput(
   const cardId = options.mode === 'add' ? options.cardId : options.entry.cardId;
   const formData = new FormData(form);
 
-  const finish = readSelect(formData, 'finish', FINISHES.map((f) => f.value)) as CardFinish;
+  const finish = readSelect(
+    formData,
+    'finish',
+    Object.keys(FINISH_LABELS),
+  ) as CardFinish;
   const priority = readSelect(
     formData,
     'priority',

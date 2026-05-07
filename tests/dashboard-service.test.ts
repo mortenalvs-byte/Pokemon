@@ -68,7 +68,7 @@ function makeCard(n: number): CardRecord {
     types: [],
     imageSmall: null,
     imageLarge: null,
-    tcgplayer: null,
+    tcgplayer: { prices: { normal: { market: 1 }, holofoil: { market: 1 }, reverseHolofoil: { market: 1 }, "1stEditionNormal": { market: 1 }, "1stEditionHolofoil": { market: 1 } } },
     cardmarket: null,
     updatedAt: '2026-05-06T00:00:00.000Z',
   };
@@ -338,6 +338,11 @@ describe('dashboard-service.buildSnapshot', () => {
   });
 
   it('wishlist counts per status + top-5 grail', async () => {
+    // PR 11: seed the cards before any wishlist write so strict
+    // variant validation can verify finishes.
+    await createCardsRepo(db).upsertMany(
+      ['base1-1', 'base1-2', 'base1-3', 'base1-4', 'base1-5'].map((id) => makeCard(parseInt(id.split('-')[1] ?? '1', 10))),
+    );
     const wishlistRepo = createWishlistRepo(db);
     await wishlistRepo.create(
       wishlistInput('base1-1', { priority: 'grail', status: 'wanted' }),

@@ -75,6 +75,29 @@ describe('replaceRestore', () => {
   beforeEach(async () => {
     db = await freshDb();
     await initializeDataLayer({ db, skipPersistentStorage: true });
+    // PR 11 strict variant validation: seed the card before any
+    // pre-restore holding write goes through the repo.
+    await db.cards.put({
+      id: 'base1-4',
+      setId: 'base1',
+      name: 'Charizard',
+      number: '4',
+      rarity: 'Rare Holo',
+      supertype: 'Pokémon',
+      subtypes: [],
+      types: [],
+      imageSmall: null,
+      imageLarge: null,
+      tcgplayer: {
+        prices: {
+          normal: { market: 1 },
+          holofoil: { market: 1 },
+          reverseHolofoil: { market: 1 },
+        },
+      },
+      cardmarket: null,
+      updatedAt: '2026-05-06T00:00:00.000Z',
+    });
   });
 
   afterEach(async () => {
@@ -99,7 +122,7 @@ describe('replaceRestore', () => {
           types: [],
           imageSmall: null,
           imageLarge: null,
-          tcgplayer: null,
+          tcgplayer: { prices: { normal: { market: 1 }, holofoil: { market: 1 }, reverseHolofoil: { market: 1 }, "1stEditionNormal": { market: 1 }, "1stEditionHolofoil": { market: 1 } } },
           cardmarket: null,
           updatedAt: '2026-05-06T00:00:00.000Z',
         },

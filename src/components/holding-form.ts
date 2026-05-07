@@ -11,6 +11,7 @@
 import { DIALOG_SUBMITTED_EVENT } from './dialog';
 import { USER_DATA_CHANGED_EVENT } from './events';
 import { getDb } from '../db/database';
+import { availableVariants } from '../domain/card-variants';
 import { ValidationError } from '../domain/validators';
 import { formatTags, parseTags } from '../domain/tags';
 import {
@@ -48,21 +49,21 @@ const GRADING_COMPANIES: readonly GradingCompany[] = [
   'OTHER',
 ];
 
-const FINISHES: ReadonlyArray<{ readonly value: CardFinish; readonly label: string }> = [
-  { value: 'normal', label: 'Normal' },
-  { value: 'holo', label: 'Holo' },
-  { value: 'reverse_holo', label: 'Reverse holo' },
-  { value: 'non_holo', label: 'Non-holo' },
-  { value: 'stamped', label: 'Stamped' },
-  { value: 'unknown', label: 'Ukjent' },
-];
+const FINISH_LABELS: Record<CardFinish, string> = {
+  normal: 'Normal',
+  holo: 'Holo',
+  reverse_holo: 'Reverse holo',
+  non_holo: 'Non-holo',
+  stamped: 'Stamped (manuell — krever note/specialVariant)',
+  unknown: 'Ukjent (krever note/specialVariant)',
+};
 
-const EDITIONS: ReadonlyArray<{ readonly value: Edition; readonly label: string }> = [
-  { value: 'unlimited', label: 'Unlimited' },
-  { value: 'first_edition', label: '1st Edition' },
-  { value: 'shadowless', label: 'Shadowless' },
-  { value: 'unknown', label: 'Ukjent' },
-];
+const EDITION_LABELS: Record<Edition, string> = {
+  unlimited: 'Unlimited',
+  first_edition: '1st Edition',
+  shadowless: 'Shadowless (manuell — krever note/specialVariant)',
+  unknown: 'Ukjent (krever note/specialVariant)',
+};
 
 const CURRENCIES: readonly CurrencyCode[] = ['NOK', 'USD', 'EUR', 'PHP'];
 
@@ -193,6 +194,7 @@ function buildSkeleton(): HTMLElement {
 
       <fieldset class="holding-form__section">
         <legend>Variant</legend>
+        <p class="holding-form__hint" data-region="variant-hint" hidden></p>
         <label class="holding-form__field">
           <span>Finish</span>
           <select name="finish"></select>
@@ -285,6 +287,18 @@ function populateForm(
     }
   }
 
+  // Strict variant rules (PR 11): when the API exposes prices for the
+  // card, the finish + edition dropdowns are narrowed to the verified
+  // set plus the always-on escape hatch (Stamped / Shadowless +
+  // Unknown). When the API has no prices for this card, only the
+  // escape-hatch options remain so the user is forced into the
+  // note/specialVariant path.
+  const variants = card === null
+    ? { verified: false as const, finishes: new Set<CardFinish>(), editions: new Set<Edition>() }
+    : availableVariants(card);
+  populateFinishSelect(root, variants.finishes);
+  populateEditionSelect(root, variants.editions);
+
   // Selects
   populateSelect(root, 'rawCondition', RAW_CONDITIONS.map((c) => ({ value: c, label: c })));
   populateSelect(
@@ -292,8 +306,6 @@ function populateForm(
     'gradingCompany',
     GRADING_COMPANIES.map((g) => ({ value: g, label: g })),
   );
-  populateSelect(root, 'finish', FINISHES);
-  populateSelect(root, 'edition', EDITIONS);
   populateSelect(
     root,
     'purchaseCurrency',
@@ -309,11 +321,38 @@ function populateForm(
   // Default values
   setValue(root, 'quantity', options.mode === 'edit' ? String(options.holding.quantity) : '1');
   setValue(root, 'language', options.mode === 'edit' ? options.holding.language : 'en');
-  setValue(root, 'finish', options.mode === 'edit' ? options.holding.finish : 'unknown');
-  setValue(root, 'edition', options.mode === 'edit' ? options.holding.edition : 'unknown');
+  setValue(
+    root,
+    'finish',
+    options.mode === 'edit'
+      ? options.holding.finish
+      : pickDefault(variants.finishes, ['normal', 'holo', 'reverse_holo'], 'unknown'),
+  );
+  setValue(
+    root,
+    'edition',
+    options.mode === 'edit'
+      ? options.holding.edition
+      : pickDefault(variants.editions, ['unlimited', 'first_edition'], 'unknown'),
+  );
   setValue(root, 'rawCondition', options.mode === 'edit' ? options.holding.rawCondition ?? 'NM' : 'NM');
   setValue(root, 'gradingCompany', options.mode === 'edit' ? options.holding.gradingCompany ?? 'PSA' : 'PSA');
   setValue(root, 'status', options.mode === 'edit' ? options.holding.status : 'owned');
+
+  // Show a hint when the card cannot be verified.
+  const hintRegion = root.querySelector<HTMLElement>('[data-region="variant-hint"]');
+  if (hintRegion !== null) {
+    if (!variants.verified) {
+      hintRegion.textContent =
+        card === null
+          ? 'Kortet er ikke i lokal cache — synk databasen, eller velg "Ukjent" og fyll inn et notat eller marker som spesial-variant.'
+          : 'Pokémon TCG API har ingen kjente variant-data for dette kortet. Velg "Ukjent" og fyll inn et notat eller marker som spesial-variant.';
+      hintRegion.hidden = false;
+    } else {
+      hintRegion.textContent = '';
+      hintRegion.hidden = true;
+    }
+  }
 
   // Condition type radio
   const conditionType: ConditionType =
@@ -340,6 +379,62 @@ function populateForm(
     );
     if (specialVariantCheckbox !== null) specialVariantCheckbox.checked = h.specialVariant;
   }
+}
+
+function populateFinishSelect(
+  root: HTMLFormElement,
+  verified: ReadonlySet<CardFinish>,
+): void {
+  // Visible options: every verified finish from the API, plus the
+  // always-on escape hatches (Stamped + Unknown). Order is deliberate:
+  // the most "real" options first.
+  const order: readonly CardFinish[] = [
+    'normal',
+    'holo',
+    'reverse_holo',
+    'non_holo',
+    'stamped',
+    'unknown',
+  ];
+  const visible = order.filter(
+    (f) => verified.has(f) || f === 'stamped' || f === 'unknown',
+  );
+  populateSelect(
+    root,
+    'finish',
+    visible.map((value) => ({ value, label: FINISH_LABELS[value] })),
+  );
+}
+
+function populateEditionSelect(
+  root: HTMLFormElement,
+  verified: ReadonlySet<Edition>,
+): void {
+  const order: readonly Edition[] = [
+    'unlimited',
+    'first_edition',
+    'shadowless',
+    'unknown',
+  ];
+  const visible = order.filter(
+    (e) => verified.has(e) || e === 'shadowless' || e === 'unknown',
+  );
+  populateSelect(
+    root,
+    'edition',
+    visible.map((value) => ({ value, label: EDITION_LABELS[value] })),
+  );
+}
+
+function pickDefault<T extends string>(
+  verified: ReadonlySet<T>,
+  preferred: readonly T[],
+  fallback: T,
+): T {
+  for (const candidate of preferred) {
+    if (verified.has(candidate)) return candidate;
+  }
+  return fallback;
 }
 
 function populateSelect(
@@ -439,8 +534,16 @@ function collectFormInput(
   const gradedDate =
     conditionType === 'graded' ? readOptionalIsoDate(formData, 'gradedDate') : null;
 
-  const finish = readSelect(formData, 'finish', FINISHES.map((f) => f.value)) as CardFinish;
-  const edition = readSelect(formData, 'edition', EDITIONS.map((e) => e.value)) as Edition;
+  const finish = readSelect(
+    formData,
+    'finish',
+    Object.keys(FINISH_LABELS),
+  ) as CardFinish;
+  const edition = readSelect(
+    formData,
+    'edition',
+    Object.keys(EDITION_LABELS),
+  ) as Edition;
   const language = (readOptionalString(formData, 'language') ?? 'en');
 
   const purchasePrice = readOptionalNumber(formData, 'purchasePrice');

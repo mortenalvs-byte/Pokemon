@@ -37,7 +37,7 @@ function makeCard(id: string): CardRecord {
     types: [],
     imageSmall: null,
     imageLarge: null,
-    tcgplayer: null,
+    tcgplayer: { prices: { normal: { market: 1 }, holofoil: { market: 1 }, reverseHolofoil: { market: 1 }, "1stEditionNormal": { market: 1 }, "1stEditionHolofoil": { market: 1 } } },
     cardmarket: null,
     updatedAt: '2026-05-06T00:00:00.000Z',
   };
@@ -86,6 +86,31 @@ describe('lot-detail-service', () => {
     db = await freshDb();
     const setsRepo = (await import('../src/repositories/sets-repo')).createSetsRepo(db);
     await setsRepo.upsert(sampleSet);
+    // PR 11: seed test cards before lot-item writes go through the
+    // strict variant validator.
+    const base = {
+      setId: 'test',
+      name: 'Test card',
+      number: '1',
+      rarity: 'Rare',
+      supertype: 'Pokémon',
+      subtypes: [],
+      types: [],
+      imageSmall: null,
+      imageLarge: null,
+      tcgplayer: {
+        prices: {
+          normal: { market: 1 },
+          holofoil: { market: 1 },
+          reverseHolofoil: { market: 1 },
+        },
+      },
+      cardmarket: null,
+      updatedAt: '2026-05-06T00:00:00.000Z',
+    };
+    for (const id of ['card-1', 'card-2', 'card-3']) {
+      await db.cards.put({ ...base, id });
+    }
   });
 
   afterEach(async () => {

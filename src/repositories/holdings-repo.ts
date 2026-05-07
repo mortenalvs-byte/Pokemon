@@ -6,6 +6,7 @@ import { newId } from '../utils/ids';
 import type { HoldingRecord } from '../domain/types';
 import {
   validateHoldingInput,
+  validateHoldingVariants,
   type HoldingInput,
 } from '../domain/validators';
 import { appendAudit } from '../db/audit';
@@ -34,6 +35,12 @@ export function createHoldingsRepo(db: PokemonTrackerDB): HoldingsRepo {
   return {
     async create(input) {
       validateHoldingInput(input);
+      // Strict variant validation against the cached card. Looks up
+      // the card from the local cache (no API call). When the card is
+      // not cached, the validator treats it as unverified and forces
+      // the user into the escape-hatch path.
+      const card = (await db.cards.get(input.cardId)) ?? null;
+      validateHoldingVariants(input, { card });
       const now = nowIso();
       const record: HoldingRecord = {
         ...input,
@@ -82,6 +89,11 @@ export function createHoldingsRepo(db: PokemonTrackerDB): HoldingsRepo {
         updatedAt: nowIso(),
       };
       validateHoldingInput(merged);
+      // Re-validate variants on update too: a user who edits an old
+      // record (or imports legacy data) cannot quietly persist a finish
+      // the API doesn't recognise.
+      const card = (await db.cards.get(merged.cardId)) ?? null;
+      validateHoldingVariants(merged, { card });
       await db.holdings.put(merged);
       await appendAudit(db, {
         action: 'holding_updated',

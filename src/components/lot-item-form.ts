@@ -11,7 +11,12 @@ import { DIALOG_SUBMITTED_EVENT } from './dialog';
 import { USER_DATA_CHANGED_EVENT } from './events';
 import { buildLotCardPicker } from './lot-card-picker';
 import { getDb } from '../db/database';
+import {
+  availableVariants,
+  type AvailableVariants,
+} from '../domain/card-variants';
 import { ValidationError } from '../domain/validators';
+import { createCardsRepo } from '../repositories/cards-repo';
 import { createLotItemsRepo } from '../repositories/lot-items-repo';
 import type {
   CardFinish,
@@ -42,20 +47,36 @@ const GRADING_COMPANIES: readonly GradingCompany[] = [
   'OTHER',
 ];
 
-const FINISHES: ReadonlyArray<{ readonly value: CardFinish; readonly label: string }> = [
-  { value: 'normal', label: 'Normal' },
-  { value: 'holo', label: 'Holo' },
-  { value: 'reverse_holo', label: 'Reverse holo' },
-  { value: 'non_holo', label: 'Non-holo' },
-  { value: 'stamped', label: 'Stamped' },
-  { value: 'unknown', label: 'Ukjent' },
+const FINISH_LABELS: Record<CardFinish, string> = {
+  normal: 'Normal',
+  holo: 'Holo',
+  reverse_holo: 'Reverse holo',
+  non_holo: 'Non-holo',
+  stamped: 'Stamped (manuell — krever notat)',
+  unknown: 'Ukjent (krever notat)',
+};
+
+const EDITION_LABELS: Record<Edition, string> = {
+  unlimited: 'Unlimited',
+  first_edition: '1st Edition',
+  shadowless: 'Shadowless (manuell — krever notat)',
+  unknown: 'Ukjent (krever notat)',
+};
+
+const FINISH_ORDER: readonly CardFinish[] = [
+  'normal',
+  'holo',
+  'reverse_holo',
+  'non_holo',
+  'stamped',
+  'unknown',
 ];
 
-const EDITIONS: ReadonlyArray<{ readonly value: Edition; readonly label: string }> = [
-  { value: 'unlimited', label: 'Unlimited' },
-  { value: 'first_edition', label: '1st Edition' },
-  { value: 'shadowless', label: 'Shadowless' },
-  { value: 'unknown', label: 'Ukjent' },
+const EDITION_ORDER: readonly Edition[] = [
+  'unlimited',
+  'first_edition',
+  'shadowless',
+  'unknown',
 ];
 
 export interface AddLotItemOptions {
@@ -87,7 +108,10 @@ function mount(
   const form = host.querySelector<HTMLFormElement>('form.lot-item-form');
   if (form === null) return;
 
-  // Mount the card picker into its slot.
+  // Mount the card picker into its slot. Strict variant validation
+  // (PR 11) means the finish + edition dropdowns depend on which
+  // card is selected, so we re-narrow them every time `onSelect`
+  // fires.
   let selectedCardId: string | null =
     options.mode === 'edit' ? options.item.cardId : null;
   const pickerSlot = form.querySelector<HTMLElement>('[data-region="card-picker"]');
@@ -95,6 +119,7 @@ function mount(
     initialCardId: options.mode === 'edit' ? options.item.cardId : null,
     onSelect: (cardId) => {
       selectedCardId = cardId;
+      void refreshVariantSelects(form, cardId, options);
     },
   });
   if (pickerSlot !== null) {
@@ -102,6 +127,7 @@ function mount(
   }
 
   populate(form, options);
+  void refreshVariantSelects(form, selectedCardId, options);
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -116,6 +142,89 @@ function mount(
     });
   });
   updateConditionSections(form);
+}
+
+async function refreshVariantSelects(
+  form: HTMLFormElement,
+  cardId: string | null,
+  options: LotItemFormOptions,
+): Promise<void> {
+  const card = cardId === null ? null : (await createCardsRepo(getDb()).get(cardId)) ?? null;
+  const variants: AvailableVariants = card === null
+    ? { verified: false, finishes: new Set(), editions: new Set() }
+    : availableVariants(card);
+
+  const visibleFinishes = FINISH_ORDER.filter(
+    (f) => variants.finishes.has(f) || f === 'stamped' || f === 'unknown',
+  );
+  const visibleEditions = EDITION_ORDER.filter(
+    (e) => variants.editions.has(e) || e === 'shadowless' || e === 'unknown',
+  );
+  populateSelect(
+    form,
+    'finish',
+    visibleFinishes.map((value) => ({ value, label: FINISH_LABELS[value] })),
+  );
+  populateSelect(
+    form,
+    'edition',
+    visibleEditions.map((value) => ({ value, label: EDITION_LABELS[value] })),
+  );
+
+  // Default selections — preserve existing values on edit, otherwise
+  // pick the most "real" option from the verified set.
+  const currentFinish = (
+    form.elements.namedItem('finish') as HTMLSelectElement | null
+  )?.value;
+  const currentEdition = (
+    form.elements.namedItem('edition') as HTMLSelectElement | null
+  )?.value;
+  if (
+    options.mode === 'edit' &&
+    visibleFinishes.includes(options.item.finish)
+  ) {
+    setValue(form, 'finish', options.item.finish);
+  } else if (
+    currentFinish === undefined ||
+    !visibleFinishes.includes(currentFinish as CardFinish)
+  ) {
+    const def = (['normal', 'holo', 'reverse_holo'] as const).find((f) =>
+      variants.finishes.has(f),
+    ) ?? 'unknown';
+    setValue(form, 'finish', def);
+  }
+  if (
+    options.mode === 'edit' &&
+    visibleEditions.includes(options.item.edition)
+  ) {
+    setValue(form, 'edition', options.item.edition);
+  } else if (
+    currentEdition === undefined ||
+    !visibleEditions.includes(currentEdition as Edition)
+  ) {
+    const def = (['unlimited', 'first_edition'] as const).find((e) =>
+      variants.editions.has(e),
+    ) ?? 'unknown';
+    setValue(form, 'edition', def);
+  }
+
+  const hintRegion = form.querySelector<HTMLElement>(
+    '[data-region="variant-hint"]',
+  );
+  if (hintRegion !== null) {
+    if (cardId === null) {
+      hintRegion.textContent =
+        'Velg et kort først så vi kan vise riktige varianter.';
+      hintRegion.hidden = false;
+    } else if (!variants.verified) {
+      hintRegion.textContent =
+        'Pokémon TCG API har ingen variant-data for dette kortet. Velg "Ukjent" og fyll inn et notat.';
+      hintRegion.hidden = false;
+    } else {
+      hintRegion.textContent = '';
+      hintRegion.hidden = true;
+    }
+  }
 }
 
 function buildSkeleton(): HTMLElement {
@@ -134,6 +243,7 @@ function buildSkeleton(): HTMLElement {
 
       <fieldset class="lot-item-form__section">
         <legend>Antall og variant</legend>
+        <p class="lot-item-form__hint" data-region="variant-hint" hidden></p>
         <label class="lot-item-form__field">
           <span>Antall</span>
           <input type="number" name="quantity" min="1" step="1" required />
@@ -215,8 +325,8 @@ function populate(form: HTMLFormElement, options: LotItemFormOptions): void {
       options.mode === 'add' ? 'Nytt lot-item' : 'Rediger lot-item';
   }
 
-  populateSelect(form, 'finish', FINISHES);
-  populateSelect(form, 'edition', EDITIONS);
+  // finish + edition selects are populated dynamically by
+  // `refreshVariantSelects` once we know which card the user picked.
   populateSelect(
     form,
     'rawCondition',
@@ -230,8 +340,6 @@ function populate(form: HTMLFormElement, options: LotItemFormOptions): void {
 
   if (options.mode === 'add') {
     setValue(form, 'quantity', '1');
-    setValue(form, 'finish', 'unknown');
-    setValue(form, 'edition', 'unlimited');
     setValue(form, 'rawCondition', 'NM');
     setValue(form, 'gradingCompany', 'PSA');
     const rawRadio = form.querySelector<HTMLInputElement>(
@@ -375,8 +483,16 @@ function collect(
       : null;
   const grade =
     conditionType === 'graded' ? readOptionalNumber(formData, 'grade') : null;
-  const finish = readSelect(formData, 'finish', FINISHES.map((f) => f.value)) as CardFinish;
-  const edition = readSelect(formData, 'edition', EDITIONS.map((e) => e.value)) as Edition;
+  const finish = readSelect(
+    formData,
+    'finish',
+    Object.keys(FINISH_LABELS),
+  ) as CardFinish;
+  const edition = readSelect(
+    formData,
+    'edition',
+    Object.keys(EDITION_LABELS),
+  ) as Edition;
   const manualPriceOverride = readOptionalNumber(formData, 'manualPriceOverride');
   const marketEstimate = readOptionalNumber(formData, 'marketEstimate');
   const note = readOptionalString(formData, 'note');

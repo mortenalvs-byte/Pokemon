@@ -78,7 +78,7 @@ function makeCard(id: string, setId: string): CardRecord {
     types: ['Fire'],
     imageSmall: null,
     imageLarge: null,
-    tcgplayer: null,
+    tcgplayer: { prices: { normal: { market: 1 }, holofoil: { market: 1 }, reverseHolofoil: { market: 1 }, "1stEditionNormal": { market: 1 }, "1stEditionHolofoil": { market: 1 } } },
     cardmarket: null,
     updatedAt: '2026-05-06T00:00:00.000Z',
   };
@@ -121,6 +121,33 @@ async function seedUserData(db: PokemonTrackerDB): Promise<void> {
   const wishlistRepo = createWishlistRepo(db);
   const settingsRepo = createSettingsRepo(db);
 
+  // Strict variant validation (PR 11) needs every referenced card to
+  // be in the cache before holdings/lot-items/wishlist writes go
+  // through. We seed the cards used by this fixture (base1-4 and
+  // base1-5) with all common tcgplayer.prices keys so default raw +
+  // holo + reverse-holo finishes pass.
+  const testCardBase = {
+    setId: 'base1',
+    name: 'Sample',
+    number: '1',
+    rarity: 'Rare',
+    supertype: 'Pokémon',
+    subtypes: [],
+    types: [],
+    imageSmall: null,
+    imageLarge: null,
+    tcgplayer: {
+      prices: {
+        normal: { market: 1 },
+        holofoil: { market: 1 },
+        reverseHolofoil: { market: 1 },
+      },
+    },
+    cardmarket: null,
+    updatedAt: '2026-05-06T00:00:00.000Z',
+  };
+  await db.cards.put({ ...testCardBase, id: 'base1-4' });
+  await db.cards.put({ ...testCardBase, id: 'base1-5' });
   await holdingsRepo.create(sampleHolding);
   const binder = await bindersRepo.create({
     name: 'Test',
