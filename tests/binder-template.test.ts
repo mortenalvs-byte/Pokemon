@@ -153,7 +153,7 @@ describe('generateFromSetSlots', () => {
     expect(() =>
       generateFromSetSlots([makeCard('1')], {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        slotsPerPage: 12 as any,
+        slotsPerPage: 7 as any,
         completionMode: 'standard',
         includeReverseHolos: false,
       }),

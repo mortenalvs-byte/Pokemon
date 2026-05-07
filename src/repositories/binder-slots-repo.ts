@@ -1,6 +1,8 @@
 import { nowIso } from '../utils/dates';
 import { newId } from '../utils/ids';
-import type { BinderSlotRecord } from '../domain/types';
+import type { BinderSlotRecord,
+  SlotsPerPage,
+} from '../domain/types';
 import {
   validateBinderSlotInput,
   type BinderSlotInput,
@@ -16,11 +18,11 @@ import {
 export interface BinderSlotsRepo {
   create(
     input: BinderSlotInput,
-    slotsPerPage: 9 | 18,
+    slotsPerPage: SlotsPerPage,
   ): Promise<BinderSlotRecord>;
   createMany(
     inputs: readonly BinderSlotInput[],
-    slotsPerPage: 9 | 18,
+    slotsPerPage: SlotsPerPage,
   ): Promise<BinderSlotRecord[]>;
   get(id: string): Promise<BinderSlotRecord | undefined>;
   list(): Promise<BinderSlotRecord[]>;
@@ -29,7 +31,7 @@ export interface BinderSlotsRepo {
   update(
     id: string,
     changes: Partial<BinderSlotInput>,
-    slotsPerPage: 9 | 18,
+    slotsPerPage: SlotsPerPage,
   ): Promise<BinderSlotRecord>;
   softDelete(id: string, reason?: string): Promise<void>;
   restore(id: string, reason?: string): Promise<void>;

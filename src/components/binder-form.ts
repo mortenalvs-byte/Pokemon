@@ -1,31 +1,42 @@
 // Binder add/edit form. Renders inside an `<dialog>` provided by
 // `openDialog()`. Create mode goes through `binderService.createManualBinder`
 // so the binder + every empty slot land atomically. Edit mode goes through
-// `bindersRepo.update` and never touches slots — there is intentionally no
-// "resize binder" path in PR 8a, since that would require deciding what to
-// do with slots that fall outside the new range and is well beyond the
-// scope of "create + rename + describe".
+// `bindersRepo.update` and never touches slots — resizing existing
+// binders would need slot migration that is intentionally out of scope.
+//
+// PR 14 added Vault X presets. The form now shows a "Permtype" picker
+// at the top:
+//
+//   - vaultx_9_360 / vaultx_12_480 / vaultx_12xl_624 / vaultx_16xxl_1088
+//     → slotsPerPage + totalPages auto-filled from
+//       `binder-presets.ts` and locked (read-only) so a Vault X
+//       binder always matches the physical product.
+//   - custom → user picks from `4 / 9 / 12 / 16` slots-per-page and
+//     enters totalPages freely.
+//   - legacy_18 → only used when editing a binder created before PR 14
+//     (the v1→v2 migration assigns this to existing 18-slot rows).
 
 import { DIALOG_SUBMITTED_EVENT } from './dialog';
 import { USER_DATA_CHANGED_EVENT } from './events';
 import { getDb } from '../db/database';
+import {
+  CREATABLE_SLOTS_PER_PAGE,
+  getBinderPresetDefinition,
+  getCreatableBinderPresets,
+  isLegacyPreset,
+  isVaultXPreset,
+} from '../domain/binder-presets';
 import { ValidationError } from '../domain/validators';
 import { createBindersRepo } from '../repositories/binders-repo';
 import { createBinderService } from '../services/binder-service';
 import type {
+  BinderPreset,
   BinderRecord,
   CompletionMode,
+  SlotsPerPage,
 } from '../domain/types';
 import type { BinderInput } from '../domain/validators';
 import type { DialogContent } from './dialog';
-
-const SLOTS_PER_PAGE_OPTIONS: ReadonlyArray<{
-  readonly value: '9' | '18';
-  readonly label: string;
-}> = [
-  { value: '9', label: '9 (3×3)' },
-  { value: '18', label: '18 (3×3 dobbel)' },
-];
 
 const COMPLETION_MODES: ReadonlyArray<{
   readonly value: CompletionMode;
@@ -72,6 +83,18 @@ function mount(
   form
     .querySelector<HTMLButtonElement>('[data-action="cancel"]')
     ?.addEventListener('click', () => close());
+
+  // Switching preset re-locks the layout fields and refreshes the
+  // capacity hint. Custom unlocks slotsPerPage and totalPages.
+  form
+    .querySelector<HTMLSelectElement>('[data-region="preset-select"]')
+    ?.addEventListener('change', () => applyPresetSelection(form));
+  form
+    .querySelector<HTMLSelectElement>('[data-region="slots-per-page"]')
+    ?.addEventListener('change', () => updateLayoutHint(form));
+  form
+    .querySelector<HTMLInputElement>('input[name="totalPages"]')
+    ?.addEventListener('input', () => updateLayoutHint(form));
 }
 
 function buildSkeleton(): HTMLElement {
@@ -82,6 +105,14 @@ function buildSkeleton(): HTMLElement {
       <header class="binder-form__header">
         <h2 data-region="title"></h2>
       </header>
+
+      <fieldset class="binder-form__section">
+        <legend>Permtype</legend>
+        <label class="binder-form__field">
+          <span>Velg layout</span>
+          <select name="binderPreset" data-region="preset-select"></select>
+        </label>
+      </fieldset>
 
       <fieldset class="binder-form__section">
         <legend>Permdetaljer</legend>
@@ -134,55 +165,134 @@ function populateForm(form: HTMLFormElement, options: BinderFormOptions): void {
       options.mode === 'add' ? 'Ny perm' : `Rediger "${options.binder.name}"`;
   }
 
-  populateSelect(
-    form,
-    'slotsPerPage',
-    SLOTS_PER_PAGE_OPTIONS.map((opt) => ({
-      value: opt.value,
-      label: opt.label,
-    })),
-  );
+  populatePresetSelect(form, options);
+  populateSlotsPerPageSelect(form);
   populateSelect(form, 'completionMode', COMPLETION_MODES);
 
   if (options.mode === 'add') {
     setValue(form, 'name', '');
     setValue(form, 'binderType', '');
     setValue(form, 'description', '');
-    setValue(form, 'slotsPerPage', '9');
-    setValue(form, 'totalPages', '1');
     setValue(form, 'completionMode', 'standard');
+    // Default to Vault X 12-pocket XL — that's the user's most common
+    // physical binder for a master set.
+    setValue(form, 'binderPreset', 'vaultx_12xl_624');
   } else {
     const b = options.binder;
     setValue(form, 'name', b.name);
     setValue(form, 'binderType', b.binderType ?? '');
     setValue(form, 'description', b.description ?? '');
+    setValue(form, 'completionMode', b.completionMode);
+    // Resolved preset for the existing binder. Migration ensures
+    // every persisted binder has a non-null binderPreset; a backup
+    // restored before that migration may still pass null, in which
+    // case we fall back to legacy_18 if the row is 18-slots and
+    // custom otherwise.
+    const resolvedPreset: BinderPreset =
+      b.binderPreset ?? (b.slotsPerPage === 18 ? 'legacy_18' : 'custom');
+    setValue(form, 'binderPreset', resolvedPreset);
+  }
+
+  applyPresetSelection(form);
+
+  if (options.mode === 'edit') {
+    const b = options.binder;
     setValue(form, 'slotsPerPage', String(b.slotsPerPage));
     setValue(form, 'totalPages', String(b.totalPages));
-    setValue(form, 'completionMode', b.completionMode);
-
-    // Layout fields are read-only in edit mode — changing them would
-    // need a slot migration which PR 8a does not ship.
+    // Layout fields are read-only in edit mode regardless of preset.
+    disableField(form, 'binderPreset');
     disableField(form, 'slotsPerPage');
     disableField(form, 'totalPages');
   }
 
-  updateLayoutHint(form, options.mode);
-  form
-    .querySelector<HTMLElement>('[data-region="slots-per-page"]')
-    ?.addEventListener('change', () => updateLayoutHint(form, options.mode));
-  form
-    .querySelector<HTMLInputElement>('input[name="totalPages"]')
-    ?.addEventListener('input', () => updateLayoutHint(form, options.mode));
+  updateLayoutHint(form);
 }
 
-function updateLayoutHint(form: HTMLFormElement, mode: 'add' | 'edit'): void {
+function populatePresetSelect(
+  form: HTMLFormElement,
+  options: BinderFormOptions,
+): void {
+  const select = form.querySelector<HTMLSelectElement>(
+    '[data-region="preset-select"]',
+  );
+  if (select === null) return;
+  select.replaceChildren();
+  for (const def of getCreatableBinderPresets()) {
+    const opt = document.createElement('option');
+    opt.value = def.id;
+    opt.textContent = def.label;
+    select.appendChild(opt);
+  }
+  // In edit mode, surface the legacy preset so the user sees what
+  // their binder is. Add it to the visible options so the select can
+  // hold the value without falling back.
+  if (
+    options.mode === 'edit' &&
+    options.binder.binderPreset !== null &&
+    isLegacyPreset(options.binder.binderPreset)
+  ) {
+    const def = getBinderPresetDefinition(options.binder.binderPreset);
+    const opt = document.createElement('option');
+    opt.value = def.id;
+    opt.textContent = def.label;
+    select.appendChild(opt);
+  }
+}
+
+function populateSlotsPerPageSelect(form: HTMLFormElement): void {
+  // Default offering covers the four values a new binder may use.
+  // Vault X presets lock the value via `applyPresetSelection`.
+  const opts = CREATABLE_SLOTS_PER_PAGE.map((s) => ({
+    value: String(s),
+    label: `${s} (${describeGrid(s)})`,
+  }));
+  // Always include a 18 option for the legacy form (it disables
+  // itself when not relevant).
+  opts.push({ value: '18', label: '18 (3×3 dobbel — legacy)' });
+  populateSelect(form, 'slotsPerPage', opts);
+}
+
+function describeGrid(s: SlotsPerPage): string {
+  switch (s) {
+    case 4:
+      return '2×2';
+    case 9:
+      return '3×3';
+    case 12:
+      return '3×4';
+    case 16:
+      return '4×4';
+    case 18:
+      return '3×3 dobbel';
+  }
+}
+
+function applyPresetSelection(form: HTMLFormElement): void {
+  const presetValue = readValue(form, 'binderPreset') as BinderPreset | '';
+  if (presetValue === '' || presetValue === undefined) return;
+  const def = getBinderPresetDefinition(presetValue);
+  if (isVaultXPreset(presetValue)) {
+    // Lock layout to preset.
+    setValue(form, 'slotsPerPage', String(def.slotsPerPage));
+    setValue(form, 'totalPages', String(def.totalPages));
+    disableField(form, 'slotsPerPage');
+    disableField(form, 'totalPages');
+  } else if (isLegacyPreset(presetValue)) {
+    setValue(form, 'slotsPerPage', '18');
+    disableField(form, 'slotsPerPage');
+    // Legacy total pages are whatever was already there; leave
+    // editable when adding (shouldn't happen) and locked in edit.
+  } else {
+    // custom — unlock unless we're in edit mode (handled by caller).
+    enableField(form, 'slotsPerPage');
+    enableField(form, 'totalPages');
+  }
+  updateLayoutHint(form);
+}
+
+function updateLayoutHint(form: HTMLFormElement): void {
   const hint = form.querySelector<HTMLElement>('[data-region="layout-hint"]');
   if (hint === null) return;
-  if (mode === 'edit') {
-    hint.textContent =
-      'Antall sider og slots per side kan ikke endres etter at permen er opprettet.';
-    return;
-  }
   const slotsPerPage = readNumberValue(form, 'slotsPerPage');
   const totalPages = readNumberValue(form, 'totalPages');
   if (slotsPerPage === null || totalPages === null) {
@@ -190,7 +300,7 @@ function updateLayoutHint(form: HTMLFormElement, mode: 'add' | 'edit'): void {
     return;
   }
   const total = slotsPerPage * totalPages;
-  hint.textContent = `Det opprettes ${total} tomme slots (${totalPages} sider × ${slotsPerPage}).`;
+  hint.textContent = `${totalPages} sider × ${slotsPerPage} slots = ${total} kort.`;
 }
 
 function populateSelect(
@@ -221,6 +331,18 @@ function setValue(form: HTMLFormElement, name: string, value: string): void {
   }
 }
 
+function readValue(form: HTMLFormElement, name: string): string {
+  const field = form.elements.namedItem(name);
+  if (
+    field instanceof HTMLInputElement ||
+    field instanceof HTMLSelectElement ||
+    field instanceof HTMLTextAreaElement
+  ) {
+    return field.value;
+  }
+  return '';
+}
+
 function disableField(form: HTMLFormElement, name: string): void {
   const field = form.elements.namedItem(name);
   if (field === null) return;
@@ -229,6 +351,17 @@ function disableField(form: HTMLFormElement, name: string): void {
     field instanceof HTMLSelectElement
   ) {
     field.disabled = true;
+  }
+}
+
+function enableField(form: HTMLFormElement, name: string): void {
+  const field = form.elements.namedItem(name);
+  if (field === null) return;
+  if (
+    field instanceof HTMLInputElement ||
+    field instanceof HTMLSelectElement
+  ) {
+    field.disabled = false;
   }
 }
 
@@ -306,34 +439,60 @@ function collectFormInput(
   ) as CompletionMode;
 
   if (options.mode === 'edit') {
-    // Reuse the immutable layout fields from the original binder so the
-    // resulting `BinderInput` always validates and never changes slot
-    // count. The repo .update() call only forwards mutable fields anyway.
     return {
       name,
       binderType: binderTypeRaw,
       description,
       totalPages: options.binder.totalPages,
       slotsPerPage: options.binder.slotsPerPage,
+      binderPreset:
+        options.binder.binderPreset ??
+        (options.binder.slotsPerPage === 18 ? 'legacy_18' : 'custom'),
       completionMode,
       sourceSetId: options.binder.sourceSetId,
     };
   }
 
-  const slotsPerPageStr = readSelect(
+  const presetRaw = readSelect(
     formData,
-    'slotsPerPage',
-    SLOTS_PER_PAGE_OPTIONS.map((o) => o.value),
-  );
-  const slotsPerPage = slotsPerPageStr === '18' ? 18 : 9;
+    'binderPreset',
+    getCreatableBinderPresets().map((p) => p.id),
+  ) as BinderPreset;
+  const def = getBinderPresetDefinition(presetRaw);
 
-  const totalPagesRaw = formData.get('totalPages');
-  const totalPages =
-    typeof totalPagesRaw === 'string'
-      ? Number.parseInt(totalPagesRaw, 10)
-      : NaN;
-  if (!Number.isFinite(totalPages) || totalPages < 1) {
-    throw new ValidationError('totalPages', 'må være et heltall ≥ 1');
+  let slotsPerPage: SlotsPerPage;
+  let totalPages: number;
+  if (isVaultXPreset(presetRaw)) {
+    slotsPerPage = def.slotsPerPage;
+    totalPages = def.totalPages;
+  } else {
+    // custom — read user-entered values, validate against creatable set.
+    const slotsRaw = readSelect(
+      formData,
+      'slotsPerPage',
+      [
+        ...CREATABLE_SLOTS_PER_PAGE.map(String),
+      ],
+    );
+    const parsedSlots = Number.parseInt(slotsRaw, 10);
+    if (
+      !CREATABLE_SLOTS_PER_PAGE.includes(parsedSlots as SlotsPerPage)
+    ) {
+      throw new ValidationError(
+        'slotsPerPage',
+        `må være en av ${CREATABLE_SLOTS_PER_PAGE.join(', ')}`,
+      );
+    }
+    slotsPerPage = parsedSlots as SlotsPerPage;
+
+    const totalPagesRaw = formData.get('totalPages');
+    totalPages =
+      typeof totalPagesRaw === 'string'
+        ? Number.parseInt(totalPagesRaw, 10)
+        : Number.NaN;
+    if (!Number.isFinite(totalPages) || totalPages < 1) {
+      throw new ValidationError('totalPages', 'må være et heltall ≥ 1');
+    }
   }
 
   return {
@@ -342,6 +501,7 @@ function collectFormInput(
     description,
     totalPages,
     slotsPerPage,
+    binderPreset: presetRaw,
     completionMode,
     sourceSetId: null,
   };

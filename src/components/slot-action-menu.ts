@@ -17,12 +17,13 @@ import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
 import type {
   BinderSlotRecord,
   BinderSlotStatus,
+  SlotsPerPage,
 } from '../domain/types';
 import type { DialogContent } from './dialog';
 
 export interface SlotActionMenuOptions {
   readonly slot: BinderSlotRecord;
-  readonly slotsPerPage: 9 | 18;
+  readonly slotsPerPage: SlotsPerPage;
 }
 
 interface MenuAction {

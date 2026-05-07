@@ -3,6 +3,12 @@
 // DATA_MODEL.md §10. All validators throw `ValidationError` on failure.
 
 import {
+  CREATABLE_SLOTS_PER_PAGE,
+  getBinderPresetDefinition,
+  isLegacyPreset,
+  isVaultXPreset,
+} from './binder-presets';
+import {
   ESCAPE_HATCH_EDITIONS,
   ESCAPE_HATCH_FINISHES,
   availableVariants,
@@ -17,8 +23,11 @@ import type {
   HoldingRecord,
   LotItemRecord,
   LotRecord,
+  SlotsPerPage,
   WishlistRecord,
 } from './types';
+
+const ALLOWED_SLOTS_PER_PAGE: readonly SlotsPerPage[] = [4, 9, 12, 16, 18];
 
 export class ValidationError extends Error {
   public readonly field: string;
@@ -86,10 +95,12 @@ export type BinderInput = Omit<
 >;
 
 export function validateBinderInput(input: BinderInput): void {
-  if (input.slotsPerPage !== 9 && input.slotsPerPage !== 18) {
+  if (
+    !ALLOWED_SLOTS_PER_PAGE.includes(input.slotsPerPage as SlotsPerPage)
+  ) {
     throw new ValidationError(
       'slotsPerPage',
-      'must be 9 or 18',
+      `must be one of ${ALLOWED_SLOTS_PER_PAGE.join(', ')}`,
     );
   }
   if (!Number.isInteger(input.totalPages) || input.totalPages < 1) {
@@ -97,6 +108,45 @@ export function validateBinderInput(input: BinderInput): void {
   }
   if (input.name.trim().length === 0) {
     throw new ValidationError('name', 'cannot be empty');
+  }
+
+  // PR 14 preset consistency. `binderPreset` is allowed to be `null`
+  // for backups that pre-date this PR; the migration / restore path
+  // assigns a value before the row reaches the repo on read.
+  if (input.binderPreset !== null) {
+    const def = getBinderPresetDefinition(input.binderPreset);
+    if (isVaultXPreset(input.binderPreset)) {
+      if (input.slotsPerPage !== def.slotsPerPage) {
+        throw new ValidationError(
+          'slotsPerPage',
+          `Vault X preset ${input.binderPreset} requires slotsPerPage=${def.slotsPerPage}`,
+        );
+      }
+      if (input.totalPages !== def.totalPages) {
+        throw new ValidationError(
+          'totalPages',
+          `Vault X preset ${input.binderPreset} requires totalPages=${def.totalPages}`,
+        );
+      }
+    } else if (isLegacyPreset(input.binderPreset)) {
+      if (input.slotsPerPage !== 18) {
+        throw new ValidationError(
+          'slotsPerPage',
+          'legacy_18 preset requires slotsPerPage=18',
+        );
+      }
+    } else {
+      // `custom` — only restrict the slot count.
+      if (
+        !CREATABLE_SLOTS_PER_PAGE.includes(input.slotsPerPage as SlotsPerPage) &&
+        input.slotsPerPage !== 18
+      ) {
+        throw new ValidationError(
+          'slotsPerPage',
+          `custom preset slotsPerPage must be one of ${CREATABLE_SLOTS_PER_PAGE.join(', ')} (or legacy 18)`,
+        );
+      }
+    }
   }
 }
 
@@ -109,7 +159,7 @@ export type BinderSlotInput = Omit<
 
 export function validateBinderSlotInput(
   input: BinderSlotInput,
-  slotsPerPage: 9 | 18,
+  slotsPerPage: SlotsPerPage,
 ): void {
   if (!Number.isInteger(input.pageNumber) || input.pageNumber < 1) {
     throw new ValidationError('pageNumber', 'must be an integer >= 1');

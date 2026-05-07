@@ -56,6 +56,7 @@ describe('Binders list view', () => {
       binderType: 'VaultX',
       totalPages: 2,
       slotsPerPage: 9,
+      binderPreset: null,
       completionMode: 'standard',
       sourceSetId: null,
     });
@@ -95,6 +96,16 @@ describe('Binders list view', () => {
       'input[name="name"]',
     );
     nameInput!.value = 'Min nye perm';
+    // Drive a small custom binder so the test stays cheap.
+    const presetSelect = form!.querySelector<HTMLSelectElement>(
+      'select[name="binderPreset"]',
+    );
+    presetSelect!.value = 'custom';
+    presetSelect!.dispatchEvent(new Event('change'));
+    const slotsSelect = form!.querySelector<HTMLSelectElement>(
+      'select[name="slotsPerPage"]',
+    );
+    slotsSelect!.value = '9';
     const totalPagesInput = form!.querySelector<HTMLInputElement>(
       'input[name="totalPages"]',
     );
@@ -118,7 +129,7 @@ describe('Binders list view', () => {
       .where('binderId')
       .equals(binders[0]!.id)
       .toArray();
-    expect(slots.length).toBe(18); // 2 pages × 9 slots
+    expect(slots.length).toBe(18); // custom 2 pages × 9 slots
     expect(slots.every((s) => s.status === 'empty')).toBe(true);
   });
 
@@ -129,6 +140,7 @@ describe('Binders list view', () => {
       binderType: null,
       totalPages: 1,
       slotsPerPage: 9,
+      binderPreset: null,
       completionMode: 'standard',
       sourceSetId: null,
     });

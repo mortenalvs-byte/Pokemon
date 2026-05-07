@@ -186,6 +186,7 @@ describe('Dashboard view', () => {
       binderType: null,
       totalPages: 1,
       slotsPerPage: 9,
+      binderPreset: null,
       completionMode: 'standard',
       sourceSetId: null,
     });

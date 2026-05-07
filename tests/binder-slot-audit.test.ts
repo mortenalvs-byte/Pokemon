@@ -95,6 +95,7 @@ describe('binder-slots-repo audit precedence', () => {
       binderType: null,
       totalPages: 1,
       slotsPerPage: 9,
+      binderPreset: null,
       completionMode: 'standard',
       sourceSetId: null,
     });
@@ -117,6 +118,7 @@ describe('binder-slots-repo audit precedence', () => {
       binderType: null,
       totalPages: 1,
       slotsPerPage: 9,
+      binderPreset: null,
       completionMode: 'standard',
       sourceSetId: null,
     });
@@ -138,6 +140,7 @@ describe('binder-slots-repo audit precedence', () => {
       binderType: null,
       totalPages: 1,
       slotsPerPage: 9,
+      binderPreset: null,
       completionMode: 'standard',
       sourceSetId: null,
     });
@@ -161,6 +164,7 @@ describe('binder-slots-repo audit precedence', () => {
       binderType: null,
       totalPages: 1,
       slotsPerPage: 9,
+      binderPreset: null,
       completionMode: 'standard',
       sourceSetId: null,
     });

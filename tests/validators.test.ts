@@ -139,6 +139,7 @@ describe('validateBinderInput', () => {
     binderType: null,
     totalPages: 12,
     slotsPerPage: 18,
+    binderPreset: null,
     completionMode: 'master',
     sourceSetId: null,
   };
@@ -147,10 +148,22 @@ describe('validateBinderInput', () => {
     expect(() => validateBinderInput(base)).not.toThrow();
   });
 
-  it('rejects slotsPerPage other than 9 or 18', () => {
+  it('rejects unsupported slotsPerPage', () => {
+    // PR 14 allows 4, 9, 12, 16, 18 — anything else must reject.
     expect(() =>
-      validateBinderInput({ ...base, slotsPerPage: 12 as 9 | 18 }),
+      validateBinderInput({ ...base, slotsPerPage: 7 as 9 | 18 }),
     ).toThrowError(/slotsPerPage/);
+    expect(() =>
+      validateBinderInput({ ...base, slotsPerPage: 24 as 9 | 18 }),
+    ).toThrowError(/slotsPerPage/);
+  });
+
+  it('accepts the new Vault X slot counts (4, 12, 16)', () => {
+    for (const slotsPerPage of [4, 9, 12, 16, 18] as const) {
+      expect(() =>
+        validateBinderInput({ ...base, slotsPerPage, binderPreset: null }),
+      ).not.toThrow();
+    }
   });
 
   it('rejects empty name', () => {

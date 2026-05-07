@@ -97,6 +97,7 @@ async function seedFixtures(db: PokemonTrackerDB): Promise<void> {
     binderType: null,
     totalPages: 1,
     slotsPerPage: 9,
+    binderPreset: null,
     completionMode: 'master',
     sourceSetId: 'base1',
   });

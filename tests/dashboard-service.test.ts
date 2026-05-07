@@ -229,6 +229,7 @@ describe('dashboard-service.buildSnapshot', () => {
       binderType: null,
       totalPages: 1,
       slotsPerPage: 9,
+      binderPreset: null,
       completionMode: 'standard',
       sourceSetId: null,
     });
@@ -267,6 +268,7 @@ describe('dashboard-service.buildSnapshot', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },
@@ -290,6 +292,7 @@ describe('dashboard-service.buildSnapshot', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },

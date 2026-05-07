@@ -212,6 +212,7 @@ describe('mvp-csv-export', () => {
         description: null,
         binderType: null,
         slotsPerPage: 9,
+        binderPreset: null,
         completionMode: 'standard',
         sourceSetId: 'base1',
       },
