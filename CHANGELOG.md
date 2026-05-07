@@ -16,8 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - `reverseHolofoil` → finish `reverse_holo` + edition `unlimited`
     - `1stEditionNormal` → finish `normal` + edition `first_edition`
     - `1stEditionHolofoil` → finish `holo` + edition `first_edition`
-    - `unlimitedNormal` / `unlimitedHolofoil` → defensive fallback
-    Every other key (cardmarket data, rarity strings, set names, future tcgplayer keys) is **deliberately ignored** — no guessing. A key is only counted when its value is a plain object (the API shape), so `{ normal: null }` or `{ holofoil: 5 }` does not flip a variant on. The escape-hatch sets `ESCAPE_HATCH_FINISHES = { unknown, stamped }` and `ESCAPE_HATCH_EDITIONS = { unknown, shadowless }` are exported so the form layer always has manual options for misprints / promos / shadowless prints.
+
+    Every other key — including the undocumented `unlimitedNormal` / `unlimitedHolofoil`, cardmarket data, rarity strings, set names, and any future tcgplayer keys — is **deliberately ignored**. No guessing. A future PR with a real API fixture can extend the mapping; PR 11 stays strict to the five documented keys. A key is only counted when its value is a plain object (the API shape), so `{ normal: null }` or `{ holofoil: 5 }` does not flip a variant on. The escape-hatch sets `ESCAPE_HATCH_FINISHES = { unknown, stamped }` and `ESCAPE_HATCH_EDITIONS = { unknown, shadowless }` are exported so the form layer always has manual options for misprints / promos / shadowless prints.
   - `src/domain/validators.ts` — new `validateHoldingVariants` / `validateLotItemVariants` / `validateWishlistVariants` predicates. Pure: callers (the repos) load the card and pass it in. The rule:
     - **verified card**: `finish` (and `edition`, where the record has one) must be in the verified set, OR be an escape-hatch value with `specialVariant=true` or a non-empty `note`.
     - **unverified card** (no tcgplayer.prices, only unknown keys, or card missing from cache entirely): finish/edition must take an escape-hatch value AND require the same marker.

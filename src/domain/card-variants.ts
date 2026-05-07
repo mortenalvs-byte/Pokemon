@@ -8,19 +8,19 @@
 // from rarity, set name, card name, or `cardmarket` data — see
 // `BACKUP_FORMAT.md` and the PR review notes.
 //
-// Recognised keys (PR review § "Mapping"):
+// Recognised keys (PR review § "Mapping" — locked):
 //   normal               → finish=normal     edition=unlimited
 //   holofoil             → finish=holo       edition=unlimited
 //   reverseHolofoil      → finish=reverse_holo edition=unlimited
 //   1stEditionNormal     → finish=normal     edition=first_edition
 //   1stEditionHolofoil   → finish=holo       edition=first_edition
-//   unlimitedNormal      → finish=normal     edition=unlimited (defensive
-//                                            fallback for older API rows)
-//   unlimitedHolofoil    → finish=holo       edition=unlimited (same)
 //
-// Every other key (including unrecognised future keys, lowercase
-// `firstEdition*`, weird casings) is ignored. This is deliberate: no
-// guessing. If we don't know the printing exists, we don't surface it.
+// Every other key — including `unlimitedNormal` / `unlimitedHolofoil`
+// (not documented in pokemontcg.io v2 docs), lowercase `firstEdition*`,
+// other weird casings, future tcgplayer keys, and any cardmarket
+// fields — is deliberately ignored. No guessing. If a future PR proves
+// such a key actually exists in our cache via documented API fixture,
+// it can be added with its own dedicated test.
 //
 // `availableVariants(card)` returns:
 //   { verified: true,  finishes, editions } — when at least one
@@ -138,14 +138,6 @@ export function availableVariants(card: CardRecord): AvailableVariants {
       case '1stEditionHolofoil':
         finishes.add('holo');
         editions.add('first_edition');
-        break;
-      case 'unlimitedNormal':
-        finishes.add('normal');
-        editions.add('unlimited');
-        break;
-      case 'unlimitedHolofoil':
-        finishes.add('holo');
-        editions.add('unlimited');
         break;
       // Unrecognised keys are deliberately ignored. We do not guess.
     }
