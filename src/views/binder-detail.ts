@@ -124,6 +124,19 @@ interface ViewState {
    * this back to `null`, so user-data writes still see fresh data.
    */
   cachedDetail: BinderDetail | null;
+  /**
+   * PR 20 review patch — consume-once deep-link guard. The URL hash
+   * `#binder/<id>/slot/<slotId>` is read on every render, but the
+   * page-jump should fire ONLY the first time we see a given
+   * slotId. Without this, the user could not click Forrige / Neste
+   * to leave the deep-link's page (every render would force
+   * `pagesPage` back to the slot's page).
+   *
+   * `null` means "no deep-link has been consumed yet (or hash has
+   * no slot suffix)". Set to the active slotId on first render that
+   * sees it; reset to `null` when the hash drops the slot suffix.
+   */
+  consumedSlotFocusId: string | null;
 }
 
 const CHECKLIST_PAGE_SIZE = 50;
@@ -150,6 +163,7 @@ export function mountBinderDetailView(
     pagesPage: 1,
     checklistPage: 0,
     cachedDetail: null,
+    consumedSlotFocusId: null,
   };
 
   void renderInto(container, state);
@@ -233,10 +247,22 @@ async function renderInto(
     slotMatchesSearch(slot, detail, state.search);
 
   // PR 20 — deep-link via `#binder/<id>/slot/<slotId>` should jump
-  // straight to the page containing that slot. Without this the
-  // user lands on page 1 and has to click through 60+ pages.
+  // straight to the page containing that slot. PR 20 review patch:
+  // consume-once. Without this guard, every render (paginate /
+  // filter / search) would re-read the hash and force `pagesPage`
+  // back to the deep-link's slot page — the user could not navigate
+  // away. We consume the focus exactly once per slotId; subsequent
+  // renders skip the page jump even though the hash still carries
+  // the slot suffix.
   const slotFocusId = getCurrentBinderSlotFocus();
-  if (slotFocusId !== null) {
+  if (slotFocusId === null) {
+    // Hash dropped the slot suffix — release the consume guard so a
+    // future deep-link to the same slotId works again.
+    state.consumedSlotFocusId = null;
+  }
+  const isFreshDeepLink =
+    slotFocusId !== null && slotFocusId !== state.consumedSlotFocusId;
+  if (isFreshDeepLink) {
     const targetSlot = detail.slots.find((s) => s.id === slotFocusId);
     if (targetSlot !== undefined) {
       if (state.mode === 'pages') {
@@ -260,13 +286,15 @@ async function renderInto(
         }
       }
     }
-  } else {
-    // PR 20 — when an active filter / search hides every slot on the
-    // currently-selected page but matches exist elsewhere, jump to
-    // the first page that has matches. Otherwise the user sees an
-    // empty page and has to manually click through to find a hit.
-    // Only applies in pages mode and only when the user has not
-    // explicitly arrived via the deep-link (handled above).
+    // Mark consumed even if the slot wasn't found — the URL is the
+    // user's intent; if it points at a non-existent slot we don't
+    // want to keep retrying the page-jump on every render either.
+    state.consumedSlotFocusId = slotFocusId;
+  } else if (slotFocusId === null) {
+    // Pages-mode auto-jump: when an active filter / search hides every
+    // slot on the currently-selected page but matches exist elsewhere,
+    // jump to the first page with a match. Skipped when a deep-link
+    // is in effect — the user explicitly asked for a specific page.
     if (state.mode === 'pages') {
       const hasMatch = (slot: BinderSlotRecord): boolean => slotPredicate(slot);
       const anyMatch = detail.slots.some(hasMatch);
@@ -293,10 +321,11 @@ async function renderInto(
 
   // PR 17 — deep-link from card-detail's "Binder-lokasjoner". When
   // the URL hash is `#binder/<id>/slot/<slotId>`, scroll to the slot
-  // and add a transient highlight. The router's hashchange listener
-  // calls renderInto on every navigation, so this runs once per
-  // mount.
-  if (slotFocusId !== null) {
+  // and add a transient highlight. PR 20 review patch: consume-once
+  // — only pulse on the FIRST render that sees a given slotId, so
+  // subsequent renders (Forrige / Neste / filter changes) don't
+  // keep re-applying the highlight.
+  if (isFreshDeepLink && slotFocusId !== null) {
     queueMicrotask(() => {
       focusSlotInDom(root, slotFocusId);
     });

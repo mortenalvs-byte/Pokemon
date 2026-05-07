@@ -299,6 +299,93 @@ describe('Binder detail pagination (PR 20)', () => {
     expect(tile?.classList.contains('binder-slot--focused')).toBe(true);
   });
 
+  // PR 20 review patch — deep-link MUST be a one-time jump, not a
+  // permanent page lock. Without `consumedSlotFocusId` the URL
+  // suffix `/slot/<slotId>` would force `pagesPage` back to the
+  // slot's page on every render — Forrige / Neste would visibly
+  // advance the URL bar but the page summary would snap back.
+  it('deep-link consume-once: Forrige / Neste actually navigate after the initial jump', async () => {
+    const { slotIds } = await seedBinder(5);
+    // Slot index 28 = page 4, slot 1 (zero-based 27).
+    const targetSlotId = slotIds[27]!;
+    window.location.hash = `#binder/${binderId}/slot/${targetSlotId}`;
+    mountBinderDetailView(getRoot());
+    await settle(200);
+
+    const summary = (): string =>
+      getRoot()
+        .querySelector('[data-region="pages-summary"]')
+        ?.textContent ?? '';
+    expect(summary()).toBe('Side 4 av 5');
+
+    // Click Forrige → expect to actually be on page 3 now, not
+    // snap back to page 4.
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="pages-prev"]')!
+      .click();
+    await settle();
+    expect(summary()).toBe('Side 3 av 5');
+
+    // Click Neste → page 4 again (legitimate forward nav).
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="pages-next"]')!
+      .click();
+    await settle();
+    expect(summary()).toBe('Side 4 av 5');
+
+    // Click Neste again → page 5, the LAST page.
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="pages-next"]')!
+      .click();
+    await settle();
+    expect(summary()).toBe('Side 5 av 5');
+    expect(
+      getRoot().querySelector<HTMLButtonElement>(
+        '[data-action="pages-next"]',
+      )?.disabled,
+    ).toBe(true);
+  });
+
+  it('deep-link consume-once: highlight pulses on the first render only, not on subsequent navigation', async () => {
+    const { slotIds } = await seedBinder(3);
+    const targetSlotId = slotIds[10]!; // page 2, slot 2
+    window.location.hash = `#binder/${binderId}/slot/${targetSlotId}`;
+    mountBinderDetailView(getRoot());
+    await settle(150);
+
+    // First render: target tile has the focused class.
+    const firstTile = getRoot().querySelector<HTMLElement>(
+      `[data-slot-id="${escapeSelectorValue(targetSlotId)}"]`,
+    );
+    expect(firstTile?.classList.contains('binder-slot--focused')).toBe(true);
+    // Manually clear the highlight to simulate the 3-second timeout
+    // (the test runs faster than the timeout). The point of the
+    // assertion below is that the NEXT render does NOT re-add it.
+    firstTile?.classList.remove('binder-slot--focused');
+
+    // Trigger a rerender via Forrige.
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="pages-prev"]')!
+      .click();
+    await settle();
+    // We're now on page 1; the focused slot is on page 2 and not
+    // rendered. Click Neste to go back.
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="pages-next"]')!
+      .click();
+    await settle();
+    // We're back on page 2. The focused tile is in DOM again, but
+    // the highlight class should NOT be re-applied — the deep-link
+    // was already consumed.
+    const refreshedTile = getRoot().querySelector<HTMLElement>(
+      `[data-slot-id="${escapeSelectorValue(targetSlotId)}"]`,
+    );
+    expect(refreshedTile).not.toBeNull();
+    expect(refreshedTile?.classList.contains('binder-slot--focused')).toBe(
+      false,
+    );
+  });
+
   it('1088-slot binder renders 16 tiles, not 1088 — DOM size proof', async () => {
     // Use the production preset: 68 pages × 16 = 1088 slots.
     const cards: CardRecord[] = [];
