@@ -8,6 +8,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR 15B — Quick Add Raw from Browse)
+PR 15B builds on the foundations PR 15A landed. **Tightly scoped**: a one-click "+1 raw" button per Browse row, raw-NM defaults, quantity-merge by variant. **No** binder direct-add, **no** bulk multi-select, **no** wishlist automation, **no** global search — those are PR 16+.
+
+- `src/components/quick-add.ts` (new) — pure decision helper `decideQuickAdd(card)`. Returns `{ canQuickAdd, defaults: { finish, edition }, reason }`. Defaults pick the first verified finish in the order `normal → holo → reverse_holo` and the first verified edition in the order `unlimited → first_edition`. When `availableVariants(card).verified === false` or no `(finish, edition)` pair is available the button is disabled and the user is sent to the full holding form via the existing "Legg til i samling" button.
+- `src/views/browse.ts` — every Browse row now renders three buttons: **`+1 raw`** (the new Quick Add), `Legg til i samling` (full form, unchanged), `Legg til i ønskeliste` (unchanged), plus `Vis detaljer`. The Quick Add click handler builds a minimal `HoldingInput` from the row's verified defaults, calls `holdingsRepo.upsertByVariant()`, and drives the inline feedback chip.
+  - Feedback chip lives next to the button: **`Lagt til`** (created), **`+1 → N (var N-1)`** (merged), **`Feil`** (rejected). The chip's state lives on `BrowseState.quickAddFeedback: Map<cardId, …>` so a `USER_DATA_CHANGED_EVENT` rerender (PR 15A's contract) re-applies the chip to the freshly built row instead of wiping it. Cleared on a 2.5 s timeout via a follow-up rerender.
+  - The button is disabled with a Norwegian tooltip when `decideQuickAdd` refuses (e.g. card has no `tcgplayer.prices`, or only carries the unmapped `unlimitedHolofoil` keys discussed in QA finding F-2).
+  - On success the handler dispatches `USER_DATA_CHANGED_EVENT` so Card detail / Collection / Dashboard refresh — PR 15A's AbortController contract guarantees only the currently-mounted view re-renders.
+- `src/styles.css` — adds `.browse-table__action--quick-add` (accent border) and the three feedback-chip variants `…--created` / `…--merged` / `…--error`.
+- The repo-bypass test from PR 13 still applies: tampering with the button's `data-finish` attribute via devtools causes the repo's `validateHoldingVariants` to reject the input — verified in `tests/browse-quick-add.test.ts`.
+
+#### Tests added
+- `tests/quick-add.test.ts` (11 cases): refuses null / empty / unmapped-only prices; defaults `normal → holo → reverse_holo`; defaults `unlimited → first_edition`; only-1stEditionHolofoil → first_edition fallback; malformed price entry refused.
+- `tests/browse-quick-add.test.ts` (7 cases): button rendered enabled with verified defaults; disabled button + Norwegian tooltip when no verified variant; first click creates with raw NM defaults via `upsertByVariant`; second click merges quantity (one row, qty 2); chip shows `Lagt til` then `+1 → 2 (var 1)`; `USER_DATA_CHANGED_EVENT` dispatched on success; repo-bypass via tampered `data-finish` rejected, no row written.
+
+#### Test totals
+- 72 test files, **573 tests** (up from 555). Typecheck green. Production build green (328 KB JS / 87 KB gzip).
+
+#### Browser-verified
+Headless Chromium (Claude_Preview) on the live IndexedDB seeded by the PR 15A QA stress run:
+- `+1 raw` button visible per Browse row with correct dataset (`base1-1` Alakazam → finish=holo, edition=unlimited).
+- Click on a card with an existing matching holding → chip shows `+1 → 2 (var 1)` then `+1 → 3 (var 2)` on the second click; quantity in IDB advances 1 → 2 → 3 in the same row.
+- Card with no `tcgplayer.prices` (`base1-8` Machamp) → button is `disabled` with the tooltip "Mangler API-verifisert variant — bruk \"Legg til i samling\" for å oppgi variant manuelt.".
+- Zero console errors throughout.
+
 ### Fixed (PR 15A — QA foundation before Quick Add)
 PR 15A clears the three blockers the QA-stress-test surfaced before Quick Add (PR 15B) is built. **No new feature surface — only fixes that the Quick Add UI will rely on.**
 

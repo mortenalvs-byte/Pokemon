@@ -649,6 +649,36 @@ body {
   cursor: not-allowed;
 }
 
+/* PR 15B — Quick Add Raw button + inline feedback chip. */
+.browse-table__action--quick-add {
+  border-color: var(--color-accent, var(--color-fg));
+  font-weight: 600;
+}
+
+.browse-table__quick-add-feedback {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.browse-table__quick-add-feedback--created {
+  color: var(--color-success, #2e7d32);
+}
+
+.browse-table__quick-add-feedback--merged {
+  color: var(--color-info, #1565c0);
+}
+
+.browse-table__quick-add-feedback--error {
+  color: var(--color-danger, #c62828);
+}
+
 .browse-table__empty-row {
   padding: var(--space-5);
   text-align: center;
