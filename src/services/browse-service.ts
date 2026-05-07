@@ -18,11 +18,13 @@ import type { CardRecord, SetRecord } from '../domain/types';
 import type { CardsRepo } from '../repositories/cards-repo';
 import type { HoldingsRepo } from '../repositories/holdings-repo';
 import type { SetsRepo } from '../repositories/sets-repo';
+import type { WishlistRepo } from '../repositories/wishlist-repo';
 
 export type BrowseSort = 'set-release' | 'name' | 'rarity' | 'set-number';
 export type SortDirection = 'asc' | 'desc';
 export type BrowsePageSize = 25 | 50 | 100;
 export type OwnershipFilter = 'owned' | 'not-owned';
+export type WishlistFilter = 'on-wishlist';
 
 export interface BrowseCriteria {
   /** Free-text substring (matched against card name, case-insensitive). */
@@ -31,6 +33,12 @@ export interface BrowseCriteria {
   readonly rarity?: string;
   /** Filter by whether the card has at least one live (not soft-deleted) holding. */
   readonly ownership?: OwnershipFilter;
+  /**
+   * Filter by whether the card has at least one live wishlist entry
+   * with status `wanted` or `ordered`. `received` and `cancelled`
+   * count as inactive.
+   */
+  readonly wishlist?: WishlistFilter;
   readonly sort: BrowseSort;
   readonly sortDirection: SortDirection;
   /** Zero-indexed. */
@@ -59,6 +67,7 @@ export function createBrowseService(
   cardsRepo: CardsRepo,
   setsRepo: SetsRepo,
   holdingsRepo?: HoldingsRepo,
+  wishlistRepo?: WishlistRepo,
 ): BrowseService {
   return {
     async browse(criteria) {
@@ -68,6 +77,9 @@ export function createBrowseService(
       let filtered = applyRemainingFilters(candidates, criteria);
       if (criteria.ownership !== undefined && holdingsRepo !== undefined) {
         filtered = await applyOwnershipFilter(filtered, criteria.ownership, holdingsRepo);
+      }
+      if (criteria.wishlist !== undefined && wishlistRepo !== undefined) {
+        filtered = await applyWishlistFilter(filtered, wishlistRepo);
       }
       const sorted = sortCards(
         filtered,
@@ -132,6 +144,21 @@ async function applyOwnershipFilter(
     return cards.filter((card) => ownedCardIds.has(card.id));
   }
   return cards.filter((card) => !ownedCardIds.has(card.id));
+}
+
+async function applyWishlistFilter(
+  cards: readonly CardRecord[],
+  wishlistRepo: WishlistRepo,
+): Promise<CardRecord[]> {
+  // "On wishlist" means a live wishlist entry with status `wanted`
+  // or `ordered`. `received` and `cancelled` are inactive.
+  const liveEntries = await wishlistRepo.listLive();
+  const activeCardIds = new Set(
+    liveEntries
+      .filter((w) => w.status === 'wanted' || w.status === 'ordered')
+      .map((w) => w.cardId),
+  );
+  return cards.filter((card) => activeCardIds.has(card.id));
 }
 
 async function selectCandidates(

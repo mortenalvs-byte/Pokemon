@@ -133,19 +133,18 @@ describe('Browse + holdings integration', () => {
     await settle();
   });
 
-  it('"Legg til i ønskeliste" remains disabled with a "kommer i PR 7b" tooltip', async () => {
+  it('"Legg til i ønskeliste" is enabled (PR 7b shipped wishlist UI)', async () => {
     const root = document.getElementById('content');
     if (!root) throw new Error('test bootstrap failed');
     mountBrowseView(root);
     await settle();
 
     const wishlistButtons = root.querySelectorAll<HTMLButtonElement>(
-      '.browse-table__action--disabled',
+      '[data-action="add-to-wishlist"]',
     );
     expect(wishlistButtons.length).toBeGreaterThan(0);
     for (const btn of wishlistButtons) {
-      expect(btn.disabled).toBe(true);
-      expect(btn.title).toMatch(/kommer i PR 7b/i);
+      expect(btn.disabled).toBe(false);
     }
   });
 

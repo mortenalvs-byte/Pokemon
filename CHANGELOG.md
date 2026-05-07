@@ -9,6 +9,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- **PR 7b — Wishlist UI: Wishlist view, Add/Edit/Remove form, Browse + Card Detail integration.** Completes the user-data write surface started in PR 7a. The "Legg til i ønskeliste" buttons in Browse and Card Detail are now active and open a wishlist form modal. The Wishlist sidebar route is no longer a placeholder. **No tags on wishlist** — `WishlistRecord` does not have a `tags` field, and adding one would be a schema migration outside this PR's scope.
+  - `src/repositories/wishlist-repo.ts` — adds `listByCardId(cardId)` using the existing `cardId` index from PR 3's schema. Returns both live and soft-deleted entries; callers narrow.
+  - `src/components/wishlist-form.ts` — Add/Edit modal. Fields: finish, priority (low / medium / high / grail), target condition (raw conditions + blank), target price + currency, status (wanted / ordered / received / cancelled), note. Pre-validates inline; the actual write goes through `wishlistRepo.create` / `wishlistRepo.update` so PR 3's repo validation and audit are still authoritative.
+  - `src/services/wishlist-service.ts` — joins `wishlist` + `cards` + `sets` and returns `WishlistRow[]` with `liveTotal` / `deletedTotal` counts. Filters: `status`, `priority`, `setId`, `search`, `showDeleted`. Default sort is **priority desc** with `createdAt` asc tiebreak; the priority enum is mapped to a numeric rank (`grail=4`, `high=3`, `medium=2`, `low=1`) inside the service. `listForCard()` returns ordered entries for one card.
+  - `src/services/browse-service.ts` — extended with optional `wishlist: 'on-wishlist'` filter. Loads live wishlist entries once and builds a `Set<cardId>` of cards with status `wanted` or `ordered`. `received` and `cancelled` count as inactive.
+  - `src/views/wishlist.ts` (replaces placeholder) — full table with toolbar, status / priority / set / search filters, default `priority desc` sort, `Vis slettede` toggle, soft-delete via `window.confirm`, restore.
+  - `src/views/browse.ts` — `Legg til i ønskeliste` enabled (was disabled in PR 7a). New `Ønskeliste` filter (`Alle` / `På ønskelisten`). The `Eier` filter from PR 7a is unchanged.
+  - `src/views/card-detail.ts` — `Legg til i ønskeliste` enabled. New `Ønskeliste-status` section lists every live wishlist entry for the card with Rediger / Fjern actions. The PR 7a `Dine kort` section is unchanged.
+  - `src/app.ts` — registers `mountWishlistView` for the `wishlist` route.
+  - `src/styles.css` — Wishlist table, wishlist-form layout (mirrors holding-form), Card Detail wishlist-status table.
+
+### Tests (250 / 250 across 36 files)
+- `tests/wishlist-service.test.ts` — live / deleted totals, default-deleted exclusion, priority desc default places `grail` first, status / priority / search filters, `showDeleted` toggle, `listForCard` ordering.
+- `tests/wishlist-form.test.ts` — add + edit rendering, valid save through the repo, **no `tags` field is rendered**, negative target price blocks save, prefill on edit + status update through the repo, `wishlist_item_created` / `wishlist_item_updated` audit rows.
+- `tests/wishlist-view.test.ts` — view structure, edit + Fjern actions, `Vis slettede` reveals deleted rows with Restore, empty state.
+- `tests/browse-with-wishlist.test.ts` — Add to wishlist enabled and opens dialog, **on-wishlist filter includes `wanted` + `ordered`, excludes `received` / `cancelled` / soft-deleted**, passive interactions do not write user data, save through dialog produces exactly one new wishlist row + one audit row.
+- `tests/card-detail-with-wishlist.test.ts` — Add button opens form, empty / populated `Ønskeliste-status` states, Fjern from Card Detail writes `wishlist_soft_deleted` audit, `Dine kort` section from PR 7a still renders.
+- `tests/card-detail-view.test.ts` (existing) — updated assertion: both Add buttons are now enabled.
+- `tests/browse-with-holdings.test.ts` (existing) — updated to match PR 7b: wishlist button is now enabled.
+- `tests/browse-view.test.ts` (existing) — disabled-button-doesn't-navigate test reframed as "Add buttons handle their own clicks".
+- All PR 1–6 tests including `tests/backup-roundtrip.test.ts` and `tests/browse-readonly-invariant.test.ts` remain green.
+
+### Known limitations (PR 7b)
+- `received` / `cancelled` are reachable via the Edit modal; there's no one-click row toggle yet. Can be polished later.
+- Card Detail's `Ønskeliste-status` shows live entries only. Soft-deleted ones are still reachable via the dedicated Wishlist view's `Vis slettede` toggle.
+- Bulk operations (mark many as cancelled, etc.) are out of scope for MVP.
+
+### Added
 - **PR 7a — Holdings: Collection view, Add/Edit/Delete flow, Browse + Card Detail integration.** First user-data writes from the UI. Wishlist UI is intentionally deferred to PR 7b — its Browse / Card Detail buttons remain disabled with the `kommer i PR 7b` tooltip.
   - `src/components/dialog.ts` — small `<dialog>` wrapper. `openDialog(content)` returns a Promise resolving to `'submitted'` or `'cancelled'`. Falls back to `setAttribute('open', '')` + manual `close` event when running under jsdom (older versions miss `dialog.close`).
   - `src/components/events.ts` — `USER_DATA_CHANGED_EVENT = 'pokemon:user-data-changed'`. Dispatched after every successful holding mutation; views listen and refresh.
