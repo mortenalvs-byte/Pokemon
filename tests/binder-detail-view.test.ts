@@ -246,7 +246,7 @@ describe('Binder detail view', () => {
     expect(assignedAudit).toBe(1);
   });
 
-  it('"Tøm slot" preserves targetCardId and resets to wanted', async () => {
+  it('"Tøm slot" preserves targetCardId and note, resets to wanted', async () => {
     const created = await createBinderService(db).createManualBinder({
       name: 'Clear binder',
       description: null,
@@ -259,11 +259,16 @@ describe('Binder detail view', () => {
     const slotsRepo = createBinderSlotsRepo(db);
     const slot = created.slots[0];
     if (slot === undefined) throw new Error('test bootstrap failed');
-    // Set up an assigned slot to clear later.
+    // Set up an assigned slot with a user-authored note to clear later.
     const holding = await createHoldingsRepo(db).create(baseHolding);
     await slotsRepo.update(
       slot.id,
-      { holdingId: holding.id, targetCardId: 'base1-1', status: 'owned' },
+      {
+        holdingId: holding.id,
+        targetCardId: 'base1-1',
+        status: 'owned',
+        note: 'keep this note',
+      },
       9,
     );
 
@@ -293,6 +298,8 @@ describe('Binder detail view', () => {
       expect(updated?.holdingId).toBeNull();
       expect(updated?.status).toBe('wanted');
       expect(updated?.targetCardId).toBe('base1-1'); // preserved
+      // User-authored note must survive the clear — it's user data.
+      expect(updated?.note).toBe('keep this note');
     });
   });
 });

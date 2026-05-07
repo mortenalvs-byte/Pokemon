@@ -125,14 +125,14 @@ async function handleAction(
   try {
     const repo = createBinderSlotsRepo(getDb());
     if (action.action === 'clear') {
-      // Preserve targetCardId so the slot keeps its identity in a
-      // from-set template; only reset what the user has changed.
+      // Preserve targetCardId AND note so the slot keeps its identity
+      // in a from-set template and any user-authored note survives.
+      // Clear only resets the assignment + status — not user data.
       await repo.update(
         options.slot.id,
         {
           holdingId: null,
           status: options.slot.targetCardId !== null ? 'wanted' : 'empty',
-          note: null,
         },
         options.slotsPerPage,
       );
