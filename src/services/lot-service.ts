@@ -184,12 +184,22 @@ export function createLotService(db: PokemonTrackerDB): LotService {
       // (holdingId !== null) are still skipped so the operation remains
       // idempotent regardless of the path. We track skipped counts so
       // the UI can render "X allerede i samlingen" feedback.
+      //
+      // PR 18 hardening — dedupe `itemIds` BEFORE the lookup so
+      // `[i1, i1]` produces exactly one holding (and one
+      // `skippedAlreadyMaterialised` count if the caller passes the
+      // same materialised id twice). The service must not trust the
+      // caller to send unique ids — a future bulk / CSV-import flow
+      // could legitimately produce duplicates.
       let skippedAlreadyMaterialised = 0;
       let skippedNotFound = 0;
       let candidatePool: readonly LotItemRecord[];
       if (options?.itemIds !== undefined) {
+        const seen = new Set<string>();
         const requested: LotItemRecord[] = [];
         for (const id of options.itemIds) {
+          if (seen.has(id)) continue;
+          seen.add(id);
           const item = liveItemsById.get(id);
           if (item === undefined) {
             skippedNotFound += 1;

@@ -711,14 +711,30 @@ async function handleMaterializeSelected(
   detail: LotDetail,
   state: LotDetailState,
 ): Promise<void> {
-  const ready = countSelectedReady(detail, state);
-  if (ready === 0) return;
+  // PR 18 hardening — only send ids that are actually ready. The
+  // checkbox UI prunes ids on every render so this is normally a
+  // no-op filter, but a stale selection state could otherwise reach
+  // the service with an unallocated id and trigger
+  // "Cannot materialise: N item(s) have no allocatedCost" — which
+  // would contradict the button's "Legg valgte i samling (X)" label.
+  const readyIds: string[] = [];
+  for (const item of detail.items) {
+    if (
+      state.selectedItemIds.has(item.id) &&
+      item.holdingId === null &&
+      item.allocatedCost !== null &&
+      item.deletedAt === null
+    ) {
+      readyIds.push(item.id);
+    }
+  }
+  if (readyIds.length === 0) return;
   const confirmed = window.confirm(
-    `Legg ${ready} valgte kort fra lotten "${detail.lot.name}" i samlingen?\n\n` +
+    `Legg ${readyIds.length} valgte kort fra lotten "${detail.lot.name}" i samlingen?\n\n` +
       'Bare de valgte ready-itemene blir materialisert. Allerede materialiserte items hoppes over hvis de er med i utvalget.',
   );
   if (!confirmed) return;
-  await runMaterialize(detail, state, [...state.selectedItemIds]);
+  await runMaterialize(detail, state, readyIds);
 }
 
 async function handleMaterializeOne(

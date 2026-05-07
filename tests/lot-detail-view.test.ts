@@ -480,8 +480,7 @@ describe('Lot detail — partial materialise (PR 18)', () => {
     );
   });
 
-  it('pagination is hidden for ≤ 50 items and visible for > 50', async () => {
-    // ≤ 50 items: pagination hidden.
+  it('pagination is hidden for ≤ 50 items', async () => {
     const small = await createLotsRepo(db).create({
       name: 'Small',
       purchaseDate: '2026-04-01T00:00:00.000Z',
@@ -499,5 +498,116 @@ describe('Lot detail — partial materialise (PR 18)', () => {
         '.lot-detail-view__pagination',
       )?.hidden,
     ).toBe(true);
+  });
+
+  // PR 18 hardening — real pagination flow with > 50 items so the
+  // page summary, Neste / Forrige buttons, and visible-page-only
+  // select-all behaviour are all locked in by tests, not just by
+  // the browser-preview check in the PR body.
+  it('pagination flow with 51 items: navigation, summary, and visible-page select-all', async () => {
+    // 51 cards so we have exactly two pages with 50 + 1 split.
+    const cards: CardRecord[] = [];
+    for (let i = 1; i <= 51; i += 1) cards.push(makeCard(i));
+    await createCardsRepo(db).upsertMany(cards);
+
+    const lot = await createLotsRepo(db).create({
+      name: 'Big lot',
+      purchaseDate: '2026-04-01T00:00:00.000Z',
+      totalCost: 5100,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+    for (let i = 1; i <= 51; i += 1) {
+      await createLotItemsRepo(db).create(lotItem(lot.id, `base1-${i}`));
+    }
+    window.location.hash = `lot/${encodeURIComponent(lot.id)}`;
+    mountLotDetailView(getRoot());
+    await settle();
+    // Allocate so every item has allocatedCost (and so per-row
+    // checkboxes render).
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="apply-allocation"]')
+      ?.click();
+    await vi.waitFor(async () => {
+      const items = await db.lotItems.toArray();
+      expect(items.every((i) => i.allocatedCost !== null)).toBe(true);
+    });
+    await settle();
+
+    // Pagination is visible with the right summary.
+    const pagination = getRoot().querySelector<HTMLElement>(
+      '.lot-detail-view__pagination',
+    );
+    expect(pagination).not.toBeNull();
+    expect(pagination!.hidden).toBe(false);
+    const summary = (): string =>
+      getRoot()
+        .querySelector('[data-region="page-summary"]')
+        ?.textContent?.trim() ?? '';
+    expect(summary()).toBe('Side 1 av 2 — viser 1–50 av 51');
+    expect(
+      getRoot().querySelectorAll('.lot-items-table__row').length,
+    ).toBe(50);
+
+    // Visible-page select-all only ticks the 50 visible rows on page 1.
+    const selectAll = getRoot().querySelector<HTMLInputElement>(
+      '[data-region="select-all"]',
+    );
+    expect(selectAll).not.toBeNull();
+    selectAll!.checked = true;
+    selectAll!.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    const selectedAfterSelectAll = getRoot().querySelector<HTMLButtonElement>(
+      '[data-action="materialize-selected"]',
+    );
+    expect(selectedAfterSelectAll?.textContent).toContain(
+      'Legg valgte i samling (50)',
+    );
+
+    // Neste advances to page 2 and shows the last single item.
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="next-page"]')
+      ?.click();
+    await settle();
+    expect(summary()).toBe('Side 2 av 2 — viser 51–51 av 51');
+    expect(
+      getRoot().querySelectorAll('.lot-items-table__row').length,
+    ).toBe(1);
+
+    // The 51st row's checkbox is NOT ticked — select-all on page 1
+    // did not affect items on other pages.
+    const cb51 = getRoot().querySelector<HTMLInputElement>(
+      'input[data-action="select-item"]',
+    );
+    expect(cb51).not.toBeNull();
+    expect(cb51!.checked).toBe(false);
+    // The total selection count therefore stayed at 50.
+    expect(
+      getRoot()
+        .querySelector('[data-action="materialize-selected"]')
+        ?.textContent,
+    ).toContain('Legg valgte i samling (50)');
+
+    // Forrige goes back to page 1.
+    getRoot()
+      .querySelector<HTMLButtonElement>('[data-action="prev-page"]')
+      ?.click();
+    await settle();
+    expect(summary()).toBe('Side 1 av 2 — viser 1–50 av 51');
+    expect(
+      getRoot().querySelectorAll('.lot-items-table__row').length,
+    ).toBe(50);
+    // Forrige on page 1 is now disabled; Neste is enabled.
+    expect(
+      getRoot().querySelector<HTMLButtonElement>(
+        '[data-action="prev-page"]',
+      )?.disabled,
+    ).toBe(true);
+    expect(
+      getRoot().querySelector<HTMLButtonElement>(
+        '[data-action="next-page"]',
+      )?.disabled,
+    ).toBe(false);
   });
 });

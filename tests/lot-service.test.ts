@@ -422,6 +422,74 @@ describe('lot-service.materializeHoldings — partial via { itemIds }', () => {
     expect(result.skippedNotFound).toBe(1);
   });
 
+  // PR 18 hardening — dedupe before materialise. The UI uses a Set
+  // so the user can't normally send the same id twice, but the
+  // service must not trust the caller. A future bulk / CSV import
+  // could legitimately produce duplicates and we don't want
+  // double-materialise (two holdings, two audits, broken counts).
+  it('deduplicates itemIds: passing the same id twice produces exactly one holding', async () => {
+    const lotsRepo = createLotsRepo(db);
+    const itemsRepo = createLotItemsRepo(db);
+    const lot = await lotsRepo.create({ ...baseLotInput, totalCost: 100 });
+    const i1 = await itemsRepo.create(lotItem(lot.id, 'card-1'));
+    await createLotService(db).applyAllocation(lot.id);
+
+    const result = await createLotService(db).materializeHoldings(lot.id, {
+      itemIds: [i1.id, i1.id, i1.id],
+    });
+
+    expect(result.created).toHaveLength(1);
+    expect(await db.holdings.count()).toBe(1);
+    expect(result.skippedAlreadyMaterialised).toBe(0);
+    expect(result.skippedNotFound).toBe(0);
+
+    const items = await itemsRepo.listByLotId(lot.id);
+    expect(items[0]?.holdingId).not.toBeNull();
+    // Exactly one bulk audit row, not three.
+    const audits = await db.auditLog
+      .where('action')
+      .equals('lot_holdings_materialized')
+      .toArray();
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.message).toContain('materialized 1 holdings');
+  });
+
+  it('deduplicates itemIds: dedupe stays consistent with skippedAlreadyMaterialised', async () => {
+    const lotsRepo = createLotsRepo(db);
+    const itemsRepo = createLotItemsRepo(db);
+    const lot = await lotsRepo.create({ ...baseLotInput, totalCost: 100 });
+    const i1 = await itemsRepo.create(lotItem(lot.id, 'card-1'));
+    await createLotService(db).applyAllocation(lot.id);
+    // First call materialises i1.
+    await createLotService(db).materializeHoldings(lot.id, {
+      itemIds: [i1.id],
+    });
+    // Second call passes the SAME id twice — the materialised state
+    // is the canonical truth, so we count one already-materialised
+    // skip and create zero new holdings.
+    const result = await createLotService(db).materializeHoldings(lot.id, {
+      itemIds: [i1.id, i1.id, i1.id],
+    });
+    expect(result.created).toHaveLength(0);
+    expect(result.skippedAlreadyMaterialised).toBe(1);
+    expect(result.noop).toBe(true);
+    expect(await db.holdings.count()).toBe(1);
+  });
+
+  it('deduplicates itemIds: unknown id repeated counts once towards skippedNotFound', async () => {
+    const lotsRepo = createLotsRepo(db);
+    const itemsRepo = createLotItemsRepo(db);
+    const lot = await lotsRepo.create({ ...baseLotInput, totalCost: 100 });
+    const i1 = await itemsRepo.create(lotItem(lot.id, 'card-1'));
+    await createLotService(db).applyAllocation(lot.id);
+    const result = await createLotService(db).materializeHoldings(lot.id, {
+      itemIds: ['ghost', 'ghost', 'ghost', i1.id, i1.id],
+    });
+    expect(result.created).toHaveLength(1);
+    expect(result.skippedNotFound).toBe(1);
+    expect(result.skippedAlreadyMaterialised).toBe(0);
+  });
+
   it('audit message marks the partial path as "(selected)" and reports skips', async () => {
     const lotsRepo = createLotsRepo(db);
     const itemsRepo = createLotItemsRepo(db);
@@ -429,19 +497,34 @@ describe('lot-service.materializeHoldings — partial via { itemIds }', () => {
     const i1 = await itemsRepo.create(lotItem(lot.id, 'card-1'));
     const i2 = await itemsRepo.create(lotItem(lot.id, 'card-2'));
     await createLotService(db).applyAllocation(lot.id);
-    await createLotService(db).materializeHoldings(lot.id, {
+    const r1 = await createLotService(db).materializeHoldings(lot.id, {
       itemIds: [i1.id],
     });
-    await createLotService(db).materializeHoldings(lot.id, {
+    const r2 = await createLotService(db).materializeHoldings(lot.id, {
       itemIds: [i1.id, i2.id],
     });
+    // Service-level invariants: r1 created exactly i1 with no skips,
+    // r2 created exactly i2 and skipped i1 (already materialised).
+    expect(r1.created).toHaveLength(1);
+    expect(r1.skippedAlreadyMaterialised).toBe(0);
+    expect(r2.created).toHaveLength(1);
+    expect(r2.skippedAlreadyMaterialised).toBe(1);
+
     const audits = await db.auditLog
       .where('action')
       .equals('lot_holdings_materialized')
       .toArray();
     expect(audits).toHaveLength(2);
+    // Both audits use the partial-path label.
     expect(audits[0]?.message).toContain('(selected)');
     expect(audits[1]?.message).toContain('(selected)');
-    expect(audits[1]?.message).toContain('skipped 1 already in collection');
+    // Exactly one audit reports the skip (the second call). Use a
+    // set-style assertion because Dexie does not guarantee
+    // `where().toArray()` ordering and `nowIso()` has ms resolution
+    // — the two audits CAN share a timestamp under jsdom.
+    const withSkip = audits.filter((a) =>
+      a.message.includes('skipped 1 already in collection'),
+    );
+    expect(withSkip).toHaveLength(1);
   });
 });
