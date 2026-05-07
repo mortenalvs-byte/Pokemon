@@ -3,12 +3,14 @@ import {
   DEFAULT_ROUTE,
   ROUTES,
   getCurrentBinderId,
+  getCurrentBinderSlotFocus,
   getCurrentCardId,
   getCurrentLotId,
   getCurrentRoute,
   isRoute,
   navigate,
   navigateToBinder,
+  navigateToBinderSlot,
   navigateToCard,
   navigateToLot,
   onRouteChange,
@@ -170,6 +172,45 @@ describe('router', () => {
   it('isRoute() does not classify "binder-detail" as a sidebar route', () => {
     setHash('binder-detail');
     expect(getCurrentRoute()).toBe(DEFAULT_ROUTE);
+  });
+
+  // PR 17 — deep-link to specific slot
+  it('extracts the binder id from #binder/<id>/slot/<slotId>', () => {
+    setHash('binder/some-uuid/slot/some-slot-id');
+    expect(getCurrentBinderId()).toBe('some-uuid');
+    expect(getCurrentRoute()).toBe('binder-detail');
+  });
+
+  it('getCurrentBinderSlotFocus() returns null for plain #binder/<id>', () => {
+    setHash('binder/some-uuid');
+    expect(getCurrentBinderSlotFocus()).toBeNull();
+  });
+
+  it('getCurrentBinderSlotFocus() returns the slot id for #binder/<id>/slot/<slotId>', () => {
+    setHash('binder/some-uuid/slot/abc-123');
+    expect(getCurrentBinderSlotFocus()).toBe('abc-123');
+  });
+
+  it('getCurrentBinderSlotFocus() returns null for non-binder routes', () => {
+    setHash('card/base1-4');
+    expect(getCurrentBinderSlotFocus()).toBeNull();
+    setHash('lots');
+    expect(getCurrentBinderSlotFocus()).toBeNull();
+  });
+
+  it('navigateToBinderSlot() encodes both ids', () => {
+    navigateToBinderSlot('binder id', 'slot id');
+    expect(window.location.hash).toBe(
+      `#binder/${encodeURIComponent('binder id')}/slot/${encodeURIComponent('slot id')}`,
+    );
+    expect(getCurrentBinderId()).toBe('binder id');
+    expect(getCurrentBinderSlotFocus()).toBe('slot id');
+  });
+
+  it('handles #binder/<id>/slot/ with empty slot id (treats as no focus)', () => {
+    setHash('binder/some-uuid/slot/');
+    expect(getCurrentBinderId()).toBe('some-uuid');
+    expect(getCurrentBinderSlotFocus()).toBeNull();
   });
 
   it('getCurrentLotId() returns null for normal routes', () => {

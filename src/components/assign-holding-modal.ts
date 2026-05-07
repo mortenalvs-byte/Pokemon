@@ -8,20 +8,26 @@
 //   - If the slot has `targetCardId` set (from-set template or already
 //     bound to a card), only holdings for that card are listed.
 //   - If `targetCardId` is null (blank manual slot), every live holding
-//     is listed and the user picks one freely.
+//     is listed and the user picks one freely. PR 17 adds a free-text
+//     search input on top of the picker for that case so 600+ holdings
+//     stay manageable; the input uses `cardMatchesQuery` so the same
+//     search rules apply as in Browse / Collection / Wishlist.
 
 import { DIALOG_SUBMITTED_EVENT } from './dialog';
 import { USER_DATA_CHANGED_EVENT } from './events';
 import { getDb } from '../db/database';
+import { cardMatchesQuery, isEmptyQuery } from '../domain/card-search';
 import { ValidationError } from '../domain/validators';
 import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createHoldingsRepo } from '../repositories/holdings-repo';
+import { createSetsRepo } from '../repositories/sets-repo';
 import { formatTags } from '../domain/tags';
 import type {
   BinderSlotRecord,
   CardRecord,
   HoldingRecord,
+  SetRecord,
   SlotsPerPage,
 } from '../domain/types';
 import type { DialogContent } from './dialog';
@@ -56,8 +62,12 @@ async function mount(
   const cards = await cardsRepo.list();
   const cardsById = new Map<string, CardRecord>();
   for (const c of cards) cardsById.set(c.id, c);
+  // PR 17 — load sets for the cardMatchesQuery set-name path.
+  const sets = await createSetsRepo(db).list();
+  const setsById = new Map<string, SetRecord>();
+  for (const s of sets) setsById.set(s.id, s);
 
-  const filtered =
+  const candidateHoldings: readonly HoldingRecord[] =
     options.slot.targetCardId === null
       ? liveHoldings
       : liveHoldings.filter((h) => h.cardId === options.slot.targetCardId);
@@ -66,27 +76,85 @@ async function mount(
     '[data-region="holding-select"]',
   );
   const empty = root.querySelector<HTMLElement>('[data-region="empty"]');
+  const searchWrap = root.querySelector<HTMLElement>(
+    '[data-region="search-wrap"]',
+  );
+  const searchInput = root.querySelector<HTMLInputElement>(
+    '[data-region="search-input"]',
+  );
+  const resultCount = root.querySelector<HTMLElement>(
+    '[data-region="result-count"]',
+  );
+  const submitButton = root.querySelector<HTMLButtonElement>(
+    '.assign-holding-modal__submit',
+  );
   if (select === null || empty === null) return;
 
-  if (filtered.length === 0) {
-    select.hidden = true;
-    empty.hidden = false;
-    empty.textContent =
-      options.slot.targetCardId === null
-        ? 'Ingen live holdings i samlingen ennå. Legg til en holding først via Browse eller Min samling.'
-        : `Ingen live holdings for kortet (${options.slot.targetCardId}). Legg til en holding først.`;
-    const submitButton = root.querySelector<HTMLButtonElement>(
-      '.assign-holding-modal__submit',
-    );
-    if (submitButton !== null) submitButton.disabled = true;
-  } else {
-    select.replaceChildren();
-    for (const holding of filtered) {
-      const opt = document.createElement('option');
-      opt.value = holding.id;
-      opt.textContent = describeHolding(holding, cardsById.get(holding.cardId) ?? null);
-      select.appendChild(opt);
+  // PR 17 — show the search field only when the slot is target-free.
+  // Target slots already filter to one card, so a search input there
+  // is just clutter.
+  if (options.slot.targetCardId === null && searchWrap !== null) {
+    searchWrap.hidden = false;
+  }
+
+  // Render holdings into the select; called whenever the search
+  // changes. Re-runs the filter and updates the empty state.
+  const renderHoldings = (query: string): void => {
+    const matched = isEmptyQuery(query)
+      ? candidateHoldings
+      : candidateHoldings.filter((h) => {
+          const card = cardsById.get(h.cardId);
+          if (card === undefined) return false;
+          return cardMatchesQuery(card, query, { setsById });
+        });
+
+    if (matched.length === 0) {
+      select.hidden = true;
+      empty.hidden = false;
+      if (candidateHoldings.length === 0) {
+        empty.textContent =
+          options.slot.targetCardId === null
+            ? 'Ingen live holdings i samlingen ennå. Legg til en holding først via Browse eller Min samling.'
+            : `Ingen live holdings for kortet (${options.slot.targetCardId}). Legg til en holding først.`;
+      } else {
+        empty.textContent = `Ingen holdings matcher "${query}".`;
+      }
+      if (submitButton !== null) submitButton.disabled = true;
+    } else {
+      select.hidden = false;
+      empty.hidden = true;
+      if (submitButton !== null) submitButton.disabled = false;
+      select.replaceChildren();
+      for (const holding of matched) {
+        const opt = document.createElement('option');
+        opt.value = holding.id;
+        opt.textContent = describeHolding(
+          holding,
+          cardsById.get(holding.cardId) ?? null,
+        );
+        select.appendChild(opt);
+      }
     }
+
+    if (resultCount !== null) {
+      const total = candidateHoldings.length;
+      resultCount.textContent =
+        isEmptyQuery(query) || matched.length === total
+          ? `${total} ${total === 1 ? 'holding' : 'holdings'}`
+          : `${matched.length} av ${total} match`;
+    }
+  };
+
+  renderHoldings('');
+
+  if (searchInput !== null) {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    searchInput.addEventListener('input', () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        renderHoldings(searchInput.value);
+      }, 150);
+    });
   }
 
   root
@@ -99,7 +167,7 @@ async function mount(
   if (root instanceof HTMLFormElement) {
     root.addEventListener('submit', (event) => {
       event.preventDefault();
-      void handleSubmit(options, root, host, filtered);
+      void handleSubmit(options, root, host, candidateHoldings);
     });
   }
 }
@@ -119,6 +187,17 @@ function buildSkeleton(options: AssignHoldingModalOptions): HTMLElement {
           targetText,
         )}</p>
       </header>
+
+      <label class="assign-holding-modal__field" data-region="search-wrap" hidden>
+        <span>Søk i samlingen</span>
+        <input
+          type="search"
+          data-region="search-input"
+          autocomplete="off"
+          placeholder="Kortnavn, kort-id, nummer…"
+        />
+        <small class="assign-holding-modal__hint" data-region="result-count" aria-live="polite"></small>
+      </label>
 
       <label class="assign-holding-modal__field">
         <span>Velg holding</span>

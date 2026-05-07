@@ -29,8 +29,14 @@ import { onUserDataChanged } from '../components/events';
 import { buildAssignHoldingModal } from '../components/assign-holding-modal';
 import { buildSlotActionMenu } from '../components/slot-action-menu';
 import { getDb } from '../db/database';
+import { cardMatchesQuery, isEmptyQuery } from '../domain/card-search';
 import { isReverseHoloTemplateSlot } from '../domain/card-variants';
-import { getCurrentBinderId, navigate, navigateToCard } from '../router';
+import {
+  getCurrentBinderId,
+  getCurrentBinderSlotFocus,
+  navigate,
+  navigateToCard,
+} from '../router';
 import { createBindersRepo } from '../repositories/binders-repo';
 import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
 import { createCardsRepo } from '../repositories/cards-repo';
@@ -78,19 +84,28 @@ type SlotFilter =
   | 'missing'
   | 'ordered'
   | 'duplicate'
-  | 'completed';
+  | 'completed'
+  | 'empty';
 
 interface ViewState {
   mode: ViewMode;
   filter: SlotFilter;
+  /**
+   * PR 17 — free-text search inside the binder. Uses the shared
+   * `cardMatchesQuery` predicate (PR 15A — F-6) against the card
+   * resolved for each slot via `resolveCardForSlot`. Empty string
+   * matches everything.
+   */
+  search: string;
 }
 
 const FILTER_LABELS: ReadonlyArray<{ readonly value: SlotFilter; readonly label: string }> = [
   { value: 'all', label: 'Alle' },
   { value: 'missing', label: 'Mangler' },
+  { value: 'completed', label: 'Eid' },
+  { value: 'empty', label: 'Tomme' },
   { value: 'ordered', label: 'Bestilt' },
   { value: 'duplicate', label: 'Duplikater' },
-  { value: 'completed', label: 'Ferdig' },
 ];
 
 export function mountBinderDetailView(
@@ -99,7 +114,7 @@ export function mountBinderDetailView(
 ): void {
   // Per-mount view state so toggles survive USER_DATA_CHANGED_EVENT
   // refreshes but reset when the route is unmounted.
-  const state: ViewState = { mode: 'pages', filter: 'all' };
+  const state: ViewState = { mode: 'pages', filter: 'all', search: '' };
 
   void renderInto(container, state);
 
@@ -159,11 +174,56 @@ async function renderInto(
   root.appendChild(buildSummary(detail));
   root.appendChild(buildToolbar(detail, state, container));
 
+  // PR 17 — combine the slot-status filter with the free-text search
+  // into a single predicate so the page-grid and checklist views stay
+  // in sync. Empty search → only the filter applies.
+  const slotPredicate = (slot: BinderSlotRecord): boolean =>
+    slotMatchesFilter(slot, state.filter, detail) &&
+    slotMatchesSearch(slot, detail, state.search);
+
   if (state.mode === 'checklist') {
-    root.appendChild(buildChecklist(detail, state.filter));
+    root.appendChild(buildChecklist(detail, slotPredicate));
   } else {
-    root.appendChild(buildPagesGrid(detail, state.filter));
+    root.appendChild(buildPagesGrid(detail, slotPredicate));
   }
+
+  // PR 17 — deep-link from card-detail's "Binder-lokasjoner". When
+  // the URL hash is `#binder/<id>/slot/<slotId>`, scroll to the slot
+  // and add a transient highlight. The router's hashchange listener
+  // calls renderInto on every navigation, so this runs once per
+  // mount.
+  const slotFocusId = getCurrentBinderSlotFocus();
+  if (slotFocusId !== null) {
+    queueMicrotask(() => {
+      focusSlotInDom(root, slotFocusId);
+    });
+  }
+}
+
+function focusSlotInDom(root: HTMLElement, slotId: string): void {
+  const target = root.querySelector<HTMLElement>(
+    `[data-slot-id="${cssEscape(slotId)}"]`,
+  );
+  if (target === null) return;
+  // jsdom does not implement scrollIntoView; guard so tests still
+  // pass while the production browser scrolls as expected.
+  if (typeof target.scrollIntoView === 'function') {
+    target.scrollIntoView({ block: 'center', behavior: 'auto' });
+  }
+  target.classList.add('binder-slot--focused');
+  // Drop the highlight after a few seconds so a subsequent navigation
+  // to the same binder without the slot suffix doesn't keep the
+  // highlight forever.
+  setTimeout(() => {
+    target.classList.remove('binder-slot--focused');
+  }, 3000);
+}
+
+function cssEscape(value: string): string {
+  // CSS.escape is not in jsdom; this minimal escape covers the
+  // characters our slot ids contain (UUIDs only — no quotes or
+  // backslashes — but be defensive in case of future changes).
+  return value.replace(/(["\\])/g, '\\$1');
 }
 
 function appendMessage(root: HTMLElement, text: string): void {
@@ -260,6 +320,33 @@ function buildToolbar(
   });
   toggleGroup.appendChild(checklistBtn);
   wrap.appendChild(toggleGroup);
+
+  // PR 17 — free-text search inside the binder. Uses the same
+  // `cardMatchesQuery` predicate as Browse / Collection / Wishlist
+  // (PR 15A — F-6) so a query like "Charizard 4" resolves the same
+  // way everywhere.
+  const searchLabel = document.createElement('label');
+  searchLabel.className = 'binder-detail-view__search';
+  const searchText = document.createElement('span');
+  searchText.textContent = 'Søk';
+  searchLabel.appendChild(searchText);
+  const searchInput = document.createElement('input');
+  searchInput.type = 'search';
+  searchInput.dataset['region'] = 'search-input';
+  searchInput.placeholder = 'Kortnavn, id, nummer…';
+  searchInput.value = state.search;
+  // Debounce so each keystroke doesn't re-render an entire 1088-slot
+  // binder.
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  searchInput.addEventListener('input', () => {
+    if (searchTimer !== null) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      state.search = searchInput.value;
+      void renderInto(container, state);
+    }, 200);
+  });
+  searchLabel.appendChild(searchInput);
+  wrap.appendChild(searchLabel);
 
   // Filter
   const filterLabel = document.createElement('label');
@@ -373,6 +460,11 @@ function slotMatchesFilter(
       // target (blank manual slots) are not part of the completion
       // denominator, so they are not "missing" either.
       return slot.targetCardId !== null && !isSlotComplete(slot, detail);
+    case 'empty':
+      // PR 17 — fully blank slot: no target card AND no assigned
+      // holding. Useful when assigning an unassigned holding to a
+      // free pocket without filtering by status.
+      return slot.targetCardId === null && slot.holdingId === null;
     case 'ordered':
       return slot.status === 'ordered';
     case 'duplicate':
@@ -380,12 +472,26 @@ function slotMatchesFilter(
   }
 }
 
+function slotMatchesSearch(
+  slot: BinderSlotRecord,
+  detail: BinderDetail,
+  search: string,
+): boolean {
+  if (isEmptyQuery(search)) return true;
+  const card = resolveCardForSlot(detail, slot);
+  if (card === null) return false;
+  // Set-name search inside a binder is intentionally omitted —
+  // binders have at most one source set anyway, so name / id /
+  // number / setid coverage is enough.
+  return cardMatchesQuery(card, search);
+}
+
 // ---------------------------------------------------------------------
 // Pages mode
 
 function buildPagesGrid(
   detail: BinderDetail,
-  filter: SlotFilter,
+  matches: (slot: BinderSlotRecord) => boolean,
 ): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'binder-detail-view__pages';
@@ -413,7 +519,7 @@ function buildPagesGrid(
   for (const pageNumber of sortedPageNumbers) {
     const slotsForPage = slotsByPage.get(pageNumber);
     if (slotsForPage === undefined) continue;
-    wrap.appendChild(buildPage(detail, pageNumber, slotsForPage, filter));
+    wrap.appendChild(buildPage(detail, pageNumber, slotsForPage, matches));
   }
 
   return wrap;
@@ -423,7 +529,7 @@ function buildPage(
   detail: BinderDetail,
   pageNumber: number,
   slots: readonly BinderSlotRecord[],
-  filter: SlotFilter,
+  matches: (slot: BinderSlotRecord) => boolean,
 ): HTMLElement {
   const page = document.createElement('section');
   page.className = 'binder-page';
@@ -437,8 +543,7 @@ function buildPage(
   const grid = document.createElement('div');
   grid.className = `binder-page__grid binder-page__grid--${detail.binder.slotsPerPage}`;
   for (const slot of slots) {
-    const matches = slotMatchesFilter(slot, filter, detail);
-    grid.appendChild(buildSlot(detail, slot, matches));
+    grid.appendChild(buildSlot(detail, slot, matches(slot)));
   }
   page.appendChild(grid);
   return page;
@@ -573,7 +678,7 @@ function buildSlot(
 
 function buildChecklist(
   detail: BinderDetail,
-  filter: SlotFilter,
+  matches: (slot: BinderSlotRecord) => boolean,
 ): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'binder-detail-view__checklist';
@@ -586,9 +691,18 @@ function buildChecklist(
     return wrap;
   }
 
-  const filteredSlots = detail.slots.filter((s) =>
-    slotMatchesFilter(s, filter, detail),
-  );
+  // PR 17 — checklist is now sorted by physical slot order
+  // (page asc, slot asc) so set-based binders render in
+  // set-release / card-number order. The from-set wizard places
+  // drafts in card-number order already, but explicit sort keeps
+  // legacy data + manually-rearranged binders predictable.
+  const filteredSlots = detail.slots
+    .filter((s) => matches(s))
+    .slice()
+    .sort((a, b) => {
+      if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+      return a.slotNumber - b.slotNumber;
+    });
 
   if (filteredSlots.length === 0) {
     const empty = document.createElement('p');

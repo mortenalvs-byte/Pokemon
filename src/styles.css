@@ -1874,6 +1874,23 @@ body {
   font-size: 13px;
 }
 
+/* PR 17 — search inside binder. */
+.binder-detail-view__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.binder-detail-view__search input {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  font-size: 13px;
+  min-width: 220px;
+}
+
 .binder-detail-view__export {
   margin-left: auto;
   padding: 6px 14px;
@@ -1896,6 +1913,20 @@ body {
 .binder-slot--filtered-out {
   opacity: 0.25;
   filter: saturate(0.4);
+}
+
+/* PR 17 — deep-link highlight. Pulses for ~3s after the user clicks
+   a "Gå til side X.Y" link in card-detail. */
+.binder-slot--focused {
+  outline: 3px solid var(--color-accent, #2e7d32);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px rgba(46, 125, 50, 0.18);
+  animation: binder-slot-pulse 1.5s ease-in-out 2;
+}
+
+@keyframes binder-slot-pulse {
+  0%, 100% { box-shadow: 0 0 0 6px rgba(46, 125, 50, 0.18); }
+  50% { box-shadow: 0 0 0 10px rgba(46, 125, 50, 0.04); }
 }
 
 .binder-slot__card-link--inert {

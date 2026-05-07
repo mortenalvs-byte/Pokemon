@@ -8,6 +8,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR 17 — Binder workflow)
+PR 17 makes binders an active workspace instead of static slot storage. Builds on PR 15A's `cardMatchesQuery` and the AbortController router.
+
+- **Free-text search inside the binder**. New search input in the binder-detail toolbar uses the shared `cardMatchesQuery(card, query)` predicate (PR 15A — F-6) against each slot's resolved card. Matches name, card id, set id and card number; supports compound queries like `Charizard 4`. 200 ms debounce so a 1088-slot binder doesn't re-render on every keystroke.
+- **`empty` filter added**. The filter dropdown now reads `Alle / Mangler / Eid / Tomme / Bestilt / Duplikater`. `Tomme` shows fully blank slots (no `targetCardId` AND no `holdingId`) — useful when finding a free pocket to drop a manual holding into. The previous `Ferdig` was renamed `Eid` for clarity (still maps to `isSlotComplete`). Search and filter compose: both must match for a slot to be visible.
+- **Checklist mode now sorts by physical slot order** (`pageNumber asc, slotNumber asc`). Set-based binders therefore render in card-number order without the user touching anything. Manual binders that have been re-arranged retain their layout's natural read order.
+- **Deep-link `#binder/<id>/slot/<slotId>`**. Card detail's "Binder-lokasjoner" section gets a new **`Gå til side X.Y`** button per binder match. Clicking it navigates to the binder, scrolls the slot into view, and adds a transient `binder-slot--focused` class (3-second pulse) so the user sees exactly which pocket the card lives in. The plain "Åpne perm" button is kept as a one-click overview.
+- **Search inside the assign-holding modal**. Blank manual slots used to render every live holding in a single `<select>` — unusable past ~50 holdings. The modal now shows a search field on top (with `cardMatchesQuery`) plus a result-count chip (`3 holdings` / `1 av 3 match`). Target slots still hide the search since they pre-filter to one cardId. Empty-results case shows a contextual message and disables submit.
+
+#### Touched files
+- `src/router.ts` — `navigateToBinderSlot()` and `getCurrentBinderSlotFocus()` plus parser updates so `#binder/<id>/slot/<slotId>` decodes both ids cleanly.
+- `src/views/binder-detail.ts` — search input, `empty` filter, search+filter compose predicate threaded through `buildPagesGrid` / `buildPage` / `buildChecklist`, deep-link focus via `queueMicrotask` + `scrollIntoView` (jsdom-safe).
+- `src/components/assign-holding-modal.ts` — search input + result count + dynamic re-render of the holdings select.
+- `src/views/card-detail.ts` — extra "Gå til side X.Y" button next to "Åpne perm".
+- `src/styles.css` — `.binder-detail-view__search`, `.binder-slot--focused` (3-second pulse).
+
+#### Tests added
+- `tests/binder-detail-search.test.ts` (8): all-filter renders everything; `empty` filter shows only blank-manual; search by name / number / id; search+filter compose; checklist sorts by slot order; deep-link focuses the right slot.
+- `tests/assign-holding-modal-search.test.ts` (6): search wrap visible only for blank slots; target slot pre-filters to one card; search by name / id; empty-state message + submit disabled; result-count chip text.
+- `tests/router.test.ts` extended (6): binder-id parser handles `/slot/<slotId>` suffix; `getCurrentBinderSlotFocus()` returns null for plain routes and the slot id for deep-links; `navigateToBinderSlot()` encodes both ids; trailing `/slot/` with empty id is treated as no focus.
+
+#### Test totals
+- 74 test files, **593 tests** (up from 573). Typecheck green. Build green (331 KB JS / 88 KB gzip).
+
+#### Browser-verified
+- `Base Set 1 Master` binder (360 slots, 47 owned from PR 15A QA pass): search `Charizard` → 1 visible slot, filter `Eid` → 47 visible, deep-link `#binder/<id>/slot/<charizardSlotId>` highlighted the Charizard tile.
+- Card detail for `base1-4` shows `Gå til side 1.4` and `Åpne perm` buttons side by side.
+- Zero console errors.
+
+#### Out of scope (per the user's instruction)
+- No "legg kort direkte i perm" from Browse (PR 18+).
+- No "auto-assign all matching holdings" button (PR 18+).
+- No lot-to-stock UX work (PR 18 / 19).
+- No virtualisation for 1088-slot binders (PR 20 performance pass).
+- No global search.
+
 ### Added (PR 15B — Quick Add Raw from Browse)
 PR 15B builds on the foundations PR 15A landed. **Tightly scoped**: a one-click "+1 raw" button per Browse row, raw-NM defaults, quantity-merge by variant. **No** binder direct-add, **no** bulk multi-select, **no** wishlist automation, **no** global search — those are PR 16+.
 
