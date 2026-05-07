@@ -8,6 +8,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed (PR 15A — QA foundation before Quick Add)
+PR 15A clears the three blockers the QA-stress-test surfaced before Quick Add (PR 15B) is built. **No new feature surface — only fixes that the Quick Add UI will rely on.**
+
+- **F-3 — Router race / `USER_DATA_CHANGED_EVENT` listener leak.** Every view's `mountX(container)` registered a `window.addEventListener` and never removed it. Because all views share the same `<main>` container, dispatching the event after a route change made the PREVIOUS view's handler render its content into the container the NEW view had just taken over. Visible to the user as `#lots` flipping to the card-detail "Ingen kort valgt" placeholder right after saving a lot.
+  - Fix: `src/app.ts` `renderActiveView()` now keeps an `AbortController` and aborts it before the next mount. Each view's mount signature is widened to `(container, signal?: AbortSignal)` and listeners go through a tiny shared helper `onUserDataChanged(handler, signal)` in `src/components/events.ts`. When the controller aborts, the listener is removed automatically.
+  - Touched 11 view files (`backup`, `binder-detail`, `binders`, `browse`, `card-detail`, `collection`, `dashboard`, `lot-detail`, `lots`, `settings`, `wishlist`) plus `app.ts` and `components/events.ts`.
+  - Tests: `tests/view-mount-teardown.test.ts` (3 cases): aborted-signal binders→lots does not leak; card-detail handler does not flip `#lots` on data change; non-aborted signal still re-renders (positive control).
+
+- **F-6 — Search across the app was name-only substring.** Browse / Collection / Wishlist all matched `card.name.toLowerCase().includes(q)` and nothing else. Card id (`base1-4`), set id (`base1`), set name (`Base Set`) and card number (`4/102`) all returned 0 hits. The lot-item picker was the only place that could resolve a card id, and even it could not resolve set ids or card numbers.
+  - Fix: new pure helper `src/domain/card-search.ts` exports `cardMatchesQuery(card, query, { setsById })`. Predicate handles name substring, id substring, set-id exact, set-name substring (when `setsById` is provided), card-number exact, `"4/102"` form, and compound queries `"<rest> <number>"` like `Charizard 4`, `base1 4`, `Base 4`. Whitespace is trimmed and collapsed; case-insensitive; no regex / fuzzy / accent-folding. Pure — no DOM, no IO.
+  - `browse-service`, `collection-service`, `wishlist-service` and `lot-card-picker` all call the helper. The lot-card-picker now also loads the sets cache so set-name search works there too.
+  - Tests: `tests/card-search.test.ts` (41 cases): name / id / number / set-id / set-name / "4/102" / compound (name+number, set-id+number, set-name+number) / whitespace / negative cases / ambiguous-compound graceful fallback.
+
+- **F-7 — Adding the same card twice created two holding rows; no quantity-merge.** PR 15B (Quick Add Raw) hits this on the very first click. The repository's `create()` always inserted a new row.
+  - Fix: new method `holdingsRepo.upsertByVariant(input)` runs the same variant validation as `create`, then atomically searches for a live holding matching `(cardId, conditionType, rawCondition, gradingCompany, grade, certNumber, finish, edition, language, status, lotId, specialVariant)`. On match → existing row's quantity is incremented and `holding_qty_incremented` is appended to the audit log; on miss → fresh row + `holding_created`. The whole find-then-write is one Dexie transaction so two concurrent upserts cannot both create a fresh row. Notes / prices / value tracking / tags / source on the existing row are **preserved** (not overwritten); the existing note wins unless it is `null` and the input has one. Soft-deleted holdings do NOT match — a new live row is created instead of resurrecting the deleted one.
+  - The legacy `create()` is unchanged so power-users who want a deliberately-separate row (e.g., to track distinct provenance) can still call it.
+  - Tests: `tests/holdings-upsert-by-variant.test.ts` (18 cases): created/merged actions, quantity arithmetic, every match-key field's effect on identity (finish / rawCondition / status / lotId / specialVariant / cert), graded merge with same cert, escape-hatch validation still rejects, note preservation rules, prices/value/tags preserved, soft-delete does not match, audit messages, legacy `create()` still produces a separate row.
+
+### Added (small cleanups carried in PR 15A)
+- **F-1 — Settings → "Slots per perme-side" select** now offers the creatable set `[4, 9, 12, 16]` instead of the stale `[9, 18]`. The reader is tolerant of older saved values.
+- **F-5 — Custom binder `slotsPerPage` select** no longer offers `18` for new binders; the legacy 18-slot option is only included when editing an existing `legacy_18` binder (where the field is locked and the option is needed only to render the locked value).
+
+### Test totals
+- 70 test files, **555 tests** (up from 493). Typecheck green. Production build green (325 KB JS gzipped 86 KB).
+
+---
+
 ### Added
 - **PR 14 — Vault X binder layouts (presets, full-capacity from-set, 4/12/16-pocket grids).** Closes the binder-layout gap surfaced after PR 11: `slotsPerPage` was locked to 9 or 18, which doesn't match the user's actual physical Vault X products (12-pocket 480, 12-pocket XL 624, 16-pocket XXL 1088). PR 14 adds presets that mirror the physical binders, lets the from-set wizard create the full physical grid (with empty slots after the targets), and keeps the door open for tighter binder workflows in PR 15/16. **No Quick Add. No card-picker on slot. No live API search.**
   - `src/domain/types.ts` — adds `SlotsPerPage = 4 | 9 | 12 | 16 | 18` and `BinderPreset` union (`vaultx_9_360 | vaultx_12_480 | vaultx_12xl_624 | vaultx_16xxl_1088 | custom | legacy_18`). `BinderRecord.slotsPerPage` widens from `9 | 18` to `SlotsPerPage`. New required field `BinderRecord.binderPreset: BinderPreset | null` (null only on rows from pre-PR-14 backups).

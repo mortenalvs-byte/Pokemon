@@ -6,7 +6,7 @@
 // audit). The view never calls `db.wishlist` directly.
 
 import { openDialog } from '../components/dialog';
-import { USER_DATA_CHANGED_EVENT } from '../components/events';
+import { USER_DATA_CHANGED_EVENT, onUserDataChanged } from '../components/events';
 import { buildWishlistForm } from '../components/wishlist-form';
 import { getDb } from '../db/database';
 import { navigateToCard } from '../router';
@@ -65,7 +65,10 @@ export const STATUS_LABELS: Record<WishlistStatus, string> = {
   cancelled: 'Avbrutt',
 };
 
-export function mountWishlistView(container: HTMLElement): void {
+export function mountWishlistView(
+  container: HTMLElement,
+  signal?: AbortSignal,
+): void {
   container.innerHTML = `
     <section class="wishlist-view" aria-labelledby="wishlist-heading">
       <h1 id="wishlist-heading">Ønskeliste</h1>
@@ -170,7 +173,7 @@ export function mountWishlistView(container: HTMLElement): void {
     createSetsRepo(db),
   );
 
-  void initialize(refs, service, state);
+  void initialize(refs, service, state, signal);
   attachEventListeners(refs, service, state);
 }
 
@@ -278,13 +281,15 @@ async function initialize(
   refs: ViewRefs,
   service: WishlistService,
   state: WishlistState,
+  signal: AbortSignal | undefined,
 ): Promise<void> {
   await populateSetFilter(refs);
   await rerender(refs, service, state);
-  window.addEventListener(USER_DATA_CHANGED_EVENT, () => {
+  // PR 15A — F-3: router signal drops this listener on next route.
+  onUserDataChanged(() => {
     if (!refs.rowsRegion.isConnected) return;
     void rerender(refs, service, state);
-  });
+  }, signal);
 }
 
 async function populateSetFilter(refs: ViewRefs): Promise<void> {

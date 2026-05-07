@@ -1,7 +1,10 @@
 // Tiny card-typeahead used inside the lot-item form. Reads from the
-// cached `cards` store (no API calls). Searches by name (case-insensitive
-// substring) and falls back to exact id match. Returns at most 10
-// results so a 20k-card cache stays cheap.
+// cached `cards` and `sets` stores (no API calls). Uses the shared
+// `cardMatchesQuery` predicate (PR 15A — F-6) so search behaviour
+// matches Browse / Collection / Wishlist exactly: name substring, id
+// substring, exact card number, "4/102" form, set id, set name
+// substring, and compound queries like "Charizard 4" or "base1 4".
+// Returns at most 10 results so a 20k-card cache stays cheap.
 //
 // The picker owns no state outside its DOM. Callers provide an
 // `onSelect(cardId)` callback and read the current selection via the
@@ -10,7 +13,12 @@
 
 import { getDb } from '../db/database';
 import { createCardsRepo } from '../repositories/cards-repo';
-import type { CardRecord } from '../domain/types';
+import { createSetsRepo } from '../repositories/sets-repo';
+import {
+  cardMatchesQuery,
+  isEmptyQuery,
+} from '../domain/card-search';
+import type { CardRecord, SetRecord } from '../domain/types';
 
 const MAX_RESULTS = 10;
 
@@ -67,18 +75,34 @@ export function buildLotCardPicker(
     options.initialCardId === undefined ? null : options.initialCardId;
   let selectedCardId: string | null = initialCardId;
   let cards: readonly CardRecord[] | null = null;
-  let loadPromise: Promise<readonly CardRecord[]> | null = null;
+  let setsById: ReadonlyMap<string, SetRecord> | null = null;
+  let loadPromise: Promise<{
+    cards: readonly CardRecord[];
+    setsById: ReadonlyMap<string, SetRecord>;
+  }> | null = null;
   let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  const loadCards = (): Promise<readonly CardRecord[]> => {
-    if (cards !== null) return Promise.resolve(cards);
+  const loadCards = (): Promise<{
+    cards: readonly CardRecord[];
+    setsById: ReadonlyMap<string, SetRecord>;
+  }> => {
+    if (cards !== null && setsById !== null) {
+      return Promise.resolve({ cards, setsById });
+    }
     if (loadPromise !== null) return loadPromise;
-    loadPromise = createCardsRepo(getDb())
-      .list()
-      .then((list) => {
-        cards = list;
-        return list;
-      });
+    const db = getDb();
+    loadPromise = Promise.all([
+      createCardsRepo(db).list(),
+      createSetsRepo(db).list(),
+    ]).then(([cardList, setList]) => {
+      cards = cardList;
+      const map = new Map<string, SetRecord>();
+      for (const set of setList) {
+        map.set(set.id, set);
+      }
+      setsById = map;
+      return { cards: cardList, setsById: map };
+    });
     return loadPromise;
   };
 
@@ -99,23 +123,16 @@ export function buildLotCardPicker(
   const renderResults = (
     query: string,
     list: readonly CardRecord[],
+    setsLookup: ReadonlyMap<string, SetRecord>,
   ): void => {
     resultsList.replaceChildren();
-    if (query.length === 0) {
-      resultsList.hidden = true;
-      return;
-    }
-    const normalized = query.trim().toLowerCase();
-    if (normalized.length === 0) {
+    if (isEmptyQuery(query)) {
       resultsList.hidden = true;
       return;
     }
     const matches: CardRecord[] = [];
     for (const card of list) {
-      if (
-        card.id.toLowerCase() === normalized ||
-        card.name.toLowerCase().includes(normalized)
-      ) {
+      if (cardMatchesQuery(card, query, { setsById: setsLookup })) {
         matches.push(card);
         if (matches.length >= MAX_RESULTS) break;
       }
@@ -154,13 +171,15 @@ export function buildLotCardPicker(
       return;
     }
     searchTimeout = setTimeout(() => {
-      void loadCards().then((list) => renderResults(query, list));
+      void loadCards().then(({ cards: list, setsById: lookup }) =>
+        renderResults(query, list, lookup),
+      );
     }, 120);
   });
 
   // Pre-fill with an existing selection (edit mode).
   if (initialCardId !== null) {
-    void loadCards().then((list) => {
+    void loadCards().then(({ cards: list }) => {
       const found = list.find((c) => c.id === initialCardId);
       if (found !== undefined) {
         input.value = found.name;

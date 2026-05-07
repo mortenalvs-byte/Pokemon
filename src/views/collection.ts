@@ -6,7 +6,7 @@
 // audit). The view never calls `db.holdings` directly.
 
 import { openDialog } from '../components/dialog';
-import { USER_DATA_CHANGED_EVENT } from '../components/events';
+import { USER_DATA_CHANGED_EVENT, onUserDataChanged } from '../components/events';
 import { buildHoldingForm } from '../components/holding-form';
 import { getDb } from '../db/database';
 import { formatTags } from '../domain/tags';
@@ -69,7 +69,10 @@ const RAW_CONDITIONS: readonly RawCondition[] = [
   'UNKNOWN',
 ];
 
-export function mountCollectionView(container: HTMLElement): void {
+export function mountCollectionView(
+  container: HTMLElement,
+  signal?: AbortSignal,
+): void {
   container.innerHTML = `
     <section class="collection-view" aria-labelledby="collection-heading">
       <h1 id="collection-heading">Min samling</h1>
@@ -194,7 +197,7 @@ export function mountCollectionView(container: HTMLElement): void {
     createSetsRepo(db),
   );
 
-  void initialize(refs, service, state);
+  void initialize(refs, service, state, signal);
   attachEventListeners(refs, service, state);
 }
 
@@ -318,16 +321,17 @@ async function initialize(
   refs: ViewRefs,
   service: CollectionService,
   state: CollectionState,
+  signal: AbortSignal | undefined,
 ): Promise<void> {
   await populateSetFilter(refs);
   await rerender(refs, service, state);
-  // Skip updates if our DOM tree has been detached. Same pattern as
-  // Browse + Card Detail — leaked listeners cannot write to a stale
-  // tree (or, in tests, against a closed DB).
-  window.addEventListener(USER_DATA_CHANGED_EVENT, () => {
+  // PR 15A — F-3: router-supplied `signal` removes the listener on
+  // route change. The `isConnected` guard is kept for tests that don't
+  // pass a signal.
+  onUserDataChanged(() => {
     if (!refs.rowsRegion.isConnected) return;
     void rerender(refs, service, state);
-  });
+  }, signal);
 }
 
 async function populateSetFilter(refs: ViewRefs): Promise<void> {

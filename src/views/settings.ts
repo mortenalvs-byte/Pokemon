@@ -38,7 +38,12 @@ import { createSettingsRepo } from '../repositories/settings-repo';
 // stuck on a stale "ok" state after a subsequent failure.
 export const SYNC_STATUS_CHANGED_EVENT = 'pokemon:sync-status-changed';
 
-export function mountSettingsView(container: HTMLElement): void {
+// `signal` is accepted for ViewMounter signature parity (PR 15A — F-3).
+// Settings registers no window listeners; the signal is unused.
+export function mountSettingsView(
+  container: HTMLElement,
+  _signal?: AbortSignal,
+): void {
   container.innerHTML = `
     <section class="settings-view" aria-labelledby="settings-heading">
       <h1 id="settings-heading">Innstillinger</h1>
@@ -91,9 +96,18 @@ export function mountSettingsView(container: HTMLElement): void {
         </label>
         <label class="settings-view__field">
           <span>Slots per perme-side</span>
+          <!--
+            PR 15A - F-1: align with the creatable Vault X / custom
+            set from getCreatableSlotsPerPageOptions(). Legacy 18 is
+            excluded from new-binder defaults; existing legacy_18
+            binders keep their layout via the binder-form edit path,
+            which never reads this default.
+          -->
           <select data-region="default-slots">
+            <option value="4">4</option>
             <option value="9">9</option>
-            <option value="18">18</option>
+            <option value="12">12</option>
+            <option value="16">16</option>
           </select>
         </label>
         <button type="button" class="settings-view__button settings-view__button--primary" data-action="save-defaults">Lagre standardvalg</button>
@@ -251,7 +265,14 @@ async function hydrateFromDb(refs: HydrateRefs): Promise<void> {
     const defaultSlots = await settingsRepo.get<number>(
       SETTINGS_KEYS.defaultBinderSlotsPerPage,
     );
-    if (defaultSlots === 9 || defaultSlots === 18) {
+    // PR 15A — F-1: accept any creatable size; ignore the legacy 18
+    // for new defaults but keep the read tolerant of older values.
+    if (
+      defaultSlots === 4 ||
+      defaultSlots === 9 ||
+      defaultSlots === 12 ||
+      defaultSlots === 16
+    ) {
       refs.defaultSlotsSelect.value = String(defaultSlots);
     }
   } catch {

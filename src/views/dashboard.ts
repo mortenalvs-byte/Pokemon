@@ -11,7 +11,7 @@
 // exporter's `recordCsvExported` (audit-only rw-transaction). All
 // other actions are pure navigation links.
 
-import { USER_DATA_CHANGED_EVENT } from '../components/events';
+import { onUserDataChanged } from '../components/events';
 import { getDb } from '../db/database';
 import {
   filterStripItems,
@@ -47,14 +47,25 @@ const SEVERITY_CHIP_CLASS: Record<ActionSeverity, string> = {
   info: 'status-chip status-chip--info',
 };
 
-export function mountDashboardView(container: HTMLElement): void {
+export function mountDashboardView(
+  container: HTMLElement,
+  signal?: AbortSignal,
+): void {
   void renderInto(container);
   const refresh = (): void => {
     if (!container.isConnected) return;
     void renderInto(container);
   };
-  window.addEventListener(USER_DATA_CHANGED_EVENT, refresh);
-  window.addEventListener(SYNC_STATUS_CHANGED_EVENT, refresh);
+  // PR 15A — F-3: pass `signal` so the router can drop these listeners
+  // when the route changes. Without this they accumulated on `window`
+  // and re-rendered into the shared `<main>` after the next view took
+  // over.
+  onUserDataChanged(refresh, signal);
+  if (signal !== undefined) {
+    window.addEventListener(SYNC_STATUS_CHANGED_EVENT, refresh, { signal });
+  } else {
+    window.addEventListener(SYNC_STATUS_CHANGED_EVENT, refresh);
+  }
 }
 
 async function renderInto(container: HTMLElement): Promise<void> {

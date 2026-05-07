@@ -13,7 +13,11 @@ import { getCurrentRoute, onRouteChange, type Route } from './router';
 import { APP_META_KEYS } from './domain/types';
 import { getDb } from './db/database';
 
-type ViewMounter = (container: HTMLElement) => void;
+// Each view receives an AbortSignal that the router aborts before
+// mounting the next view. Mounts use the signal on `addEventListener`
+// so leftover listeners stop re-rendering into the shared `<main>`
+// after the route has changed (PR 15A — fixes F-3 router race).
+type ViewMounter = (container: HTMLElement, signal: AbortSignal) => void;
 
 const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
   dashboard: mountDashboardView,
@@ -81,13 +85,26 @@ function renderShell(): string {
   `;
 }
 
+// Tracks the AbortController for the currently mounted view. Before
+// every new mount we abort the previous one — that drops every
+// `addEventListener(..., { signal })` the previous view registered, so
+// stale listeners cannot re-render into the (now reused) `<main>`
+// element. Reproduced as F-3 in QA: saving in `#lots` flipped main to
+// the card-detail empty state because a leftover card-detail handler
+// fired into the same shared container.
+let currentMountController: AbortController | null = null;
+
 function renderActiveView(): void {
   const content = document.getElementById('content');
   if (!content) {
     return;
   }
+  if (currentMountController !== null) {
+    currentMountController.abort();
+  }
+  currentMountController = new AbortController();
   content.innerHTML = '';
-  VIEW_MOUNTERS[getCurrentRoute()](content);
+  VIEW_MOUNTERS[getCurrentRoute()](content, currentMountController.signal);
 }
 
 function updateNavActive(): void {
