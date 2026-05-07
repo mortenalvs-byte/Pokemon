@@ -166,7 +166,15 @@ function populateForm(form: HTMLFormElement, options: BinderFormOptions): void {
   }
 
   populatePresetSelect(form, options);
-  populateSlotsPerPageSelect(form);
+  // PR 15A — F-5: only include the legacy 18 option when editing an
+  // existing legacy_18 binder. New binders should never offer 18 as a
+  // custom layout — `getCreatableSlotsPerPageOptions()` is the single
+  // source of truth for selectable sizes.
+  const includeLegacy18 =
+    options.mode === 'edit' &&
+    (options.binder.binderPreset === 'legacy_18' ||
+      options.binder.slotsPerPage === 18);
+  populateSlotsPerPageSelect(form, includeLegacy18);
   populateSelect(form, 'completionMode', COMPLETION_MODES);
 
   if (options.mode === 'add') {
@@ -239,16 +247,24 @@ function populatePresetSelect(
   }
 }
 
-function populateSlotsPerPageSelect(form: HTMLFormElement): void {
-  // Default offering covers the four values a new binder may use.
-  // Vault X presets lock the value via `applyPresetSelection`.
+function populateSlotsPerPageSelect(
+  form: HTMLFormElement,
+  includeLegacy18: boolean,
+): void {
+  // Default offering covers the four values a new binder may use
+  // (`getCreatableSlotsPerPageOptions()`). Vault X presets lock the
+  // value via `applyPresetSelection`.
   const opts = CREATABLE_SLOTS_PER_PAGE.map((s) => ({
     value: String(s),
     label: `${s} (${describeGrid(s)})`,
   }));
-  // Always include a 18 option for the legacy form (it disables
-  // itself when not relevant).
-  opts.push({ value: '18', label: '18 (3×3 dobbel — legacy)' });
+  // PR 15A — F-5: only include the legacy 18 option when editing an
+  // existing legacy_18 binder. The form locks the field in that case
+  // (via `applyPresetSelection`), so the option is only there to
+  // render the locked value, not to be selectable.
+  if (includeLegacy18) {
+    opts.push({ value: '18', label: '18 (3×3 dobbel — legacy)' });
+  }
   populateSelect(form, 'slotsPerPage', opts);
 }
 

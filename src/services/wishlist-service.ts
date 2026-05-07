@@ -5,6 +5,7 @@
 // Read-only. All wishlist mutations stay in the form / view code paths
 // and go through `wishlistRepo` so repo validation + audit run.
 
+import { cardMatchesQuery, isEmptyQuery } from '../domain/card-search';
 import type {
   CardRecord,
   SetRecord,
@@ -80,7 +81,7 @@ export function createWishlistService(
       const setsById = buildIndex(sets, (s) => s.id);
 
       const filtered = applyFilters(all, criteria, cardsById);
-      const searched = applySearch(filtered, cardsById, criteria.search);
+      const searched = applySearch(filtered, cardsById, setsById, criteria.search);
       const sorted = sortWishlist(
         searched,
         cardsById,
@@ -150,16 +151,17 @@ function applyFilters(
 function applySearch(
   records: readonly WishlistRecord[],
   cardsById: Map<string, CardRecord>,
+  setsById: Map<string, SetRecord>,
   search: string | undefined,
 ): WishlistRecord[] {
-  const normalized = search === undefined ? null : search.trim().toLowerCase();
-  if (normalized === null || normalized.length === 0) {
+  if (search === undefined || isEmptyQuery(search)) {
     return [...records];
   }
+  // PR 15A — F-6: shared `cardMatchesQuery` predicate.
   return records.filter((w) => {
     const card = cardsById.get(w.cardId);
     if (card === undefined) return false;
-    return card.name.toLowerCase().includes(normalized);
+    return cardMatchesQuery(card, search, { setsById });
   });
 }
 

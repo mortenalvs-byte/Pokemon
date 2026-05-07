@@ -32,7 +32,14 @@ import { downloadTextFile } from '../utils/download';
 
 const BACKUP_AGE_WARNING_MS = 7 * 24 * 60 * 60 * 1000;
 
-export function mountBackupView(container: HTMLElement): void {
+// `signal` is accepted for ViewMounter signature parity (PR 15A — F-3).
+// The backup view registers no window listeners, only DOM-element
+// handlers that disappear with the cleared innerHTML, so the signal is
+// unused here.
+export function mountBackupView(
+  container: HTMLElement,
+  _signal?: AbortSignal,
+): void {
   container.innerHTML = `
     <section class="backup-view" aria-labelledby="backup-heading">
       <h1 id="backup-heading">Backup</h1>

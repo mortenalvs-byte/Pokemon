@@ -7,7 +7,7 @@
 // `binders-repo` or `binder-service` so validation + audit run.
 
 import { openDialog } from '../components/dialog';
-import { USER_DATA_CHANGED_EVENT } from '../components/events';
+import { USER_DATA_CHANGED_EVENT, onUserDataChanged } from '../components/events';
 import { buildBinderForm } from '../components/binder-form';
 import { buildBinderFromSetWizard } from '../components/binder-from-set-wizard';
 import { getDb } from '../db/database';
@@ -29,7 +29,10 @@ const COMPLETION_MODE_LABELS: Record<CompletionMode, string> = {
   grand_master: 'Grand master',
 };
 
-export function mountBindersView(container: HTMLElement): void {
+export function mountBindersView(
+  container: HTMLElement,
+  signal?: AbortSignal,
+): void {
   container.innerHTML = `
     <section class="binders-view" aria-labelledby="binders-heading">
       <header class="binders-view__header">
@@ -76,12 +79,14 @@ export function mountBindersView(container: HTMLElement): void {
   void rerender(container);
 
   // Refresh on user-data changes from any other view (form save, slot
-  // assign, soft-delete from card detail, etc.). The `isConnected`
-  // guard skips updates after the route has unmounted.
-  window.addEventListener(USER_DATA_CHANGED_EVENT, () => {
+  // assign, soft-delete from card detail, etc.). The router-supplied
+  // `signal` (PR 15A — F-3) drops this listener at the next route
+  // change so it never re-renders into a `<main>` that another view
+  // now owns.
+  onUserDataChanged(() => {
     if (!container.isConnected) return;
     void rerender(container);
-  });
+  }, signal);
 }
 
 async function rerender(container: HTMLElement): Promise<void> {

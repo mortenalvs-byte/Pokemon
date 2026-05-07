@@ -6,7 +6,7 @@
 // pagination / navigation paths still never write.
 
 import { openDialog } from '../components/dialog';
-import { USER_DATA_CHANGED_EVENT } from '../components/events';
+import { onUserDataChanged } from '../components/events';
 import { buildHoldingForm } from '../components/holding-form';
 import { buildWishlistForm } from '../components/wishlist-form';
 import { getDb } from '../db/database';
@@ -48,7 +48,10 @@ const SORT_OPTIONS: ReadonlyArray<{ readonly value: BrowseSort; readonly label: 
   { value: 'set-number', label: 'Kortnummer' },
 ];
 
-export function mountBrowseView(container: HTMLElement): void {
+export function mountBrowseView(
+  container: HTMLElement,
+  signal?: AbortSignal,
+): void {
   container.innerHTML = `
     <section class="browse-view" aria-labelledby="browse-heading">
       <h1 id="browse-heading">Browse</h1>
@@ -151,13 +154,14 @@ export function mountBrowseView(container: HTMLElement): void {
 
   void boot(refs, service, state);
   attachEventListeners(refs, service, state);
-  // The listener stays around for the page lifetime. Skip updates when
-  // the container has been detached (test teardown or in-app re-mount)
-  // so a leaked listener cannot write to a stale DOM tree.
-  window.addEventListener(USER_DATA_CHANGED_EVENT, () => {
+  // PR 15A — F-3: the router aborts `signal` on next route change, so
+  // the listener is dropped automatically. The `isConnected` guard
+  // remains as a belt-and-braces check for tests that don't pass a
+  // signal.
+  onUserDataChanged(() => {
     if (!container.isConnected) return;
     void rerenderRows(refs, service, state);
-  });
+  }, signal);
 }
 
 interface ViewRefs {

@@ -4,7 +4,7 @@
 // buttons are enabled and open their respective form modals.
 
 import { openDialog } from '../components/dialog';
-import { USER_DATA_CHANGED_EVENT } from '../components/events';
+import { USER_DATA_CHANGED_EVENT, onUserDataChanged } from '../components/events';
 import { buildHoldingForm } from '../components/holding-form';
 import { buildWishlistForm } from '../components/wishlist-form';
 import { getDb } from '../db/database';
@@ -84,19 +84,23 @@ const MATCH_LABELS: Record<SlotForCard['matchedBy'], string> = {
   assigned: 'Tilordnet holding',
 };
 
-export function mountCardDetailView(container: HTMLElement): void {
+export function mountCardDetailView(
+  container: HTMLElement,
+  signal?: AbortSignal,
+): void {
   void renderInto(container);
 
-  // Listener stays registered for the lifetime of the page (the route
-  // can return to card detail with the same container in the running
-  // app). The `isConnected` guard skips updates for any container the
-  // app shell or test harness has since detached, so a leaked listener
-  // can never write to a stale DOM tree.
+  // PR 15A — F-3: pass the router-supplied `signal` so this listener is
+  // removed when the user navigates away from card-detail. Previously
+  // the leftover handler re-rendered card-detail content into `<main>`
+  // after the next view (e.g. `#lots`) had already taken it over,
+  // visible as the "Ingen kort valgt" placeholder appearing under
+  // `#lots` after a save.
   const refresh = (): void => {
     if (!container.isConnected) return;
     void renderInto(container);
   };
-  window.addEventListener(USER_DATA_CHANGED_EVENT, refresh);
+  onUserDataChanged(refresh, signal);
 }
 
 async function renderInto(container: HTMLElement): Promise<void> {

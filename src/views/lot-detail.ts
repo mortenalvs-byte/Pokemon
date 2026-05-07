@@ -10,7 +10,7 @@
 //   - createLotCsvExporter (CSV generate + audit)
 
 import { openDialog } from '../components/dialog';
-import { USER_DATA_CHANGED_EVENT } from '../components/events';
+import { USER_DATA_CHANGED_EVENT, onUserDataChanged } from '../components/events';
 import { buildLotItemForm } from '../components/lot-item-form';
 import { getDb } from '../db/database';
 import { getCurrentLotId, navigate, navigateToCard } from '../router';
@@ -54,13 +54,17 @@ const ALLOCATION_METHOD_LABELS: Record<AllocationMethod, string> = {
   manual: 'Manuell',
 };
 
-export function mountLotDetailView(container: HTMLElement): void {
+export function mountLotDetailView(
+  container: HTMLElement,
+  signal?: AbortSignal,
+): void {
   void renderInto(container);
   const refresh = (): void => {
     if (!container.isConnected) return;
     void renderInto(container);
   };
-  window.addEventListener(USER_DATA_CHANGED_EVENT, refresh);
+  // PR 15A — F-3: router signal drops this listener on next route.
+  onUserDataChanged(refresh, signal);
 }
 
 async function renderInto(container: HTMLElement): Promise<void> {

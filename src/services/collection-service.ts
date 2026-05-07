@@ -5,6 +5,7 @@
 // All reads — no writes. Mutations stay in the form / view code paths
 // and go through `holdingsRepo` so repo validation and audit run.
 
+import { cardMatchesQuery, isEmptyQuery } from '../domain/card-search';
 import type {
   CardRecord,
   HoldingRecord,
@@ -79,7 +80,7 @@ export function createCollectionService(
       const setsById = buildIndex(sets, (s) => s.id);
 
       const filtered = applyFilters(all, criteria, cardsById);
-      const searched = applySearch(filtered, cardsById, criteria.search);
+      const searched = applySearch(filtered, cardsById, setsById, criteria.search);
       const sorted = sortHoldings(
         searched,
         cardsById,
@@ -165,17 +166,19 @@ function applyFilters(
 function applySearch(
   holdings: readonly HoldingRecord[],
   cardsById: Map<string, CardRecord>,
+  setsById: Map<string, SetRecord>,
   search: string | undefined,
 ): HoldingRecord[] {
-  const normalized =
-    search === undefined ? null : search.trim().toLowerCase();
-  if (normalized === null || normalized.length === 0) {
+  if (search === undefined || isEmptyQuery(search)) {
     return [...holdings];
   }
+  // PR 15A — F-6: shared `cardMatchesQuery` predicate. Holdings whose
+  // card is missing from the local cache are excluded from results
+  // (the user can't act on what we can't display anyway).
   return holdings.filter((h) => {
     const card = cardsById.get(h.cardId);
     if (card === undefined) return false;
-    return card.name.toLowerCase().includes(normalized);
+    return cardMatchesQuery(card, search, { setsById });
   });
 }
 

@@ -25,7 +25,7 @@
 // PR 8a.
 
 import { openDialog } from '../components/dialog';
-import { USER_DATA_CHANGED_EVENT } from '../components/events';
+import { onUserDataChanged } from '../components/events';
 import { buildAssignHoldingModal } from '../components/assign-holding-modal';
 import { buildSlotActionMenu } from '../components/slot-action-menu';
 import { getDb } from '../db/database';
@@ -93,7 +93,10 @@ const FILTER_LABELS: ReadonlyArray<{ readonly value: SlotFilter; readonly label:
   { value: 'completed', label: 'Ferdig' },
 ];
 
-export function mountBinderDetailView(container: HTMLElement): void {
+export function mountBinderDetailView(
+  container: HTMLElement,
+  signal?: AbortSignal,
+): void {
   // Per-mount view state so toggles survive USER_DATA_CHANGED_EVENT
   // refreshes but reset when the route is unmounted.
   const state: ViewState = { mode: 'pages', filter: 'all' };
@@ -104,7 +107,8 @@ export function mountBinderDetailView(container: HTMLElement): void {
     if (!container.isConnected) return;
     void renderInto(container, state);
   };
-  window.addEventListener(USER_DATA_CHANGED_EVENT, refresh);
+  // PR 15A — F-3: router signal drops this listener on next route.
+  onUserDataChanged(refresh, signal);
 }
 
 async function renderInto(

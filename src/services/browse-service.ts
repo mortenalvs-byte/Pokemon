@@ -14,6 +14,7 @@
 //     does not expose it as an option until pricing extraction is
 //     wired into the user-data layer (later PR).
 
+import { cardMatchesQuery, isEmptyQuery } from '../domain/card-search';
 import type { CardRecord, SetRecord } from '../domain/types';
 import type { CardsRepo } from '../repositories/cards-repo';
 import type { HoldingsRepo } from '../repositories/holdings-repo';
@@ -74,7 +75,7 @@ export function createBrowseService(
       const sets = await setsRepo.list();
       const setsById = buildSetsById(sets);
       const candidates = await selectCandidates(cardsRepo, criteria);
-      let filtered = applyRemainingFilters(candidates, criteria);
+      let filtered = applyRemainingFilters(candidates, criteria, setsById);
       if (criteria.ownership !== undefined && holdingsRepo !== undefined) {
         filtered = await applyOwnershipFilter(filtered, criteria.ownership, holdingsRepo);
       }
@@ -181,8 +182,10 @@ async function selectCandidates(
 function applyRemainingFilters(
   cards: readonly CardRecord[],
   criteria: BrowseCriteria,
+  setsById: Map<string, SetRecord>,
 ): CardRecord[] {
-  const search = normalizeSearch(criteria.search);
+  const rawSearch = criteria.search ?? '';
+  const hasSearch = !isEmptyQuery(rawSearch);
   const rarity = isNonEmpty(criteria.rarity) ? criteria.rarity : null;
   const setId = isNonEmpty(criteria.setId) ? criteria.setId : null;
 
@@ -190,7 +193,12 @@ function applyRemainingFilters(
   for (const card of cards) {
     if (rarity !== null && card.rarity !== rarity) continue;
     if (setId !== null && card.setId !== setId) continue;
-    if (search !== null && !card.name.toLowerCase().includes(search)) continue;
+    // PR 15A — F-6: shared `cardMatchesQuery` predicate. Matches name,
+    // id, number, set id, set name (via setsById), and compound
+    // queries like "Charizard 4" or "base1 4".
+    if (hasSearch && !cardMatchesQuery(card, rawSearch, { setsById })) {
+      continue;
+    }
     out.push(card);
   }
   return out;
@@ -255,12 +263,6 @@ function compareSetByReleaseDateDesc(a: SetRecord, b: SetRecord): number {
   if (a.releaseDate < b.releaseDate) return 1;
   if (a.releaseDate > b.releaseDate) return -1;
   return 0;
-}
-
-function normalizeSearch(value: string | undefined): string | null {
-  if (value === undefined) return null;
-  const trimmed = value.trim().toLowerCase();
-  return trimmed.length > 0 ? trimmed : null;
 }
 
 function isNonEmpty(value: string | undefined): value is string {

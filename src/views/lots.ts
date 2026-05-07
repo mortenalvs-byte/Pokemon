@@ -4,7 +4,7 @@
 // `lotsRepo` (form save / soft-delete / restore).
 
 import { openDialog } from '../components/dialog';
-import { USER_DATA_CHANGED_EVENT } from '../components/events';
+import { USER_DATA_CHANGED_EVENT, onUserDataChanged } from '../components/events';
 import { buildLotForm } from '../components/lot-form';
 import { getDb } from '../db/database';
 import { navigateToLot } from '../router';
@@ -33,7 +33,10 @@ const STATUS_CHIP_CLASS: Record<LotStatus, string> = {
   materialized: 'status-chip status-chip--success',
 };
 
-export function mountLotsView(container: HTMLElement): void {
+export function mountLotsView(
+  container: HTMLElement,
+  signal?: AbortSignal,
+): void {
   container.innerHTML = `
     <section class="lots-view" aria-labelledby="lots-heading">
       <header class="lots-view__header">
@@ -56,10 +59,11 @@ export function mountLotsView(container: HTMLElement): void {
 
   void rerender(container);
 
-  window.addEventListener(USER_DATA_CHANGED_EVENT, () => {
+  // PR 15A — F-3: router signal drops this listener on next route.
+  onUserDataChanged(() => {
     if (!container.isConnected) return;
     void rerender(container);
-  });
+  }, signal);
 }
 
 async function rerender(container: HTMLElement): Promise<void> {
