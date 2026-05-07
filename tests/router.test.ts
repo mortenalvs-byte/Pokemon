@@ -4,11 +4,13 @@ import {
   ROUTES,
   getCurrentBinderId,
   getCurrentCardId,
+  getCurrentLotId,
   getCurrentRoute,
   isRoute,
   navigate,
   navigateToBinder,
   navigateToCard,
+  navigateToLot,
   onRouteChange,
 } from '../src/router';
 
@@ -167,6 +169,48 @@ describe('router', () => {
 
   it('isRoute() does not classify "binder-detail" as a sidebar route', () => {
     setHash('binder-detail');
+    expect(getCurrentRoute()).toBe(DEFAULT_ROUTE);
+  });
+
+  it('getCurrentLotId() returns null for normal routes', () => {
+    setHash('lots');
+    expect(getCurrentLotId()).toBeNull();
+    setHash('binder/some-id');
+    expect(getCurrentLotId()).toBeNull();
+  });
+
+  it('getCurrentLotId() returns the decoded id for #lot/<id>', () => {
+    setHash('lot/some-uuid');
+    expect(getCurrentLotId()).toBe('some-uuid');
+  });
+
+  it('navigateToLot() encodes the id', () => {
+    navigateToLot('weird id with spaces & =');
+    expect(window.location.hash).toBe(
+      `#lot/${encodeURIComponent('weird id with spaces & =')}`,
+    );
+    expect(getCurrentLotId()).toBe('weird id with spaces & =');
+  });
+
+  it('getCurrentRoute() returns lot-detail only for valid #lot/<id>', () => {
+    setHash('lot/some-uuid');
+    expect(getCurrentRoute()).toBe('lot-detail');
+  });
+
+  it('getCurrentRoute() falls back when #lot/ has no id', () => {
+    setHash('lot/');
+    expect(getCurrentRoute()).toBe(DEFAULT_ROUTE);
+    expect(getCurrentLotId()).toBeNull();
+  });
+
+  it('getCurrentRoute() falls back when #lot/ has malformed id', () => {
+    setHash('lot/%E0%A4%A');
+    expect(getCurrentRoute()).toBe(DEFAULT_ROUTE);
+    expect(getCurrentLotId()).toBeNull();
+  });
+
+  it('isRoute() does not classify "lot-detail" as a sidebar route', () => {
+    setHash('lot-detail');
     expect(getCurrentRoute()).toBe(DEFAULT_ROUTE);
   });
 
