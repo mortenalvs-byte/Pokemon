@@ -5,7 +5,8 @@ import { mountBrowseView } from './views/browse';
 import { mountCardDetailView } from './views/card-detail';
 import { mountCollectionView } from './views/collection';
 import { renderDashboard } from './views/dashboard';
-import { renderLots } from './views/lots';
+import { mountLotDetailView } from './views/lot-detail';
+import { mountLotsView } from './views/lots';
 import { mountSettingsView, SYNC_STATUS_CHANGED_EVENT } from './views/settings';
 import { mountWishlistView } from './views/wishlist';
 import { getCurrentRoute, onRouteChange, type Route } from './router';
@@ -21,14 +22,13 @@ const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
   browse: mountBrowseView,
   collection: mountCollectionView,
   binders: mountBindersView,
-  lots: (container) => {
-    container.innerHTML = renderLots();
-  },
+  lots: mountLotsView,
   wishlist: mountWishlistView,
   backup: mountBackupView,
   settings: mountSettingsView,
   'card-detail': mountCardDetailView,
   'binder-detail': mountBinderDetailView,
+  'lot-detail': mountLotDetailView,
 };
 
 interface NavLink {

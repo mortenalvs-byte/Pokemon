@@ -23,11 +23,16 @@ export const SIDEBAR_ROUTES = [
 
 export type SidebarRoute = (typeof SIDEBAR_ROUTES)[number];
 
-// Includes `card-detail` and `binder-detail` so the view-mounter map can
-// register them, but the router intentionally does not treat the bare
-// strings as valid hashes — they are only reachable via their
-// `#card/<id>` and `#binder/<id>` forms.
-export type Route = SidebarRoute | 'card-detail' | 'binder-detail';
+// Includes `card-detail`, `binder-detail`, and `lot-detail` so the
+// view-mounter map can register them, but the router intentionally
+// does not treat the bare strings as valid hashes — they are only
+// reachable via their `#card/<id>`, `#binder/<id>`, and `#lot/<id>`
+// forms.
+export type Route =
+  | SidebarRoute
+  | 'card-detail'
+  | 'binder-detail'
+  | 'lot-detail';
 
 // Existing tests import `ROUTES`; keep it pointing at the sidebar list
 // so the canonical-routes assertion stays meaningful.
@@ -37,6 +42,7 @@ export const DEFAULT_ROUTE: SidebarRoute = 'dashboard';
 
 const CARD_PATH_PREFIX = 'card/';
 const BINDER_PATH_PREFIX = 'binder/';
+const LOT_PATH_PREFIX = 'lot/';
 
 export function isRoute(value: string): value is SidebarRoute {
   return (SIDEBAR_ROUTES as readonly string[]).includes(value);
@@ -50,6 +56,9 @@ export function getCurrentRoute(): Route {
   if (extractBinderId(hash) !== null) {
     return 'binder-detail';
   }
+  if (extractLotId(hash) !== null) {
+    return 'lot-detail';
+  }
   return isRoute(hash) ? hash : DEFAULT_ROUTE;
 }
 
@@ -59,6 +68,10 @@ export function getCurrentCardId(): string | null {
 
 export function getCurrentBinderId(): string | null {
   return extractBinderId(window.location.hash.slice(1));
+}
+
+export function getCurrentLotId(): string | null {
+  return extractLotId(window.location.hash.slice(1));
 }
 
 export function navigate(route: SidebarRoute): void {
@@ -71,6 +84,10 @@ export function navigateToCard(cardId: string): void {
 
 export function navigateToBinder(binderId: string): void {
   window.location.hash = `${BINDER_PATH_PREFIX}${encodeURIComponent(binderId)}`;
+}
+
+export function navigateToLot(lotId: string): void {
+  window.location.hash = `${LOT_PATH_PREFIX}${encodeURIComponent(lotId)}`;
 }
 
 export function onRouteChange(handler: (route: Route) => void): () => void {
@@ -89,6 +106,10 @@ function extractCardId(hash: string): string | null {
 
 function extractBinderId(hash: string): string | null {
   return extractIdAfterPrefix(hash, BINDER_PATH_PREFIX);
+}
+
+function extractLotId(hash: string): string | null {
+  return extractIdAfterPrefix(hash, LOT_PATH_PREFIX);
 }
 
 function extractIdAfterPrefix(hash: string, prefix: string): string | null {
