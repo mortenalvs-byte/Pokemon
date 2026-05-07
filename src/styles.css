@@ -1847,15 +1847,19 @@ body {
   background: var(--color-bg);
 }
 
-/* Filtered-out slot — preserves grid position, just visually muted. */
+/* Filtered-out slot — preserves grid position, just visually muted.
+   Action buttons are not rendered at all when filtered (see
+   binder-detail.ts), so no pointer-events override is needed. */
 
 .binder-slot--filtered-out {
   opacity: 0.25;
   filter: saturate(0.4);
 }
 
-.binder-slot--filtered-out .binder-slot__action {
-  pointer-events: none;
+.binder-slot__card-link--inert {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-fg-muted);
 }
 
 .binder-slot--reverse-template {

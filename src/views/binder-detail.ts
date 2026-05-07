@@ -490,16 +490,26 @@ function buildSlot(
     });
     tile.appendChild(thumb);
 
-    const nameButton = document.createElement('button');
-    nameButton.type = 'button';
-    nameButton.className = 'binder-slot__card-link';
-    nameButton.dataset['action'] = 'open-card';
-    nameButton.textContent = card.name;
-    nameButton.addEventListener('click', (event) => {
-      event.stopPropagation();
-      navigateToCard(card.id);
-    });
-    tile.appendChild(nameButton);
+    // Filtered-out tiles must have no focusable children (the tile is
+    // `aria-hidden`). Render the card name as plain text instead of a
+    // button so screen readers + keyboard users skip it cleanly.
+    if (matchesFilter) {
+      const nameButton = document.createElement('button');
+      nameButton.type = 'button';
+      nameButton.className = 'binder-slot__card-link';
+      nameButton.dataset['action'] = 'open-card';
+      nameButton.textContent = card.name;
+      nameButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        navigateToCard(card.id);
+      });
+      tile.appendChild(nameButton);
+    } else {
+      const nameText = document.createElement('p');
+      nameText.className = 'binder-slot__card-link binder-slot__card-link--inert';
+      nameText.textContent = card.name;
+      tile.appendChild(nameText);
+    }
 
     const meta = document.createElement('p');
     meta.className = 'binder-slot__meta';
@@ -515,33 +525,41 @@ function buildSlot(
     tile.appendChild(placeholder);
   }
 
-  const actions = document.createElement('div');
-  actions.className = 'binder-slot__actions';
+  // Action buttons are the only mutation surface in the grid view. We
+  // never render them for a filtered-out tile so:
+  //   1) The filter contract holds (filtered slots cannot be mutated).
+  //   2) `aria-hidden` content has no focusable descendants.
+  //   3) There is no accidental scroll/tab landing on an opaque tile
+  //      the user filtered away.
+  if (matchesFilter) {
+    const actions = document.createElement('div');
+    actions.className = 'binder-slot__actions';
 
-  const assignBtn = document.createElement('button');
-  assignBtn.type = 'button';
-  assignBtn.className = 'binder-slot__action';
-  assignBtn.dataset['action'] = 'assign';
-  assignBtn.textContent =
-    slot.holdingId === null ? 'Tilordne holding' : 'Bytt holding';
-  assignBtn.addEventListener('click', (event) => {
-    event.stopPropagation();
-    void openAssign(slot, detail.binder.slotsPerPage);
-  });
-  actions.appendChild(assignBtn);
+    const assignBtn = document.createElement('button');
+    assignBtn.type = 'button';
+    assignBtn.className = 'binder-slot__action';
+    assignBtn.dataset['action'] = 'assign';
+    assignBtn.textContent =
+      slot.holdingId === null ? 'Tilordne holding' : 'Bytt holding';
+    assignBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void openAssign(slot, detail.binder.slotsPerPage);
+    });
+    actions.appendChild(assignBtn);
 
-  const menuBtn = document.createElement('button');
-  menuBtn.type = 'button';
-  menuBtn.className = 'binder-slot__action';
-  menuBtn.dataset['action'] = 'open-menu';
-  menuBtn.textContent = 'Endre status';
-  menuBtn.addEventListener('click', (event) => {
-    event.stopPropagation();
-    void openMenu(slot, detail.binder.slotsPerPage);
-  });
-  actions.appendChild(menuBtn);
+    const menuBtn = document.createElement('button');
+    menuBtn.type = 'button';
+    menuBtn.className = 'binder-slot__action';
+    menuBtn.dataset['action'] = 'open-menu';
+    menuBtn.textContent = 'Endre status';
+    menuBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void openMenu(slot, detail.binder.slotsPerPage);
+    });
+    actions.appendChild(menuBtn);
 
-  tile.appendChild(actions);
+    tile.appendChild(actions);
+  }
   return tile;
 }
 

@@ -340,4 +340,128 @@ describe('Binder detail — checklist + missing filter', () => {
     ).length;
     expect(filteredOutCount).toBe(1); // only slot 1 (the completed one) is muted
   });
+
+  it('Sider-view filtered-out slots have no interactive controls', async () => {
+    const created = await createBinderService(db).createBinderFromSet({
+      binder: {
+        name: 'No interactive on filtered',
+        description: null,
+        binderType: null,
+        slotsPerPage: 9,
+        completionMode: 'standard',
+        sourceSetId: 'base1',
+      },
+      slots: [
+        { pageNumber: 1, slotNumber: 1, targetCardId: 'base1-1', note: null },
+        { pageNumber: 1, slotNumber: 2, targetCardId: 'base1-2', note: null },
+      ],
+    });
+    // Complete slot 1 so the missing filter hides exactly that slot.
+    const holding = await createHoldingsRepo(db).create(baseHolding);
+    const slotsRepo = createBinderSlotsRepo(db);
+    const slot1 = created.slots[0];
+    if (slot1 === undefined) throw new Error('test bootstrap failed');
+    await slotsRepo.update(
+      slot1.id,
+      { holdingId: holding.id, status: 'owned' },
+      9,
+    );
+
+    window.location.hash = `binder/${encodeURIComponent(created.binder.id)}`;
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountBinderDetailView(root);
+    await settle();
+
+    const filterSelect = root.querySelector<HTMLSelectElement>(
+      '[data-region="filter-select"]',
+    );
+    filterSelect!.value = 'missing';
+    filterSelect!.dispatchEvent(new Event('change'));
+    await settle();
+
+    const filteredOutTile = root.querySelector<HTMLElement>(
+      '.binder-slot--filtered-out',
+    );
+    expect(filteredOutTile).not.toBeNull();
+    expect(filteredOutTile?.getAttribute('aria-hidden')).toBe('true');
+
+    // No action buttons inside the filtered tile.
+    expect(
+      filteredOutTile?.querySelector('[data-action="assign"]'),
+    ).toBeNull();
+    expect(
+      filteredOutTile?.querySelector('[data-action="open-menu"]'),
+    ).toBeNull();
+    expect(
+      filteredOutTile?.querySelector('[data-action="open-card"]'),
+    ).toBeNull();
+    // No focusable descendants at all (the tile is aria-hidden).
+    expect(
+      filteredOutTile?.querySelectorAll('button, a, input, select').length,
+    ).toBe(0);
+
+    // Visible/matching tiles still have their action buttons.
+    const matchingTiles = root.querySelectorAll<HTMLElement>(
+      '.binder-slot:not(.binder-slot--filtered-out)',
+    );
+    expect(matchingTiles.length).toBe(1);
+    expect(
+      matchingTiles[0]?.querySelector('[data-action="assign"]'),
+    ).not.toBeNull();
+    expect(
+      matchingTiles[0]?.querySelector('[data-action="open-menu"]'),
+    ).not.toBeNull();
+  });
+
+  it('clicking inside a filtered-out slot does not open assign or status dialog', async () => {
+    const created = await createBinderService(db).createBinderFromSet({
+      binder: {
+        name: 'Click filtered',
+        description: null,
+        binderType: null,
+        slotsPerPage: 9,
+        completionMode: 'standard',
+        sourceSetId: 'base1',
+      },
+      slots: [
+        { pageNumber: 1, slotNumber: 1, targetCardId: 'base1-1', note: null },
+        { pageNumber: 1, slotNumber: 2, targetCardId: 'base1-2', note: null },
+      ],
+    });
+    const holding = await createHoldingsRepo(db).create(baseHolding);
+    const slotsRepo = createBinderSlotsRepo(db);
+    const slot1 = created.slots[0];
+    if (slot1 === undefined) throw new Error('test bootstrap failed');
+    await slotsRepo.update(
+      slot1.id,
+      { holdingId: holding.id, status: 'owned' },
+      9,
+    );
+
+    window.location.hash = `binder/${encodeURIComponent(created.binder.id)}`;
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountBinderDetailView(root);
+    await settle();
+
+    const filterSelect = root.querySelector<HTMLSelectElement>(
+      '[data-region="filter-select"]',
+    );
+    filterSelect!.value = 'missing';
+    filterSelect!.dispatchEvent(new Event('change'));
+    await settle();
+
+    const filteredOutTile = root.querySelector<HTMLElement>(
+      '.binder-slot--filtered-out',
+    );
+    expect(filteredOutTile).not.toBeNull();
+
+    // Click anywhere inside the filtered tile — there should be nothing
+    // interactive to open a dialog.
+    filteredOutTile?.click();
+    await settle();
+
+    expect(document.querySelector('dialog.app-dialog')).toBeNull();
+  });
 });
