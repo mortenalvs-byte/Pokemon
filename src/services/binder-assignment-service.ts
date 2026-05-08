@@ -86,16 +86,18 @@ export class SlotAssignmentError extends Error {
 
 /**
  * Returns live holdings that CAN be assigned to `slot` according to the
- * v1 rules (cardId match, finish check for reverse-holo template). The
- * caller filters out already-assigned holdings before calling this if
- * exclusivity matters; for the bulk auto-assign path we use
- * `findAllAssignableForBinder` which dedupes assignments globally.
+ * v1 rules:
+ *   - holding is live (not soft-deleted)
+ *   - cardId matches the slot's targetCardId
+ *   - finish matches when the slot is a reverse-holo template
+ *   - holding is NOT already assigned to a different live binder slot
+ *     (one physical holding → one physical slot, PR 24 §10)
  *
  * Returns `[]` when:
  *   - the slot is already owned (no point reassigning silently)
  *   - the slot has no `targetCardId` (blank slot — pick via modal)
  *   - the slot is soft-deleted
- *   - no live holdings exist for the target cardId
+ *   - no live unassigned holdings exist for the target cardId
  */
 export async function findAssignableHoldingsForSlot(
   deps: BinderAssignmentDeps,
@@ -108,10 +110,12 @@ export async function findAssignableHoldingsForSlot(
   const holdings = await deps.holdingsRepo.listByCardId(slot.targetCardId);
   const card = (await deps.cardsRepo.get(slot.targetCardId)) ?? null;
   const reverseTemplate = isReverseHoloTemplateSlot(slot.note);
+  const assignedHoldingIds = await getAssignedHoldingIds(deps, slot.id);
 
   const out: AssignableHolding[] = [];
   for (const holding of holdings) {
     if (holding.deletedAt !== null) continue;
+    if (assignedHoldingIds.has(holding.id)) continue;
     if (reverseTemplate && holding.finish !== 'reverse_holo') continue;
     out.push({
       holding,
@@ -119,6 +123,28 @@ export async function findAssignableHoldingsForSlot(
       score: 0,
       reason: reverseTemplate ? 'reverse holo template match' : 'cardId match',
     });
+  }
+  return out;
+}
+
+/**
+ * PR 24 review patch — set of holding ids already assigned to a live
+ * binder slot OTHER than the one we're checking. Used to enforce
+ * "one physical holding → one physical slot" globally.
+ *
+ * Pass `excludeSlotId` so reassigning the same holding to its current
+ * slot is allowed (no-op style update), but moving it to a different
+ * slot while it's still bound elsewhere is rejected.
+ */
+async function getAssignedHoldingIds(
+  deps: BinderAssignmentDeps,
+  excludeSlotId: string | null,
+): Promise<Set<string>> {
+  const liveSlots = await deps.binderSlotsRepo.listLive();
+  const out = new Set<string>();
+  for (const s of liveSlots) {
+    if (s.id === excludeSlotId) continue;
+    if (s.holdingId !== null) out.add(s.holdingId);
   }
   return out;
 }
@@ -132,6 +158,9 @@ export async function findAssignableHoldingsForSlot(
  *   - target slot rejects holdings for a different cardId
  *   - blank slot back-fills `targetCardId` from the holding
  *   - reverse-holo template rejects non-reverse_holo finishes
+ *   - one physical holding → one physical slot (PR 24 §10): the same
+ *     holding cannot be bound to two live slots at once. Reassigning
+ *     to the same slot is a no-op-style update and is allowed.
  */
 export async function assignHoldingToSlot(
   deps: BinderAssignmentDeps,
@@ -156,6 +185,16 @@ export async function assignHoldingToSlot(
   ) {
     throw new SlotAssignmentError(
       `Reverse-holo template-slot tar bare reverse_holo-finish (holding er ${holding.finish}).`,
+    );
+  }
+  // One-holding-one-slot enforcement. Pass `slot.id` as the exclude so
+  // reassigning the same holding to its current slot stays a legal
+  // no-op-style update (matches the existing assign-modal "Bytt
+  // holding" UX).
+  const otherAssignedHoldingIds = await getAssignedHoldingIds(deps, slot.id);
+  if (otherAssignedHoldingIds.has(holding.id)) {
+    throw new SlotAssignmentError(
+      'Holdingen er allerede plassert i en annen slot.',
     );
   }
   return deps.binderSlotsRepo.update(

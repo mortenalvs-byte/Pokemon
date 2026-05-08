@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added (PR 24 — Binder direct-add / auto-assign holdings)
 PR 24 makes binders practical to fill. Before this PR, getting an owned card into the right slot required scrolling to the slot, opening the assign modal, picking the holding from a list, and submitting — fine for one slot, painful for a 360-slot master set. Workflow only — no schema migration, no master-set gap analysis, no pricing/value, no global search changes.
 
+#### Review patch — one-holding-one-slot enforcement
+The first revision left an assignment-contract hole: the existing `assign-holding-modal.ts` called `binderSlotsRepo.update()` directly, so the same physical holding could be bound to two live binder slots if a user opened the modal twice. The PR 24 spec is explicit that **one physical holding → one physical slot** until per-unit splitting lands in a future PR.
+
+Patched in the review round before merge:
+- `assignHoldingToSlot()` now enforces the rule at the service layer: a holding already bound to a different live slot is rejected with `SlotAssignmentError('Holdingen er allerede plassert i en annen slot.')`. Reassigning the same holding to its current slot is still legal (no-op-style update). The check uses `binderSlotsRepo.listLive()` once and excludes the current slot.
+- `findAssignableHoldingsForSlot()` now filters out holdings already assigned to a different live slot via the same `getAssignedHoldingIds()` helper. The `Kan plasseres` badge and `Plasser` action no longer surface holdings the service would reject anyway.
+- `assign-holding-modal.ts` was migrated to call `assignHoldingToSlot()` instead of writing through `binderSlotsRepo.update()` directly. The modal's candidate list was also tightened to drop holdings bound to other live slots; the slot's own current holding stays selectable so the existing "Bytt holding" reassign UX keeps working.
+- 4 new service tests + 3 new modal tests cover the contract.
+
+The contract now applies to **every** assignment path: auto-assign, single-slot `Plasser`, direct-add, and the existing assign modal.
+
 #### Locked rules (carried forward from PR 8a / KRAVSPEC §6)
 - `owned` only via real holding. Direct-add creates the holding first, then assigns; auto-assign only places existing holdings.
 - One physical holding → one physical slot. A `holding.quantity > 1` row can only land in a single slot. Per-unit placement / split-holding is a future PR (documented as known limitation).
@@ -50,11 +61,12 @@ Per-render assignable scan is built from a single `holdingsRepo.listLive()` call
 - `src/components/slot-direct-add-form.ts` — new.
 - `src/views/binder-detail.ts` — `ViewState` extensions (`assignableInfo`, `autoAssignSummary`), toolbar button + summary banner, slot-tile + checklist badge & actions, `handlePlaceEligible` + `openDirectAdd` handlers.
 - `src/styles.css` — `.binder-detail-view__auto-assign*`, `.binder-detail-view__auto-summary*`, `.binder-slot__assignable-badge`, `.checklist-table__assignable-badge`, `.binder-slot__action--success`, `.checklist-table__action--success`, `.slot-direct-add-wrap`.
-- `tests/binder-assignment-service.test.ts` — new, 23 cases (per-slot candidates, assign-write contract, auto-assign 1:1 / ambiguous / blank / already-owned / reverse-template / no double-assign / event silence, direct-add success, target-only enforcement, finish gate, rollback on assign failure, soft-deleted slot/binder).
-- `tests/binder-direct-add.test.ts` — new, 12 cases (toolbar button + state, badge, Plasser flow, Auto-plasser summary, ambiguous / wrong-variant report, Legg til her gating, checklist row badge + Plasser, no-double-assign).
+- `tests/binder-assignment-service.test.ts` — new, 28 cases incl. **review patch** (per-slot candidates, assign-write contract, auto-assign 1:1 / ambiguous / blank / already-owned / reverse-template / no double-assign / event silence, direct-add success / target-only / finish gate / rollback / holdings.create rejection (case 15), soft-deleted slot/binder, **`assignHoldingToSlot` rejects holding bound to another live slot, allows same-slot reassign, ignores soft-deleted slot assignments, `findAssignableHoldingsForSlot` filters out cross-slot duplicates**).
+- `tests/binder-direct-add.test.ts` — new, 14 cases (toolbar button + state, badge, Plasser flow, Auto-plasser summary, ambiguous / wrong-variant report, Legg til her gating, **clicking Legg til her opens form + submit creates holding + assigns slot**, **reverse-holo template direct-add locks finish=reverse_holo**, checklist row badge + Plasser, no-double-assign).
+- `tests/assign-holding-modal-search.test.ts` — +3 review-patch cases (target slot hides cross-binder-bound holdings, blank slot hides them, modal save routes through service and rejects stale ids).
 
 #### Test totals
-- 84 test files, **751 tests** (up from 716). Typecheck green. Build green (388 KB JS / 103 KB gzip).
+- 84 test files, **761 tests** (up from 716). Typecheck green. Build green (388 KB JS / 103 KB gzip).
 
 #### Known limitations
 - Holdings with `quantity > 1` count as one assignable slot. Splitting into per-unit physical placements is a future PR.

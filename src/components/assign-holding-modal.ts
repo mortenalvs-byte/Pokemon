@@ -12,16 +12,26 @@
 //     search input on top of the picker for that case so 600+ holdings
 //     stay manageable; the input uses `cardMatchesQuery` so the same
 //     search rules apply as in Browse / Collection / Wishlist.
+//   - PR 24 review patch: holdings already assigned to a different
+//     live slot are filtered OUT of the picker. The save also routes
+//     through `binder-assignment-service.assignHoldingToSlot()` which
+//     enforces the one-holding-one-slot contract at the service layer
+//     so the modal cannot bypass it even with a stale candidate id.
 
 import { DIALOG_SUBMITTED_EVENT } from './dialog';
 import { USER_DATA_CHANGED_EVENT } from './events';
 import { getDb } from '../db/database';
 import { cardMatchesQuery, isEmptyQuery } from '../domain/card-search';
 import { ValidationError } from '../domain/validators';
+import { createBindersRepo } from '../repositories/binders-repo';
 import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createHoldingsRepo } from '../repositories/holdings-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
+import {
+  SlotAssignmentError,
+  assignHoldingToSlot,
+} from '../services/binder-assignment-service';
 import { formatTags } from '../domain/tags';
 import type {
   BinderSlotRecord,
@@ -67,10 +77,24 @@ async function mount(
   const setsById = new Map<string, SetRecord>();
   for (const s of sets) setsById.set(s.id, s);
 
-  const candidateHoldings: readonly HoldingRecord[] =
+  // PR 24 review patch — drop holdings already bound to another live
+  // slot. The current slot's own assigned holding (if any) is allowed
+  // back in so the "Bytt holding" UX still has the existing pick
+  // available.
+  const liveSlots = await createBinderSlotsRepo(db).listLive();
+  const otherAssignedHoldingIds = new Set<string>();
+  for (const s of liveSlots) {
+    if (s.id === options.slot.id) continue;
+    if (s.holdingId !== null) otherAssignedHoldingIds.add(s.holdingId);
+  }
+
+  const baseCandidates: readonly HoldingRecord[] =
     options.slot.targetCardId === null
       ? liveHoldings
       : liveHoldings.filter((h) => h.cardId === options.slot.targetCardId);
+  const candidateHoldings: readonly HoldingRecord[] = baseCandidates.filter(
+    (h) => !otherAssignedHoldingIds.has(h.id),
+  );
 
   const select = root.querySelector<HTMLSelectElement>(
     '[data-region="holding-select"]',
@@ -258,18 +282,20 @@ async function handleSubmit(
   );
   if (submit !== null) submit.disabled = true;
 
+  // PR 24 review patch — go through the shared service so the
+  // one-holding-one-slot rule, cardId / finish / reverse-template
+  // checks all run consistently with auto-assign and direct-add.
   try {
-    const repo = createBinderSlotsRepo(getDb());
-    await repo.update(
-      options.slot.id,
+    const db = getDb();
+    await assignHoldingToSlot(
       {
-        holdingId: holding.id,
-        // Backfill targetCardId for blank manual slots so the completion
-        // denominator is well-defined and the slot gains a stable
-        // identity going forward.
-        targetCardId: options.slot.targetCardId ?? holding.cardId,
-        status: 'owned',
+        bindersRepo: createBindersRepo(db),
+        binderSlotsRepo: createBinderSlotsRepo(db),
+        holdingsRepo: createHoldingsRepo(db),
+        cardsRepo: createCardsRepo(db),
       },
+      options.slot,
+      holding,
       options.slotsPerPage,
     );
   } catch (caught) {
@@ -285,6 +311,9 @@ async function handleSubmit(
 }
 
 function describeError(caught: unknown): string {
+  if (caught instanceof SlotAssignmentError) {
+    return `Feil: ${caught.message}`;
+  }
   if (caught instanceof ValidationError) {
     return `Feil: ${caught.message}`;
   }

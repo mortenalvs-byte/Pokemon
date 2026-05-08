@@ -480,6 +480,85 @@ describe('binder-assignment-service (PR 24)', () => {
     expect(result.assigned).toEqual([]);
   });
 
+  // -- PR 24 review patch: one-holding-one-slot enforcement --------
+
+  it('assignHoldingToSlot rejects holding already assigned to another live slot', async () => {
+    const deps = buildDeps(db);
+    const h = await deps.holdingsRepo.create(holdingInput());
+    const slotA = await makeSlot({
+      pageNumber: 1,
+      slotNumber: 1,
+      holdingId: h.id,
+      status: 'owned',
+    });
+    const slotB = await makeSlot({
+      pageNumber: 1,
+      slotNumber: 2,
+      // Same target card so cardId match passes — the only blocker
+      // should be the one-holding-one-slot rule.
+      targetCardId: 'base1-4',
+    });
+    await expect(
+      assignHoldingToSlot(deps, slotB, h, SLOTS_PER_PAGE),
+    ).rejects.toBeInstanceOf(SlotAssignmentError);
+    const slotBAfter = await deps.binderSlotsRepo.get(slotB.id);
+    expect(slotBAfter?.holdingId).toBeNull();
+    void slotA;
+  });
+
+  it('assignHoldingToSlot allows reassigning the same holding to its current slot (no-op style)', async () => {
+    const deps = buildDeps(db);
+    const h = await deps.holdingsRepo.create(holdingInput());
+    const slot = await makeSlot({
+      holdingId: h.id,
+      status: 'owned',
+    });
+    // Same holding, same slot → should NOT throw (legitimate update).
+    const updated = await assignHoldingToSlot(deps, slot, h, SLOTS_PER_PAGE);
+    expect(updated.holdingId).toBe(h.id);
+    expect(updated.status).toBe('owned');
+  });
+
+  it('assignHoldingToSlot ignores soft-deleted slot assignments when checking exclusivity', async () => {
+    const deps = buildDeps(db);
+    const h = await deps.holdingsRepo.create(holdingInput());
+    const orphanSlot = await makeSlot({
+      pageNumber: 1,
+      slotNumber: 1,
+      holdingId: h.id,
+      status: 'owned',
+    });
+    // Soft-delete the orphan slot. Its `holdingId` lingers in the row
+    // but the slot is no longer "live", so the holding should be
+    // assignable to a fresh slot.
+    await deps.binderSlotsRepo.softDelete(orphanSlot.id);
+    const newSlot = await makeSlot({
+      pageNumber: 1,
+      slotNumber: 2,
+    });
+    const updated = await assignHoldingToSlot(deps, newSlot, h, SLOTS_PER_PAGE);
+    expect(updated.holdingId).toBe(h.id);
+  });
+
+  it('findAssignableHoldingsForSlot filters out holdings already assigned to another live slot', async () => {
+    const deps = buildDeps(db);
+    const h = await deps.holdingsRepo.create(holdingInput());
+    const slotA = await makeSlot({
+      pageNumber: 1,
+      slotNumber: 1,
+      holdingId: h.id,
+      status: 'owned',
+    });
+    const slotB = await makeSlot({
+      pageNumber: 1,
+      slotNumber: 2,
+      targetCardId: 'base1-4',
+    });
+    const cands = await findAssignableHoldingsForSlot(deps, slotB);
+    expect(cands).toEqual([]);
+    void slotA;
+  });
+
   it('direct-add fails cleanly when holdingsRepo.create rejects (case 15)', async () => {
     const deps = buildDeps(db);
     const slot = await makeSlot();
