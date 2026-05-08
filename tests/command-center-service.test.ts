@@ -350,6 +350,68 @@ describe('buildCommandCenterItems (PR 27)', () => {
     expect(item?.target).toEqual({ type: 'hash', hash: '#settings' });
   });
 
+  // -- canPlaceDirectly / ownedUnplaced overlap (review patch) -------
+  // canPlaceDirectlyCount is a subset of ownedUnplaced. The command
+  // center must subtract so we don't surface two near-duplicate
+  // "place owned" items. Documented case: 10 owned-unplaced, 6 of
+  // them placeable → direct=6, remaining=4.
+  it('canPlaceDirectly + ownedUnplaced do not double-count (review patch)', () => {
+    const items = buildCommandCenterItems({
+      masterGap: masterGap({
+        ownedUnplaced: 10,
+        canPlaceDirectlyCount: 6,
+      }),
+      dashboard: dashboard(),
+      preferences: prefs(),
+    });
+    const placeOwnedItems = items.filter(
+      (i) => i.kind === 'place_owned_cards',
+    );
+    expect(placeOwnedItems).toHaveLength(2);
+    // First in priority is the direct-placement item (kind order 1).
+    expect(placeOwnedItems[0]?.title).toBe('Plasser kort du allerede eier');
+    expect(placeOwnedItems[0]?.count).toBe(6);
+    expect(placeOwnedItems[1]?.title).toBe('Rydd eide kort inn i permer');
+    expect(placeOwnedItems[1]?.count).toBe(4);
+  });
+
+  it('canPlaceDirectly equal to ownedUnplaced suppresses the manual-rest item', () => {
+    // When every owned-unplaced is directly placeable, only the
+    // direct-placement item should appear; the "remaining manual"
+    // bucket would be 0 and is dropped.
+    const items = buildCommandCenterItems({
+      masterGap: masterGap({
+        ownedUnplaced: 4,
+        canPlaceDirectlyCount: 4,
+      }),
+      dashboard: dashboard(),
+      preferences: prefs(),
+    });
+    const placeOwnedItems = items.filter(
+      (i) => i.kind === 'place_owned_cards',
+    );
+    expect(placeOwnedItems).toHaveLength(1);
+    expect(placeOwnedItems[0]?.title).toBe('Plasser kort du allerede eier');
+    expect(placeOwnedItems[0]?.count).toBe(4);
+  });
+
+  it('ownedUnplaced with no direct candidates only surfaces the manual-rest item', () => {
+    const items = buildCommandCenterItems({
+      masterGap: masterGap({
+        ownedUnplaced: 5,
+        canPlaceDirectlyCount: 0,
+      }),
+      dashboard: dashboard(),
+      preferences: prefs(),
+    });
+    const placeOwnedItems = items.filter(
+      (i) => i.kind === 'place_owned_cards',
+    );
+    expect(placeOwnedItems).toHaveLength(1);
+    expect(placeOwnedItems[0]?.title).toBe('Rydd eide kort inn i permer');
+    expect(placeOwnedItems[0]?.count).toBe(5);
+  });
+
   // -- multiple critical items keep stable order ----------------------
   it('multiple critical items stay in a stable kind order', () => {
     const items = buildCommandCenterItems({

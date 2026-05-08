@@ -131,6 +131,16 @@ export function buildCommandCenterItems(
         target: { type: 'hash', hash: '#master-gap' },
       });
     }
+    // Review patch: `canPlaceDirectlyCount` is a strict subset of
+    // `ownedUnplaced` (it counts owned-unplaced slots that ALSO have
+    // exactly one safe candidate). If we surface both as raw counts
+    // we get two near-duplicate "place owned" items in Arbeidskø.
+    // Subtract so the remaining-owned card only counts slots that
+    // still need manual judgement.
+    const remainingOwnedUnplaced = Math.max(
+      0,
+      masterGap.ownedUnplaced - masterGap.canPlaceDirectlyCount,
+    );
     if (masterGap.canPlaceDirectlyCount > 0) {
       candidates.push({
         kind: 'place_owned_cards',
@@ -143,14 +153,14 @@ export function buildCommandCenterItems(
         target: { type: 'hash', hash: '#master-gap' },
       });
     }
-    if (masterGap.ownedUnplaced > 0) {
+    if (remainingOwnedUnplaced > 0) {
       candidates.push({
         kind: 'place_owned_cards', // documented in spec; same kind reused
         severity: 'warning',
         title: 'Rydd eide kort inn i permer',
         message:
-          `${masterGap.ownedUnplaced} eide kort står utenfor en perm.`,
-        count: masterGap.ownedUnplaced,
+          `${remainingOwnedUnplaced} eide kort krever manuell vurdering før plassering.`,
+        count: remainingOwnedUnplaced,
         actionLabel: 'Åpne master gap',
         target: { type: 'hash', hash: '#master-gap' },
       });
