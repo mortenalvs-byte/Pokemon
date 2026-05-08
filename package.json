@@ -19,7 +19,11 @@
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
-    "desktop:check": "npm run typecheck && npm test && npm run build"
+    "desktop:check": "npm run typecheck && npm test && npm run build",
+    "qa:static": "npm run typecheck && npm test && npm run build",
+    "qa:browser": "vitest run tests/qa-seed.test.ts tests/qa-report.test.ts tests/qa-runner.test.ts",
+    "qa:desktop:manual": "echo \"See docs/QA_DESKTOP.md — run 'npm run desktop:dev', open #qa, click Reset+Seed+Run, save reports to .local/qa/\"",
+    "qa:full": "npm run qa:static && npm run qa:browser"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

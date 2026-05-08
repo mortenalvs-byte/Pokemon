@@ -5,9 +5,10 @@ description = "Morten's Pokémon Tracker desktop shell"
 authors = ["Morten"]
 edition = "2021"
 
-[lib]
-name = "pokemon_tracker_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# PR 28 — pure binary crate. The frontend is the existing TypeScript
+# app served by Vite / loaded from `frontendDist`; Rust-side has no
+# library surface to expose. Dropping `[lib]` keeps `cargo metadata`
+# happy without inventing a stub `src/lib.rs`.
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

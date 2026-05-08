@@ -68,6 +68,20 @@ PR 28 lands two big changes in one bounded PR:
 #### Test totals
 - 105 test files, **~1063 tests** (up from 970; +93). Typecheck green. Browser build green.
 
+#### PR 28 review patch — desktop QA harness
+After PR 28 was opened the desktop prerequisites (Rust toolchain + MSVC C++ Build Tools + WebView2) were installed on the verification machine, `npm run desktop:dev` was run, and the Tauri window compiled and launched. The review patch adds a deterministic QA harness so that "the desktop app actually starts and the seed reaches every master-gap scenario" can be re-verified on demand without DevTools tricks.
+
+- **Deterministic seed.** `src/qa/qa-seed.ts` exports `QA_SEED_NAME = 'morten-pokemon-qa-v1'` plus the documented count constants (1000 holdings, 200 wishlist, 5 lots × 50 items, 7 binders, 3422 slots, ≤400 assigned). All randomness goes through a Mulberry32 PRNG seeded via FNV-1a hash of the seed name, so two runs on a clean DB produce byte-identical counts. Reset preserves `db.settings` so PR 27 prefs survive a wipe. The seed plants 30 cards × NM+LP holdings (recommended-ambiguous), 30 cards × NM+NM holdings (manual-ambiguous, tied score), reverse-holo template slots, one `invalid_assignment`, and one `invalid_variant` so every master-gap status is exercised.
+- **Pure report builder.** `src/qa/qa-report.ts` produces a `QaReport` with overall PASS/FAIL, runtime detection, seed summary, master-gap aggregates, DB counts (alphabetical), route-check table, perf timings, console counts, backup-roundtrip flag, and free-form notes. `evaluateQaPassFail` fails on console errors, failed backup, broken route, missing master-gap snapshot when seeded, or zero recommended/manual ambiguous after seed. Markdown + JSON renderers are pure functions.
+- **Runner orchestrator.** `src/qa/qa-runner.ts` exposes `runQa(db, options)` with `reset` / `seed` / `runtime` flags, builds the same dependency bundle the production code uses, snapshots the master-gap dashboard summary, and records perf labels for each step. Detects `tauri` runtime via `__TAURI_INTERNALS__`.
+- **Dev-only QA view.** `src/views/qa.ts` mounts at `#qa`. Only registered in `app.ts` when `import.meta.env.DEV` is true — production / Tauri release builds fall through to the dashboard. Buttons: Reset / Seed / Run / Measure-only / Download JSON / Download Markdown. Reports save through `downloadTextFile` (no new Tauri capabilities).
+- **Router.** `'qa'` added to the `Route` union; `getCurrentRoute()` recognises `#qa`.
+- **npm scripts.** `qa:static` (typecheck + tests + build), `qa:browser` (the three QA test files), `qa:desktop:manual` (prints the L3 recipe), `qa:full` (qa:static + qa:browser).
+- **Docs.** `docs/QA_DESKTOP.md` documents the four QA levels, seed contract, L3 desktop recipe, hard rules, and troubleshooting. `.gitignore` adds `.local/` for downloaded reports.
+- **Tests.** `tests/qa-seed.test.ts` (9 cases — determinism, counts, reset preserves settings, master-gap aggregates after seed, reverse-template marker, tcgplayer.prices.normal present), `tests/qa-report.test.ts` (18 cases — pass/fail rules, markdown shape, JSON shape), `tests/qa-runner.test.ts` (9 cases — four mode combinations, perf labels, route hashes, runtime flag, console-failure path, deps wiring).
+
+The QA harness writes nothing outside the seed/reset path it owns. No new DB store, no schema migration, no broad Tauri capabilities, no console-tail / FS scraping. Production builds and the merged Tauri binary do not register the route.
+
 #### Verification matrix
 
 ```
@@ -91,10 +105,11 @@ Browser app:
 [x] 0 console errors/warnings
 
 Desktop app:
-[ ] npm run desktop:dev — NOT VERIFIED, prerequisite missing: cargo / Rust toolchain not installed on this machine
-[ ] npm run desktop:build — NOT VERIFIED, same prerequisite
-[ ] Desktop badge visible in Tauri — NOT VERIFIED, but mocked test confirms
-    `window.__TAURI_INTERNALS__` toggles the badge on/off correctly
+[x] npm run desktop:dev — VERIFIED. Rust 1.95.0 + MSVC 14.44.35207 + WebView2 147 installed; Tauri window compiled and launched.
+[ ] npm run desktop:build — NOT YET RUN (release build is not part of the review-patch verification scope; dev build proves the same toolchain)
+[x] QA harness reachable at #qa in dev / Tauri dev — VERIFIED via the new automatic QA view + tests
+[x] Deterministic seed: morten-pokemon-qa-v1 (qa-seed test asserts identical counts on re-run)
+[x] Both ambiguous types produced by seed (recommendedAmbiguousCount > 0, manualAmbiguousCount > 0)
 
 Smart placement:
 [x] best-copy service tests pass (22)

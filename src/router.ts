@@ -33,7 +33,8 @@ export type Route =
   | 'card-detail'
   | 'binder-detail'
   | 'lot-detail'
-  | 'master-gap';
+  | 'master-gap'
+  | 'qa';
 
 // Existing tests import `ROUTES`; keep it pointing at the sidebar list
 // so the canonical-routes assertion stays meaningful.
@@ -58,6 +59,12 @@ export function isRoute(value: string): value is SidebarRoute {
 
 export function getCurrentRoute(): Route {
   const hash = window.location.hash.slice(1);
+  // PR 28 review patch — dev-only QA harness route. Recognised in
+  // every build (so deep-link still resolves to the right view in
+  // dev), but `app.ts` only registers a mounter for it when
+  // `import.meta.env.DEV` is true. In production the hash falls
+  // through the rendering path and lands on the default route.
+  if (hash === 'qa') return 'qa';
   if (
     hash === MASTER_GAP_ROUTE ||
     hash.startsWith(MASTER_GAP_BINDER_PREFIX)

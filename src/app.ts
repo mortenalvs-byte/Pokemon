@@ -33,6 +33,17 @@ import { createPersonalPreferencesService } from './services/personal-preference
 // after the route has changed (PR 15A — fixes F-3 router race).
 type ViewMounter = (container: HTMLElement, signal: AbortSignal) => void;
 
+// PR 28 review patch — dev-only QA harness mounter. In production
+// builds the route exists in the type union but maps to the
+// dashboard so `#qa` does nothing; in dev it mounts the harness UI.
+// Vite injects `import.meta.env.DEV` at build time so the production
+// chunk never carries the QA module bundled in.
+const qaViewMounter: ViewMounter = import.meta.env.DEV
+  ? (container, signal): void => {
+      void import('./views/qa').then((mod) => mod.mountQaView(container, signal));
+    }
+  : mountDashboardView;
+
 const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
   dashboard: mountDashboardView,
   browse: mountBrowseView,
@@ -46,6 +57,7 @@ const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
   'binder-detail': mountBinderDetailView,
   'lot-detail': mountLotDetailView,
   'master-gap': mountMasterGapView,
+  qa: qaViewMounter,
 };
 
 interface NavLink {
