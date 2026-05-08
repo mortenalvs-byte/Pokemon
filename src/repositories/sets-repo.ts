@@ -1,6 +1,7 @@
 // `sets` is API cache. Replaceable from pokemontcg.io. No soft delete; no
 // audit log entries (cache churn would drown the log).
 
+import { getCachedSetList } from '../db/cards-cache';
 import type { SetRecord } from '../domain/types';
 import type { PokemonTrackerDB } from '../db/database';
 
@@ -25,7 +26,9 @@ export function createSetsRepo(db: PokemonTrackerDB): SetsRepo {
       return db.sets.get(id);
     },
     async list() {
-      return db.sets.toArray();
+      // PR 21 — read through the per-DB Promise cache. Sync /
+      // restore invalidate it on every successful write.
+      return getCachedSetList(db);
     },
     async count() {
       return db.sets.count();

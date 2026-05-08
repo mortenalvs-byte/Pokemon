@@ -1,6 +1,7 @@
 // `cards` is API cache. Same shape as sets-repo: replaceable, no soft
 // delete, no audit log.
 
+import { getCachedCardList } from '../db/cards-cache';
 import type { CardRecord } from '../domain/types';
 import type { PokemonTrackerDB } from '../db/database';
 
@@ -27,7 +28,10 @@ export function createCardsRepo(db: PokemonTrackerDB): CardsRepo {
       return db.cards.get(id);
     },
     async list() {
-      return db.cards.toArray();
+      // PR 21 — read through the per-DB Promise cache. Sync /
+      // restore invalidate it on every successful write. See
+      // src/db/cards-cache.ts.
+      return getCachedCardList(db);
     },
     async listBySet(setId) {
       return db.cards.where('setId').equals(setId).toArray();

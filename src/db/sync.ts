@@ -25,6 +25,7 @@ import {
 } from '../api/pokemon-tcg-api';
 import { sanitizeErrorMessage } from '../api/sanitize';
 import { type FetchLike, type SleepFn } from '../api/retry';
+import { invalidateCardCache, invalidateSetCache } from './cards-cache';
 import { nowIso } from '../utils/dates';
 import { newId } from '../utils/ids';
 import {
@@ -146,6 +147,14 @@ export async function syncCardDatabase(
     await recordSyncFailure(db, sanitized);
     return { ok: false, error: sanitized };
   }
+
+  // PR 21 — the in-memory `cards` and `sets` caches must be evicted
+  // after a successful sync rewrite. Repos read through these caches
+  // for the 20 k-card list calls; without invalidation, every view
+  // mounted before the next page reload would still see the previous
+  // generation of cards.
+  invalidateCardCache(db);
+  invalidateSetCache(db);
 
   return {
     ok: true,

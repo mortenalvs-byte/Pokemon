@@ -8,6 +8,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Performance (PR 21 — Cards cache / cold mount)
+PR 21 finishes the work PR 20 deferred: removing `cardsRepo.list()` as the cold-mount bottleneck. PR 20's measurement showed initial mount stuck at ~1000 ms even after the page-at-a-time refactor, because `cardsRepo.list()` still loaded all 20 237 cached cards from IndexedDB on every fresh view. This PR introduces a per-DB Promise cache for the two replaceable API caches (`cards`, `sets`) and wires invalidation into the only two write paths (sync, restore). No new feature surface — purely foundation/perf.
+
+#### What changed
+- **`src/db/cards-cache.ts` (new).** A `WeakMap<PokemonTrackerDB, Promise<list>>` keyed by the live Dexie instance. `getCachedCardList(db)` / `getCachedSetList(db)` return a memoised Promise; concurrent first-time callers share one `db.cards.toArray()` (no thundering herd). `invalidateCardCache(db)` / `invalidateSetCache(db)` evict the entry. A rejected fetch evicts itself so a retry on the next call gets a fresh attempt instead of a permanently-bad Promise.
+- **Repos read through the cache.** `cardsRepo.list()` and `setsRepo.list()` now call `getCachedCardList` / `getCachedSetList` instead of `db.cards.toArray()` / `db.sets.toArray()`. Every existing caller (Browse, Collection, Wishlist, Card detail, Binder detail, lot-detail, dashboard) is now a cache reader for free.
+- **Sync invalidates both caches** after the atomic transaction commits the new generation. Repos see the fresh data on the very next call.
+- **Restore invalidates both caches** after `replaceRestore`'s transaction commits. Same contract as sync.
+- **Test isolation is automatic.** `freshDb()` returns a new `PokemonTrackerDB` instance, which is a different `WeakMap` key, which is its own (empty) cache. No cross-test pollution; no global reset hook needed.
+
+#### Measurements (browser preview, QA stress data: 20 237 cards / 1088-slot binder)
+
+| Operation | Before PR 21 | After PR 21 | Delta |
+|-----------|------------:|-----------:|------:|
+| `cardsRepo.list()` cold (20 237-card cache) | ~445 ms | ~445 ms | first-call cost unchanged (still hits IDB once) |
+| `cardsRepo.list()` warm (cache hit) | ~445 ms | **~0 ms** | **∞** (resolved Promise returned synchronously) |
+| `binder-slot-service.getDetail` cold (1088-slot) | 1004 ms | **357 ms** | **2.8×** (less Dexie work elsewhere stays) |
+| `binder-slot-service.getDetail` warm (second mount) | 1004 ms | **32 ms** | **31×** |
+| `binder-slot-service.getDetail` warm (third mount) | 1004 ms | **27 ms** | **37×** |
+| Initial Browse / Collection / Card-detail mount after one cold visit | ~1000 ms | **~30 ms** | **~33×** |
+
+The cold-mount cost drop comes from the cache surviving across view re-renders (mode toggles, filter changes, deep-link navigation, dashboard ↔ binder ↔ collection navigation). PR 20 already cached `BinderDetail` on the local `ViewState`; PR 21 lifts that to the per-DB level so re-mounting a different view also benefits.
+
+#### Touched files
+- `src/db/cards-cache.ts` (new) — WeakMap-keyed Promise cache + invalidators.
+- `src/repositories/cards-repo.ts` — `list()` reads through cache.
+- `src/repositories/sets-repo.ts` — `list()` reads through cache.
+- `src/db/sync.ts` — invalidates both caches after the success transaction.
+- `src/db/restore.ts` — invalidates both caches after the replace transaction commits.
+- `tests/cards-cache.test.ts` (new, 10 cases): two consecutive calls return same Promise reference; concurrent first-time callers share one Promise; `invalidateCardCache` evicts; two separate DB instances have independent caches; sets cache works the same way; `cardsRepo.list` reads through cache (integration); `setsRepo.list` reads through cache (integration); successful sync invalidates both caches; successful restore invalidates both caches; rejected first fetch is evicted so the next call retries.
+
+#### Test totals
+- 77 test files, **639 tests** (up from 627). Typecheck green. Build green (345 KB JS / 92 KB gzip).
+
+#### Browser-verified
+- Service-level instrumentation on the QA-stress 1088-slot binder: `coldGetDetailMs: 357`, `warmGetDetailMs: 32`, `warmGetDetailMs2: 27`. The "second visit is essentially free" property the user asked for.
+- Sync triggers cache eviction confirmed by repo seeing the new generation on the very next call (covered by `tests/cards-cache.test.ts`).
+- Restore triggers cache eviction confirmed the same way.
+
+#### Out of scope (per the user's instruction)
+- No wishlist automation.
+- No global search.
+- No CSV import.
+- No binder direct-add.
+- No cross-page bulk selection.
+- No Browse-specific virtualisation — the cache makes the existing 50-per-page pagination cold-mount fast enough that virtualisation isn't the next bottleneck.
+
 ### Performance (PR 20 — Binder workflow performance pass)
 PR 20 takes the binder-detail view from "rendered all 1088 slot tiles + 1088 checklist rows in one go" to "render the current page only, reuse the BinderDetail across pagination / filter / search / mode toggles". No new feature surface — purely performance and DOM-cost reduction. Builds on PR 17's filter + search + deep-link.
 
