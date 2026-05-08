@@ -38,6 +38,13 @@ import {
   createWishlistService,
   type WishlistRow,
 } from '../services/wishlist-service';
+import { isActiveWishlistStatus } from '../domain/wishlist-status';
+import {
+  findReceiveCandidatesForHoldings,
+  markWishlistCandidatesReceived,
+  type WishlistReceiveCandidate,
+} from '../services/wishlist-receive-service';
+import { openWishlistReceivePrompt } from '../components/wishlist-receive-prompt';
 import { createLazyImage } from '../utils/lazy-image';
 import type {
   BinderSlotStatus,
@@ -152,9 +159,91 @@ async function renderInto(container: HTMLElement): Promise<void> {
 
   root.appendChild(buildBody(card, set ?? null));
   root.appendChild(buildActions(cardId));
+  // PR 22 — surface the "owned + active wishlist" conflict above the
+  // holdings + wishlist tables so the user sees it without scrolling.
+  // Reads the same data the two sections below use; cheap.
+  const conflictBanner = await buildOwnedActiveWishlistBanner(cardId);
+  if (conflictBanner !== null) root.appendChild(conflictBanner);
   root.appendChild(await buildHoldingsSection(cardId));
   root.appendChild(await buildBindersSection(cardId));
   root.appendChild(await buildWishlistSection(cardId));
+}
+
+async function buildOwnedActiveWishlistBanner(
+  cardId: string,
+): Promise<HTMLElement | null> {
+  // PR 22 review patch — the banner must respect the same match rule
+  // as the rest of the receive flow (cardId + finish). The earlier
+  // revision used cardId-only "anything live + anything active" which
+  // could mark a `reverse_holo` wishlist row as received when the user
+  // only owned the `normal` print. Route through the shared service
+  // so the banner offers the *same* candidate set the prompt would.
+  const db = getDb();
+  const holdingsRepo = createHoldingsRepo(db);
+  const wishlistRepo = createWishlistRepo(db);
+  const holdings = await holdingsRepo.listByCardId(cardId);
+  const liveHoldings = holdings.filter((h) => h.deletedAt === null);
+  if (liveHoldings.length === 0) return null;
+  const candidates = await findReceiveCandidatesForHoldings(
+    wishlistRepo,
+    liveHoldings,
+  );
+  if (candidates.length === 0) return null;
+
+  const wrap = document.createElement('section');
+  wrap.className = 'card-detail-view__conflict';
+  wrap.dataset['region'] = 'owned-active-wishlist-banner';
+
+  const heading = document.createElement('h3');
+  heading.className = 'card-detail-view__conflict-heading';
+  heading.textContent = 'Eid + aktiv ønskeliste';
+  wrap.appendChild(heading);
+
+  const body = document.createElement('p');
+  body.className = 'card-detail-view__conflict-body';
+  body.textContent =
+    candidates.length === 1
+      ? 'Kortet ligger fortsatt aktivt på ønskelisten — vil du markere oppføringen som mottatt?'
+      : `${candidates.length} aktive ønskeliste-oppføringer matcher dine holdings — marker som mottatt?`;
+  wrap.appendChild(body);
+
+  const action = document.createElement('button');
+  action.type = 'button';
+  action.className = 'card-detail-view__conflict-action';
+  action.dataset['action'] = 'mark-active-received';
+  action.textContent =
+    candidates.length === 1
+      ? 'Marker som mottatt'
+      : `Marker ${candidates.length} som mottatt`;
+  action.addEventListener('click', () => {
+    void openCardDetailReceivePrompt(candidates);
+  });
+  wrap.appendChild(action);
+  return wrap;
+}
+
+async function openCardDetailReceivePrompt(
+  candidates: readonly WishlistReceiveCandidate[],
+): Promise<void> {
+  if (candidates.length === 0) return;
+  await openWishlistReceivePrompt({
+    candidates,
+    heading:
+      candidates.length === 1
+        ? 'Eid + aktiv ønskeliste — én match på samme kort + finish.'
+        : `Eid + aktiv ønskeliste — ${candidates.length} matcher på samme kort + finish.`,
+  });
+}
+
+async function handleMarkSingleWishlistReceived(
+  wishlistId: string,
+): Promise<void> {
+  await markWishlistCandidatesReceived(
+    createWishlistRepo(getDb()),
+    [wishlistId],
+    'Marked received from Card Detail wishlist row',
+  );
+  window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
 }
 
 function appendMessage(root: HTMLElement, text: string): void {
@@ -582,6 +671,23 @@ function buildWishlistRow(row: WishlistRow): HTMLTableRowElement {
     void handleWishlistEdit(row.wishlist);
   });
   actions.appendChild(edit);
+
+  // PR 22 — Marker mottatt available on active rows only. This is an
+  // explicit per-row action, so we go straight to
+  // `markWishlistCandidatesReceived` without re-opening the prompt
+  // (the user already picked the specific row they want closed).
+  if (isActiveWishlistStatus(row.wishlist.status)) {
+    const markReceived = document.createElement('button');
+    markReceived.type = 'button';
+    markReceived.className =
+      'browse-table__action browse-table__action--success';
+    markReceived.dataset['action'] = 'mark-received';
+    markReceived.textContent = 'Marker mottatt';
+    markReceived.addEventListener('click', () => {
+      void handleMarkSingleWishlistReceived(row.wishlist.id);
+    });
+    actions.appendChild(markReceived);
+  }
 
   const remove = document.createElement('button');
   remove.type = 'button';

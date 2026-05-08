@@ -10,12 +10,19 @@ import { onUserDataChanged, USER_DATA_CHANGED_EVENT } from '../components/events
 import { buildHoldingForm } from '../components/holding-form';
 import { buildWishlistForm } from '../components/wishlist-form';
 import { decideQuickAdd, type QuickAddDefault } from '../components/quick-add';
+import { openWishlistReceivePrompt } from '../components/wishlist-receive-prompt';
 import { getDb } from '../db/database';
 import { ValidationError } from '../domain/validators';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createHoldingsRepo } from '../repositories/holdings-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
 import { createWishlistRepo } from '../repositories/wishlist-repo';
+import {
+  findReceiveCandidatesForHoldings,
+  findWishlistReceiveCandidates,
+  type WishlistReceiveCandidate,
+} from '../services/wishlist-receive-service';
+import type { HoldingRecord } from '../domain/types';
 import {
   createBrowseService,
   type BrowseCardRow,
@@ -38,6 +45,10 @@ interface QuickAddFeedback {
  * PR 19 — summary of a bulk Quick Add Raw run. Rendered as a banner
  * above the table so the user can see the outcome at a glance:
  *   "Bulk: 5 lagt til, 3 oppdatert, 2 hoppet over (manglet variant), 0 feilet."
+ *
+ * PR 22 — extended with wishlist receive candidates so the bulk
+ * summary can offer "Marker N ønskeliste-oppføringer mottatt" in the
+ * same banner, without spawning a modal per card.
  */
 interface BulkSummary {
   readonly created: number;
@@ -46,6 +57,13 @@ interface BulkSummary {
   readonly failed: number;
   /** Names + ids of the cards that failed, for the user to follow up. */
   readonly failures: readonly { readonly cardId: string; readonly message: string }[];
+  /**
+   * PR 22 — deduped wishlist receive candidates across every
+   * created/merged holding from the bulk run. Cleared when the user
+   * resolves the receive action (so it can't fire twice) or
+   * dismisses the banner.
+   */
+  receiveCandidates: WishlistReceiveCandidate[];
 }
 
 interface BrowseState {
@@ -582,12 +600,82 @@ function renderBulkSummary(refs: ViewRefs, state: BrowseState): void {
     }
     region.appendChild(list);
   }
+  // PR 22 — wishlist receive offer. Single banner, single click; never
+  // a modal per card. The button is hidden when the bulk run found no
+  // candidates so the summary stays compact.
+  if (summary.receiveCandidates.length > 0) {
+    const wishlistRow = document.createElement('p');
+    wishlistRow.className = 'browse-view__bulk-summary-wishlist';
+    wishlistRow.textContent =
+      summary.receiveCandidates.length === 1
+        ? '1 ønskeliste-oppføring matcher de mottatte kortene.'
+        : `${summary.receiveCandidates.length} ønskeliste-oppføringer matcher de mottatte kortene.`;
+    region.appendChild(wishlistRow);
+    const receiveBtn = document.createElement('button');
+    receiveBtn.type = 'button';
+    receiveBtn.className =
+      'browse-view__bulk-summary-receive browse-table__action--success';
+    receiveBtn.dataset['action'] = 'bulk-summary-receive';
+    receiveBtn.textContent =
+      summary.receiveCandidates.length === 1
+        ? 'Marker som mottatt'
+        : `Marker ${summary.receiveCandidates.length} som mottatt`;
+    receiveBtn.addEventListener('click', () => {
+      void handleBulkSummaryReceive(refs, state);
+    });
+    region.appendChild(receiveBtn);
+  }
   const dismiss = document.createElement('button');
   dismiss.type = 'button';
   dismiss.className = 'browse-view__bulk-summary-dismiss';
   dismiss.dataset['action'] = 'bulk-summary-dismiss';
   dismiss.textContent = 'Lukk';
   region.appendChild(dismiss);
+}
+
+async function handleBulkSummaryReceive(
+  refs: ViewRefs,
+  state: BrowseState,
+): Promise<void> {
+  const summary = state.bulkSummary;
+  if (summary === null || summary.receiveCandidates.length === 0) return;
+  const candidates = summary.receiveCandidates;
+  // Clear immediately so a double-click can't re-open the prompt
+  // before openWishlistReceivePrompt's first await resolves.
+  state.bulkSummary = {
+    ...summary,
+    receiveCandidates: [],
+  };
+  renderBulkSummary(refs, state);
+  await openWishlistReceivePrompt({
+    candidates,
+    heading:
+      candidates.length === 1
+        ? 'Bulk-add: 1 match på aktiv ønskeliste.'
+        : `Bulk-add: ${candidates.length} matcher på aktiv ønskeliste.`,
+  });
+}
+
+async function runReceivePromptForHoldingSafe(
+  holding: HoldingRecord,
+): Promise<void> {
+  try {
+    const candidates = await findWishlistReceiveCandidates(
+      createWishlistRepo(getDb()),
+      holding,
+    );
+    if (candidates.length === 0) return;
+    await openWishlistReceivePrompt({
+      candidates,
+      heading:
+        candidates.length === 1
+          ? 'Quick Add: 1 match på aktiv ønskeliste.'
+          : `Quick Add: ${candidates.length} matcher på aktiv ønskeliste.`,
+    });
+  } catch {
+    // Non-fatal: holding already saved; user can still mark via the
+    // Wishlist view.
+  }
 }
 
 function buildRow(row: BrowseCardRow, state: BrowseState): HTMLTableRowElement {
@@ -1001,6 +1089,9 @@ async function runQuickAddRaw(
     // fires — `buildRow` reads `state.quickAddFeedback` so the chip
     // survives the rerender.
     window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
+    // PR 22 — single-card receive prompt. Non-blocking; the chip
+    // already shows success.
+    void runReceivePromptForHoldingSafe(result.holding);
   } catch (caught) {
     state.quickAddFeedback.set(cardId, { kind: 'error', text: 'Feil' });
     if (button instanceof HTMLButtonElement) {
@@ -1111,6 +1202,9 @@ async function handleBulkQuickAddRaw(
   let skippedNoVariant = 0;
   let failed = 0;
   const failures: { cardId: string; message: string }[] = [];
+  // PR 22 — collect every holding that landed (created or merged) so
+  // the receive helper can be called once with the full batch.
+  const touchedHoldings: HoldingRecord[] = [];
 
   // Snapshot the selection so concurrent ticks (extremely unlikely
   // since the button is disabled, but cheap) can't corrupt the loop.
@@ -1157,11 +1251,29 @@ async function handleBulkQuickAddRaw(
       });
       if (result.action === 'merged') merged += 1;
       else created += 1;
+      touchedHoldings.push(result.holding);
     } catch (caught) {
       failed += 1;
       const message =
         caught instanceof Error ? caught.message : 'ukjent feil';
       failures.push({ cardId, message });
+    }
+  }
+
+  // PR 22 — find any active wishlist entries that the just-created /
+  // -merged holdings should close. Deduped by wishlist id so the same
+  // wishlist row never appears twice in the summary.
+  let receiveCandidates: WishlistReceiveCandidate[] = [];
+  if (touchedHoldings.length > 0) {
+    try {
+      receiveCandidates = await findReceiveCandidatesForHoldings(
+        createWishlistRepo(getDb()),
+        touchedHoldings,
+      );
+    } catch {
+      // Non-fatal: bulk write already succeeded. The user can still
+      // mark via the Wishlist view.
+      receiveCandidates = [];
     }
   }
 
@@ -1171,6 +1283,7 @@ async function handleBulkQuickAddRaw(
     skippedNoVariant,
     failed,
     failures,
+    receiveCandidates,
   };
   // Drop ids that were either created or merged from the selection
   // so the user sees a clean slate for the next bulk run. Ids that

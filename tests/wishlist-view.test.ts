@@ -179,4 +179,102 @@ describe('Wishlist view', () => {
     const empty = root.querySelector('.browse-table__empty-row');
     expect(empty?.textContent ?? '').toMatch(/Ønskelisten er tom/i);
   });
+
+  // PR 22 — Wishlist view: receive flow + active/closed counts -------
+
+  it('PR 22: counts header splits Aktive / Mottatt / Avbrutt / Slettede', async () => {
+    const repo = createWishlistRepo(db);
+    const wanted = await repo.create({ ...baseInput, status: 'wanted' });
+    void wanted;
+    const ordered = await repo.create({ ...baseInput, status: 'ordered' });
+    void ordered;
+    const received = await repo.create({ ...baseInput });
+    await repo.update(received.id, { status: 'received' });
+    const cancelled = await repo.create({ ...baseInput });
+    await repo.update(cancelled.id, { status: 'cancelled' });
+    const removed = await repo.create({ ...baseInput });
+    await repo.softDelete(removed.id);
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountWishlistView(root);
+    await settle();
+    const counts = root
+      .querySelector<HTMLElement>('[data-region="counts"]')!
+      .textContent ?? '';
+    expect(counts).toContain('Aktive: 2');
+    expect(counts).toContain('Ønsket: 1');
+    expect(counts).toContain('Bestilt: 1');
+    expect(counts).toContain('Mottatt: 1');
+    expect(counts).toContain('Avbrutt: 1');
+    expect(counts).toContain('Slettede: 1');
+  });
+
+  it('PR 22: Marker mottatt action only renders on wanted/ordered rows', async () => {
+    const repo = createWishlistRepo(db);
+    const wanted = await repo.create({ ...baseInput, status: 'wanted' });
+    const ordered = await repo.create({ ...baseInput, status: 'ordered' });
+    const receivedSeed = await repo.create({ ...baseInput });
+    await repo.update(receivedSeed.id, { status: 'received' });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountWishlistView(root);
+    await settle();
+    const wantedRow = root.querySelector<HTMLTableRowElement>(
+      `.wishlist-table__row[data-wishlist-id="${wanted.id}"]`,
+    );
+    const orderedRow = root.querySelector<HTMLTableRowElement>(
+      `.wishlist-table__row[data-wishlist-id="${ordered.id}"]`,
+    );
+    const receivedRow = root.querySelector<HTMLTableRowElement>(
+      `.wishlist-table__row[data-wishlist-id="${receivedSeed.id}"]`,
+    );
+    expect(
+      wantedRow?.querySelector('button[data-action="mark-received"]'),
+    ).not.toBeNull();
+    expect(
+      orderedRow?.querySelector('button[data-action="mark-received"]'),
+    ).not.toBeNull();
+    expect(
+      receivedRow?.querySelector('button[data-action="mark-received"]'),
+    ).toBeNull();
+  });
+
+  it('PR 22: clicking Marker mottatt flips status to received and updates audit', async () => {
+    const repo = createWishlistRepo(db);
+    const wanted = await repo.create({ ...baseInput, status: 'wanted' });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountWishlistView(root);
+    await settle();
+
+    const row = root.querySelector<HTMLTableRowElement>(
+      `.wishlist-table__row[data-wishlist-id="${wanted.id}"]`,
+    );
+    const btn = row?.querySelector<HTMLButtonElement>(
+      'button[data-action="mark-received"]',
+    );
+    expect(btn).not.toBeNull();
+    btn?.click();
+
+    await vi.waitFor(async () => {
+      const stored = await repo.get(wanted.id);
+      expect(stored?.status).toBe('received');
+    });
+    // Audit row appended via repo.update
+    const auditRows = await db.auditLog.toArray();
+    const updates = auditRows.filter(
+      (r) => r.action === 'wishlist_item_updated' && r.entityId === wanted.id,
+    );
+    expect(updates.length).toBe(1);
+    expect(updates[0]?.message).toContain('status=received');
+    // Active count drops to 0; received count is now 1.
+    const counts = root
+      .querySelector<HTMLElement>('[data-region="counts"]')!
+      .textContent ?? '';
+    expect(counts).toContain('Aktive: 0');
+    expect(counts).toContain('Mottatt: 1');
+  });
 });

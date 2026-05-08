@@ -13,6 +13,8 @@ import { navigateToCard } from '../router';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
 import { createWishlistRepo } from '../repositories/wishlist-repo';
+import { isActiveWishlistStatus } from '../domain/wishlist-status';
+import { markWishlistCandidatesReceived } from '../services/wishlist-receive-service';
 import {
   createWishlistService,
   type WishlistCriteria,
@@ -341,7 +343,15 @@ async function rerender(
 ): Promise<void> {
   const result = await service.list(buildCriteria(state));
 
-  refs.countsRegion.textContent = `${result.liveTotal} aktive · ${result.deletedTotal} slettede · ${result.total} matcher filteret`;
+  // PR 22 — split counts so the user can see active (wanted/ordered)
+  // vs closed (received/cancelled) at a glance.
+  refs.countsRegion.textContent =
+    `Aktive: ${result.activeTotal} ` +
+    `(Ønsket: ${result.statusCounts.wanted} · Bestilt: ${result.statusCounts.ordered}) · ` +
+    `Mottatt: ${result.statusCounts.received} · ` +
+    `Avbrutt: ${result.statusCounts.cancelled} · ` +
+    `Slettede: ${result.deletedTotal} · ` +
+    `Matcher filteret: ${result.total}`;
 
   refs.rowsRegion.replaceChildren();
   if (result.rows.length === 0) {
@@ -426,6 +436,14 @@ function buildRow(row: WishlistRow): HTMLTableRowElement {
   } else {
     const edit = makeActionButton('Rediger', 'edit');
     actionsCell.appendChild(edit);
+    // PR 22 — Marker mottatt only for active rows (wanted/ordered).
+    // Received/cancelled rows already closed; restore via edit if
+    // needed.
+    if (isActiveWishlistStatus(row.wishlist.status)) {
+      const received = makeActionButton('Marker mottatt', 'mark-received');
+      received.classList.add('browse-table__action--success');
+      actionsCell.appendChild(received);
+    }
     const remove = makeActionButton('Fjern', 'soft-delete');
     remove.classList.add('browse-table__action--danger');
     actionsCell.appendChild(remove);
@@ -545,6 +563,8 @@ function attachEventListeners(
       void handleSoftDelete(wishlistId, refs, service, state);
     } else if (action === 'restore') {
       void handleRestore(wishlistId, refs, service, state);
+    } else if (action === 'mark-received') {
+      void handleMarkReceived(wishlistId, refs, service, state);
     }
   });
 }
@@ -592,6 +612,24 @@ async function handleRestore(
   await createWishlistRepo(getDb()).restore(
     wishlistId,
     'Restored from Wishlist view',
+  );
+  window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
+  await rerender(refs, service, state);
+}
+
+// PR 22 — flip a single active wishlist row to `received`. Goes
+// through the same `markWishlistCandidatesReceived` helper as the
+// post-create receive prompt so audit + validators stay consistent.
+async function handleMarkReceived(
+  wishlistId: string,
+  refs: ViewRefs,
+  service: WishlistService,
+  state: WishlistState,
+): Promise<void> {
+  await markWishlistCandidatesReceived(
+    createWishlistRepo(getDb()),
+    [wishlistId],
+    'Marked received from Wishlist view',
   );
   window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
   await rerender(refs, service, state);

@@ -933,6 +933,194 @@ body {
   color: var(--color-accent-fg);
 }
 
+/* PR 22 — success variant for "Marker mottatt" actions. Reuses the
+   shared status-success colours used by warning/info chips. */
+.browse-table__action--success {
+  border-color: var(--color-success, #2e7d32);
+  color: var(--color-success, #2e7d32);
+}
+
+.browse-table__action--success:hover:not(:disabled) {
+  background: var(--color-success, #2e7d32);
+  color: var(--color-accent-fg);
+}
+
+/* PR 22 — Card Detail conflict banner: shown when the user owns the
+   card but still has an active wishlist row. */
+.card-detail-view__conflict {
+  margin: var(--space-2) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-warning, #b76c00);
+  border-radius: var(--radius-2);
+  background: var(--color-warning-bg, #fff8ec);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.card-detail-view__conflict-heading {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.card-detail-view__conflict-body {
+  margin: 0;
+  flex: 1 1 280px;
+  font-size: 13px;
+}
+
+.card-detail-view__conflict-action {
+  border: 1px solid var(--color-success, #2e7d32);
+  color: var(--color-success, #2e7d32);
+  background: transparent;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+}
+
+.card-detail-view__conflict-action:hover:not(:disabled) {
+  background: var(--color-success, #2e7d32);
+  color: var(--color-accent-fg);
+}
+
+/* PR 22 — Receive prompt dialog (used after holding-form, Quick Add,
+   bulk add, lot materialise). Native <dialog> styling kept consistent
+   with the holding/wishlist forms. */
+.wishlist-receive-prompt-wrap {
+  padding: var(--space-3);
+  min-width: 360px;
+  max-width: 560px;
+}
+
+.wishlist-receive-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.wishlist-receive-prompt__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.wishlist-receive-prompt__header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.wishlist-receive-prompt__heading {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-fg-muted);
+}
+
+.wishlist-receive-prompt__intro {
+  margin: 0;
+  font-size: 13px;
+}
+
+.wishlist-receive-prompt__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.wishlist-receive-prompt__row {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  padding: var(--space-2);
+}
+
+.wishlist-receive-prompt__row[data-match-type='condition_mismatch'] {
+  border-color: var(--color-warning, #b76c00);
+  background: var(--color-warning-bg, #fff8ec);
+}
+
+.wishlist-receive-prompt__label {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+.wishlist-receive-prompt__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.wishlist-receive-prompt__details {
+  color: var(--color-fg-muted);
+  font-size: 12px;
+}
+
+.wishlist-receive-prompt__mismatch {
+  color: var(--color-warning, #b76c00);
+  font-size: 12px;
+}
+
+.wishlist-receive-prompt__note {
+  font-size: 12px;
+  font-style: italic;
+}
+
+.wishlist-receive-prompt__error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 13px;
+  min-height: 1em;
+}
+
+.wishlist-receive-prompt__error--visible {
+  font-weight: 600;
+}
+
+.wishlist-receive-prompt__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.wishlist-receive-prompt__submit {
+  border: 1px solid var(--color-success, #2e7d32);
+  color: var(--color-success, #2e7d32);
+  background: transparent;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+}
+
+.wishlist-receive-prompt__submit:hover:not(:disabled) {
+  background: var(--color-success, #2e7d32);
+  color: var(--color-accent-fg);
+}
+
+/* PR 22 — bulk-summary receive-button row (Browse view). Reuses the
+   `--success` action class for hover/colour and adds spacing in the
+   summary banner. */
+.browse-view__bulk-summary-wishlist {
+  margin: var(--space-1) 0 0;
+  font-size: 13px;
+  color: var(--color-fg-muted);
+}
+
+.browse-view__bulk-summary-receive {
+  margin-right: var(--space-2);
+  background: transparent;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+}
+
 .browse-view__field--checkbox {
   flex-direction: row;
   align-items: center;
