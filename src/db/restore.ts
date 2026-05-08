@@ -29,6 +29,7 @@ import { newId } from '../utils/ids';
 import { BACKUP_APP_LITERAL } from './backup';
 import { tryPreRestoreAutoBackup } from './auto-backup';
 import type { AutoBackupResult } from './auto-backup';
+import { invalidateCardCache, invalidateSetCache } from './cards-cache';
 import type { PokemonTrackerDB } from './database';
 import { SCHEMA_VERSION } from './schema';
 
@@ -423,6 +424,13 @@ export async function replaceRestore(
       });
     },
   );
+
+  // PR 21 — invalidate the in-memory `cards` and `sets` caches now
+  // that the transaction has committed a fresh generation. Without
+  // this every view mounted before the next page reload would still
+  // see the old card list (cardsRepo.list reads through the cache).
+  invalidateCardCache(db);
+  invalidateSetCache(db);
 
   return { preRestoreBackup, restoredAt };
 }
