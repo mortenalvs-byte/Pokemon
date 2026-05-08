@@ -8,6 +8,73 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR 24 — Binder direct-add / auto-assign holdings)
+PR 24 makes binders practical to fill. Before this PR, getting an owned card into the right slot required scrolling to the slot, opening the assign modal, picking the holding from a list, and submitting — fine for one slot, painful for a 360-slot master set. Workflow only — no schema migration, no master-set gap analysis, no pricing/value, no global search changes.
+
+#### Locked rules (carried forward from PR 8a / KRAVSPEC §6)
+- `owned` only via real holding. Direct-add creates the holding first, then assigns; auto-assign only places existing holdings.
+- One physical holding → one physical slot. A `holding.quantity > 1` row can only land in a single slot. Per-unit placement / split-holding is a future PR (documented as known limitation).
+- Target slots filter to `holding.cardId === slot.targetCardId`.
+- Reverse-holo template slots only accept `finish === 'reverse_holo'`.
+- Blank slots (`targetCardId === null`) are NEVER auto-assigned — user picks via the existing assign modal.
+- Already-owned slots are NEVER overwritten.
+- Multiple eligible candidates → skipped as ambiguous (no best-copy guessing in v1).
+- Clearing rules unchanged (`Tøm slot` still preserves `targetCardId` + `note`).
+
+#### New shared service: `src/services/binder-assignment-service.ts`
+- `findAssignableHoldingsForSlot(deps, slot)` — per-slot candidate lookup applying the cardId + finish + soft-delete + already-owned rules.
+- `findAllAssignableForBinder` is folded into the auto-assign path internally; the UI uses a per-render `computeAssignableInfo` helper that builds `holdingsByCardId` + `assignedHoldingIds` once per render so a 1088-slot binder costs **one Dexie holdings call**, not 1088.
+- `assignHoldingToSlot(deps, slot, holding, slotsPerPage)` — slot-write contract with cardId / finish gates and target-backfill for blank slots.
+- `autoAssignBinder(deps, { binderId })` — deterministic 1:1 placement across the binder. Returns `{ assigned, skippedAlreadyOwned, skippedNoTarget, skippedNoHolding, skippedAmbiguous, skippedWrongVariant }`. **Service never dispatches** `USER_DATA_CHANGED_EVENT`; the UI fires it once after the call.
+- `createHoldingForSlotAndAssign(deps, slot, slotsPerPage, input)` — direct-add: holding-create then slot-assign with rollback (soft-delete the holding) if the slot-assign fails.
+
+#### New direct-add component: `src/components/slot-direct-add-form.ts`
+Smaller variant of the holding form scoped to the target slot. `cardId` is fixed; reverse-holo template slots lock the finish select to `reverse_holo`. Final variant validation still runs at the repo layer; this form does pre-validation only for inline UX. On submit it calls `createHoldingForSlotAndAssign`, dispatches `USER_DATA_CHANGED_EVENT`, and returns the new holding via an `onCreated` callback so the caller (binder-detail) can fire the wishlist receive prompt.
+
+#### Binder Detail UI changes
+- **Toolbar:** new `Auto-plasser matching holdings (N)` button. Enabled whenever there's at least one missing target slot — even with 0 candidates it surfaces the report ("X mangler holding") so the user understands why nothing happened. Result banner shows `Auto-plassering fullført: A plassert, B mangler holding, C allerede fylt, D tvetydige[, E feil variant].` with a `Lukk` button. Successful assignments dispatch a single `USER_DATA_CHANGED_EVENT`.
+- **Slot tile:** `Kan plasseres` badge when at least one matching unassigned holding exists for the slot (count appended when > 1). New `Plasser` action when exactly one candidate is eligible — single click, no modal. New `Legg til her` direct-add action for missing target slots only (blank slots route through the existing `Tilordne holding` modal, where the user can search the entire collection).
+- **Checklist row:** same `Kan plasseres` badge alongside the status cell, plus `Plasser` and `Legg til her` actions matching the grid.
+- **Wishlist receive prompt** runs after a successful direct-add when the just-created holding matches an active wishlist row (cardId + finish). Auto-assign does NOT trigger the prompt — it's physical organization, not new acquisition.
+
+#### Performance
+Per-render assignable scan is built from a single `holdingsRepo.listLive()` call + the slots already in `BinderDetail`. The cached info follows `BinderDetail` lifecycle: `USER_DATA_CHANGED_EVENT` invalidates both. No per-slot Dexie queries even for 1088-slot Vault X 16-pocket binders.
+
+#### Browser-verified (preview server, real QA stress data)
+- `Plasser` flow: created a target slot for `bw11-44` (single unassigned holding), badge read "Kan plasseres", click → slot status flipped to `owned` with `holdingId` set, warm render 101 ms.
+- Auto-assign flow: 3 target slots × 3 single-match cards → button label "Auto-plasser matching holdings (3)", click → summary "3 plassert, 0 mangler holding, 0 allerede fylt, 0 tvetydige", all 3 slots became `owned`, total round-trip ~800 ms.
+- Wishlist receive prompt fires when the direct-add holding matches an active wishlist row.
+
+#### Touched / new files
+- `src/services/binder-assignment-service.ts` — new.
+- `src/components/slot-direct-add-form.ts` — new.
+- `src/views/binder-detail.ts` — `ViewState` extensions (`assignableInfo`, `autoAssignSummary`), toolbar button + summary banner, slot-tile + checklist badge & actions, `handlePlaceEligible` + `openDirectAdd` handlers.
+- `src/styles.css` — `.binder-detail-view__auto-assign*`, `.binder-detail-view__auto-summary*`, `.binder-slot__assignable-badge`, `.checklist-table__assignable-badge`, `.binder-slot__action--success`, `.checklist-table__action--success`, `.slot-direct-add-wrap`.
+- `tests/binder-assignment-service.test.ts` — new, 23 cases (per-slot candidates, assign-write contract, auto-assign 1:1 / ambiguous / blank / already-owned / reverse-template / no double-assign / event silence, direct-add success, target-only enforcement, finish gate, rollback on assign failure, soft-deleted slot/binder).
+- `tests/binder-direct-add.test.ts` — new, 12 cases (toolbar button + state, badge, Plasser flow, Auto-plasser summary, ambiguous / wrong-variant report, Legg til her gating, checklist row badge + Plasser, no-double-assign).
+
+#### Test totals
+- 84 test files, **751 tests** (up from 716). Typecheck green. Build green (388 KB JS / 103 KB gzip).
+
+#### Known limitations
+- Holdings with `quantity > 1` count as one assignable slot. Splitting into per-unit physical placements is a future PR.
+- "Best copy" logic (NM > LP, ungraded > graded, etc.) is intentionally not implemented in v1 — multiple candidates are skipped as ambiguous and the user picks via the existing assign modal.
+- Blank-slot direct-add is not implemented; blank slots route through the existing `Tilordne holding` modal which can search the entire collection.
+
+#### Out of scope (per the spec)
+- ❌ Master set gap analysis (PR #25)
+- ❌ Pricing / value
+- ❌ CSV import
+- ❌ Scanner / barcode
+- ❌ Global search changes
+- ❌ Wishlist edition migration
+- ❌ Bulk import
+- ❌ Cross-binder optimization
+- ❌ Duplicate management dashboard
+- ❌ Virtualisering (page-at-a-time + 50-row checklist already cap DOM cost)
+- ❌ New binder schema
+- ❌ Full "best copy" grading logic
+
 ### Added (PR 23 — Global search / Card status center)
 PR 23 adds the missing control surface: a topbar search input that aggregates `cards` + `holdings` + `wishlist` + `binderSlots` + `lotItems` for one card and exposes hurtigknapper that go through existing services. Before this PR the user had to know which view to open to find a card's status; now one search field answers "Hva eier jeg av dette kortet, hvor ligger det, hva mangler?". Workflow only — no schema migration, no new datamodel, no new route.
 
