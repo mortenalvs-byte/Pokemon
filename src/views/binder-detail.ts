@@ -534,6 +534,17 @@ function buildToolbar(
   const wrap = document.createElement('div');
   wrap.className = 'binder-detail-view__toolbar';
 
+  // PR 26 — view controls (mode toggle + search + filter) live in
+  // their own group; primary workflow actions (Auto-plasser, Gap-
+  // analyse, Eksport) live in a separate group on the right. The
+  // grouping is purely visual; behaviour is unchanged.
+  const viewGroup = document.createElement('div');
+  viewGroup.className = 'binder-detail-view__toolbar-group binder-detail-view__toolbar-group--view';
+  viewGroup.dataset['region'] = 'toolbar-view-controls';
+  const actionsGroup = document.createElement('div');
+  actionsGroup.className = 'binder-detail-view__toolbar-group binder-detail-view__toolbar-group--actions';
+  actionsGroup.dataset['region'] = 'toolbar-primary-actions';
+
   // View-mode toggle
   const toggleGroup = document.createElement('div');
   toggleGroup.className = 'binder-detail-view__toggle';
@@ -558,7 +569,7 @@ function buildToolbar(
     void renderInto(container, state);
   });
   toggleGroup.appendChild(checklistBtn);
-  wrap.appendChild(toggleGroup);
+  viewGroup.appendChild(toggleGroup);
 
   // PR 17 — free-text search inside the binder. Uses the same
   // `cardMatchesQuery` predicate as Browse / Collection / Wishlist
@@ -585,7 +596,7 @@ function buildToolbar(
     }, 200);
   });
   searchLabel.appendChild(searchInput);
-  wrap.appendChild(searchLabel);
+  viewGroup.appendChild(searchLabel);
 
   // Filter
   const filterLabel = document.createElement('label');
@@ -607,7 +618,7 @@ function buildToolbar(
     void renderInto(container, state);
   });
   filterLabel.appendChild(filterSelect);
-  wrap.appendChild(filterLabel);
+  viewGroup.appendChild(filterLabel);
 
   // PR 24 — Auto-plasser matching holdings. Enabled whenever there is
   // at least one missing target slot in the binder; the count shown in
@@ -636,20 +647,10 @@ function buildToolbar(
   autoBtn.addEventListener('click', () => {
     void handleAutoAssign(detail.binder.id, state, container);
   });
-  wrap.appendChild(autoBtn);
+  actionsGroup.appendChild(autoBtn);
 
-  // Export button
-  const exportBtn = document.createElement('button');
-  exportBtn.type = 'button';
-  exportBtn.className = 'binder-detail-view__export';
-  exportBtn.dataset['action'] = 'export-csv';
-  exportBtn.textContent = 'Eksporter sjekkliste (CSV)';
-  exportBtn.addEventListener('click', () => {
-    void handleExportCsv(detail.binder.id);
-  });
-  wrap.appendChild(exportBtn);
-
-  // PR 25 — open the per-binder master gap report.
+  // PR 25 — open the per-binder master gap report. Workflow action,
+  // grouped with Auto-plasser per PR 26.
   const gapBtn = document.createElement('button');
   gapBtn.type = 'button';
   gapBtn.className = 'binder-detail-view__gap-analysis';
@@ -658,18 +659,36 @@ function buildToolbar(
   gapBtn.addEventListener('click', () => {
     navigateToMasterGapBinder(detail.binder.id);
   });
-  wrap.appendChild(gapBtn);
+  actionsGroup.appendChild(gapBtn);
 
+  // Export button — also a workflow action.
+  const exportBtn = document.createElement('button');
+  exportBtn.type = 'button';
+  exportBtn.className = 'binder-detail-view__export';
+  exportBtn.dataset['action'] = 'export-csv';
+  exportBtn.textContent = 'Eksporter sjekkliste (CSV)';
+  exportBtn.addEventListener('click', () => {
+    void handleExportCsv(detail.binder.id);
+  });
+  actionsGroup.appendChild(exportBtn);
+
+  wrap.appendChild(viewGroup);
+  wrap.appendChild(actionsGroup);
   return wrap;
 }
 
 // PR 25 — gap summary banner above the toolbar. Skeleton paints first;
 // the master-set-gap service then populates the chips. Errors render
 // inline rather than failing the binder render.
+//
+// PR 26 — added `data-region="binder-gap-summary"` so desktop tests
+// and integration tools can target the banner deterministically. The
+// PR 25 region (`data-region="gap-summary"`) is kept too for callers
+// that already depend on it.
 function buildGapBannerSkeleton(binderId: string): HTMLElement {
   const banner = document.createElement('section');
   banner.className = 'binder-detail-view__gap-summary';
-  banner.dataset['region'] = 'gap-summary';
+  banner.dataset['region'] = 'binder-gap-summary';
   banner.dataset['binderId'] = binderId;
   const loading = document.createElement('p');
   loading.className = 'binder-detail-view__gap-summary-loading';

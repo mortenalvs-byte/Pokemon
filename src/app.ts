@@ -11,6 +11,7 @@ import { mountMasterGapView } from './views/master-gap';
 import { mountSettingsView, SYNC_STATUS_CHANGED_EVENT } from './views/settings';
 import { mountWishlistView } from './views/wishlist';
 import { mountGlobalSearch } from './components/global-search';
+import { mountKeyboardShortcuts } from './components/keyboard-shortcuts';
 import { getCurrentRoute, onRouteChange, type Route } from './router';
 import { APP_META_KEYS } from './domain/types';
 import { getDb } from './db/database';
@@ -57,34 +58,61 @@ export function mountApp(root: HTMLElement): void {
   renderActiveView();
   updateNavActive();
   setupTopbar();
+  // PR 26 — desktop keyboard navigation. Idempotent so a second
+  // mountApp() call (test re-mount) doesn't double-register the
+  // global keydown listener.
+  mountKeyboardShortcuts();
   onRouteChange(() => {
     renderActiveView();
     updateNavActive();
   });
 }
 
+// PR 26 — sidebar nav links advertise their keyboard shortcut via
+// `aria-keyshortcuts` so screen readers and devtools can surface them.
+// The actual key handling lives in `components/keyboard-shortcuts.ts`.
+const SIDEBAR_KEYSHORTCUT: Partial<Record<Route, string>> = {
+  dashboard: 'g d',
+  browse: 'g b',
+  collection: 'g c',
+  binders: 'g p',
+  lots: 'g l',
+  wishlist: 'g w',
+};
+
 function renderShell(): string {
-  const navItems = NAV_LINKS.map(
-    (link) => `
+  const navItems = NAV_LINKS.map((link) => {
+    const shortcut = SIDEBAR_KEYSHORTCUT[link.route];
+    const ariaShortcut =
+      shortcut !== undefined ? ` aria-keyshortcuts="${shortcut}"` : '';
+    return `
       <li>
-        <a class="sidebar__link" href="#${link.route}" data-route="${link.route}">
+        <a class="sidebar__link" href="#${link.route}" data-route="${link.route}"${ariaShortcut}>
           ${link.label}
         </a>
       </li>
-    `,
-  ).join('');
+    `;
+  }).join('');
 
+  // PR 26 — wrap topbar + layout in `app-shell` and tag every shell
+  // region with stable `data-region` attributes so desktop layout CSS
+  // and tests can target them deterministically. The brand is now an
+  // anchor to `#dashboard` so clicking the title works like a typical
+  // desktop app's logo. The `topbar-search` slot is preserved verbatim
+  // — global search (PR 23) mounts there.
   return `
-    <header class="topbar" role="banner">
-      <div class="topbar__brand">Pokemon TCG Tracker</div>
-      <div class="topbar__search" data-region="topbar-search"></div>
-      <div class="topbar__status" data-region="topbar-status" aria-live="polite"></div>
-    </header>
-    <div class="layout">
-      <nav class="sidebar" aria-label="Hovednavigasjon">
-        <ul class="sidebar__list">${navItems}</ul>
-      </nav>
-      <main class="content" id="content" role="main"></main>
+    <div class="app-shell" data-region="app-shell">
+      <header class="topbar" role="banner" data-region="topbar">
+        <a class="topbar__brand" href="#dashboard" data-region="topbar-brand">Pokemon TCG Tracker</a>
+        <div class="topbar__search" data-region="topbar-search"></div>
+        <div class="topbar__status" data-region="topbar-status" aria-live="polite"></div>
+      </header>
+      <div class="layout">
+        <nav class="sidebar" aria-label="Hovednavigasjon" data-region="sidebar">
+          <ul class="sidebar__list">${navItems}</ul>
+        </nav>
+        <main class="content" id="content" role="main" data-region="content"></main>
+      </div>
     </div>
   `;
 }

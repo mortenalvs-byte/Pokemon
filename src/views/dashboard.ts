@@ -87,6 +87,16 @@ async function renderInto(container: HTMLElement): Promise<void> {
   heading.textContent = 'Dashboard';
   root.appendChild(heading);
 
+  // PR 26 — workspace header. Short, no marketing language; just
+  // tells the user what this dashboard is so the eye knows where to
+  // look next.
+  const workspace = document.createElement('p');
+  workspace.className = 'dashboard-view__workspace';
+  workspace.dataset['region'] = 'dashboard-workspace';
+  workspace.textContent =
+    'Kontrollrom for samling, permer, master set og backup.';
+  root.appendChild(workspace);
+
   const loading = document.createElement('p');
   loading.className = 'dashboard-view__loading';
   loading.dataset['region'] = 'loading';
@@ -401,6 +411,36 @@ function buildTopBindersList(binders: BindersSection): HTMLElement {
 }
 
 // ---------------------------------------------------------------------
+// PR 26 — next-best-action helper. Picks the most useful single
+// sentence to surface in the dashboard's Master Set Progress card,
+// driven by the same summary the chips already show. Order is
+// intentional: invalid > can-place > owned-unplaced > ordered >
+// wanted > missing > all-clear. Pure function so it's easy to test.
+export function getMasterGapNextAction(
+  summary: MasterGapDashboardSummary,
+): string {
+  if (summary.invalidCount > 0) {
+    return 'Rett feilplasserte kort eller feil variant først.';
+  }
+  if (summary.canPlaceDirectlyCount > 0) {
+    return 'Start med kortene som kan plasseres direkte i perm.';
+  }
+  if (summary.ownedUnplaced > 0) {
+    return 'Du eier kort som ikke er plassert i perm.';
+  }
+  if (summary.wishlistOrdered > 0) {
+    return 'Følg opp bestilte kort og marker dem mottatt når de kommer.';
+  }
+  if (summary.wishlistWanted > 0) {
+    return 'Følg ønskelisten og prioriter manglende master set-kort.';
+  }
+  if (summary.missing > 0) {
+    return 'Legg manglende kort i ønskeliste eller lot.';
+  }
+  return 'Alle registrerte master set-slots ser ryddige ut.';
+}
+
+// ---------------------------------------------------------------------
 // PR 25 — Master Set Progress card (lazy-loaded)
 
 function buildMasterGapCardSkeleton(): HTMLElement {
@@ -493,6 +533,15 @@ async function populateMasterGapCard(card: HTMLElement): Promise<void> {
     String(summary.canPlaceDirectlyCount),
   );
   card.appendChild(stats);
+
+  // PR 26 — single-sentence "next best action" so the user has a
+  // direction without scanning every chip. Driven by the pure helper
+  // above so the priority order is testable in isolation.
+  const next = document.createElement('p');
+  next.className = 'dashboard-card__next-action';
+  next.dataset['region'] = 'master-gap-next-action';
+  next.textContent = `Neste beste handling: ${getMasterGapNextAction(summary)}`;
+  card.appendChild(next);
 
   if (summary.closestBinder !== null) {
     const close = document.createElement('button');

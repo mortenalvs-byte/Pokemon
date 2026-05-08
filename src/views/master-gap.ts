@@ -28,6 +28,11 @@ import type {
   MasterGapStatus,
 } from '../domain/master-set-gap';
 import {
+  nextViewDensity,
+  viewDensityLabel,
+  type ViewDensity,
+} from '../domain/view-density';
+import {
   getCurrentMasterGapBinderId,
   navigate,
   navigateToBinder,
@@ -88,6 +93,16 @@ interface ViewState {
   cachedReport: MasterGapReport | null;
   cachedBinderId: string | null;
   cachedDashboard: MasterGapDashboardSummary | null;
+  // PR 26 — desktop polish toggles. Per-mount, in-memory only.
+  density: ViewDensity;
+  hideComplete: boolean;
+  onlyActionable: boolean;
+}
+
+// PR 26 — actionable predicate. Hides `complete` (already done) and
+// `blank_slot` (no work owed). Used by the "Kun handling" toggle.
+export function isActionableRow(row: MasterGapRow): boolean {
+  return row.status !== 'complete' && row.status !== 'blank_slot';
 }
 
 export function mountMasterGapView(
@@ -100,6 +115,9 @@ export function mountMasterGapView(
     cachedReport: null,
     cachedBinderId: null,
     cachedDashboard: null,
+    density: 'compact',
+    hideComplete: false,
+    onlyActionable: false,
   };
   void renderInto(container, state);
   onUserDataChanged(() => {
@@ -311,7 +329,10 @@ async function renderReportMode(
   }
 
   root.appendChild(buildBinderHeader(report.binder));
-  root.appendChild(buildFilterStrip(state, container));
+  // PR 26 — sticky table toolbar wraps filter strip + density /
+  // hide-complete / only-actionable toggles so they all live in one
+  // visually-grouped strip above the table.
+  root.appendChild(buildTableToolbar(state, container));
   root.appendChild(buildTable(report, state, container));
 }
 
@@ -390,6 +411,81 @@ function buildFilterStrip(
   return wrap;
 }
 
+// PR 26 — sticky table toolbar. Hosts the existing filter strip plus
+// the new density / hide-complete / only-actionable toggles. None of
+// these touch the cached report — they only flip view state and
+// re-render. `tablePage` resets to 0 on filter / hide-complete /
+// only-actionable changes so the user lands on the new first page.
+// Density is purely cosmetic (padding/font-size) so it preserves
+// the page.
+function buildTableToolbar(
+  state: ViewState,
+  container: HTMLElement,
+): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'master-gap-view__table-toolbar';
+  wrap.dataset['region'] = 'table-toolbar';
+
+  wrap.appendChild(buildFilterStrip(state, container));
+
+  const toggles = document.createElement('div');
+  toggles.className = 'master-gap-view__toggles';
+
+  // Density toggle.
+  const density = document.createElement('button');
+  density.type = 'button';
+  density.className = 'master-gap-view__density-toggle';
+  density.dataset['action'] = 'toggle-density';
+  density.dataset['density'] = state.density;
+  density.textContent = `Tetthet: ${viewDensityLabel(state.density)}`;
+  density.addEventListener('click', () => {
+    state.density = nextViewDensity(state.density);
+    void renderInto(container, state);
+  });
+  toggles.appendChild(density);
+
+  // Hide complete toggle.
+  const hideComplete = document.createElement('button');
+  hideComplete.type = 'button';
+  hideComplete.className = state.hideComplete
+    ? 'master-gap-view__toggle master-gap-view__toggle--active'
+    : 'master-gap-view__toggle';
+  hideComplete.dataset['action'] = 'toggle-hide-complete';
+  hideComplete.setAttribute(
+    'aria-pressed',
+    state.hideComplete ? 'true' : 'false',
+  );
+  hideComplete.textContent = 'Skjul fullførte';
+  hideComplete.addEventListener('click', () => {
+    state.hideComplete = !state.hideComplete;
+    state.tablePage = 0;
+    void renderInto(container, state);
+  });
+  toggles.appendChild(hideComplete);
+
+  // Only actionable toggle.
+  const onlyActionable = document.createElement('button');
+  onlyActionable.type = 'button';
+  onlyActionable.className = state.onlyActionable
+    ? 'master-gap-view__toggle master-gap-view__toggle--active'
+    : 'master-gap-view__toggle';
+  onlyActionable.dataset['action'] = 'toggle-only-actionable';
+  onlyActionable.setAttribute(
+    'aria-pressed',
+    state.onlyActionable ? 'true' : 'false',
+  );
+  onlyActionable.textContent = 'Kun handling';
+  onlyActionable.addEventListener('click', () => {
+    state.onlyActionable = !state.onlyActionable;
+    state.tablePage = 0;
+    void renderInto(container, state);
+  });
+  toggles.appendChild(onlyActionable);
+
+  wrap.appendChild(toggles);
+  return wrap;
+}
+
 function buildTable(
   report: MasterGapReport,
   state: ViewState,
@@ -399,9 +495,17 @@ function buildTable(
   wrap.className = 'master-gap-view__table-wrap';
   wrap.dataset['region'] = 'gap-table';
 
-  const filtered = report.rows.filter((row) =>
-    rowMatchesFilter(row, state.filter),
-  );
+  // PR 26 — filtering order:
+  //   1. base status filter (PR 25)
+  //   2. hideComplete (drop only `complete`)
+  //   3. onlyActionable (drop `complete` + `blank_slot`)
+  //   4. pagination
+  // hideComplete and onlyActionable compose: `onlyActionable` is the
+  // stricter of the two, so they coexist without contradiction.
+  const filtered = report.rows
+    .filter((row) => rowMatchesFilter(row, state.filter))
+    .filter((row) => (state.hideComplete ? row.status !== 'complete' : true))
+    .filter((row) => (state.onlyActionable ? isActionableRow(row) : true));
   if (filtered.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'master-gap-view__empty';
@@ -427,7 +531,13 @@ function buildTable(
   wrap.appendChild(counts);
 
   const table = document.createElement('table');
-  table.className = 'master-gap-table';
+  // PR 26 — density class drives compact vs comfortable padding /
+  // font-size in CSS. Always emit one of the two so the styles are
+  // deterministic.
+  table.className =
+    state.density === 'compact'
+      ? 'master-gap-table master-gap-table--compact'
+      : 'master-gap-table master-gap-table--comfortable';
   const thead = document.createElement('thead');
   thead.innerHTML = `
     <tr>
