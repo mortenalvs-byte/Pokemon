@@ -119,6 +119,44 @@ describe('availableVariants', () => {
     expect([...v.editions]).toEqual(['first_edition']);
   });
 
+  it('maps `unlimitedNormal` → finish=normal + edition=unlimited (F-2)', () => {
+    const v = availableVariants(
+      makeCard({ tcgplayer: { prices: { unlimitedNormal: { market: 1 } } } }),
+    );
+    expect(v.verified).toBe(true);
+    expect(v.finishes.has('normal')).toBe(true);
+    expect(v.editions.has('unlimited')).toBe(true);
+  });
+
+  it('maps `unlimitedHolofoil` → finish=holo + edition=unlimited (F-2)', () => {
+    const v = availableVariants(
+      makeCard({ tcgplayer: { prices: { unlimitedHolofoil: { market: 1 } } } }),
+    );
+    expect(v.verified).toBe(true);
+    expect(v.finishes.has('holo')).toBe(true);
+    expect(v.editions.has('unlimited')).toBe(true);
+  });
+
+  it('Base/Jungle/Fossil-style holo with both 1stEdition and unlimited holofoil keys → both editions surface (F-2)', () => {
+    // Real-world Jolteon Jungle (base2-4): pokemontcg.io exposes both
+    // `1stEditionHolofoil` and `unlimitedHolofoil`. Pre-F-2 the user
+    // could only record the 1st-edition path.
+    const v = availableVariants(
+      makeCard({
+        tcgplayer: {
+          prices: {
+            '1stEditionHolofoil': { market: 4 },
+            unlimitedHolofoil: { market: 2 },
+          },
+        },
+      }),
+    );
+    expect(v.verified).toBe(true);
+    expect(v.finishes.has('holo')).toBe(true);
+    expect(v.editions.has('first_edition')).toBe(true);
+    expect(v.editions.has('unlimited')).toBe(true);
+  });
+
   it('maps `1stEditionHolofoil` → finish=holo + edition=first_edition', () => {
     const v = availableVariants(
       makeCard({ tcgplayer: { prices: { '1stEditionHolofoil': { market: 1 } } } }),

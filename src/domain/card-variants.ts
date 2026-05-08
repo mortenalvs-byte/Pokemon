@@ -8,19 +8,31 @@
 // from rarity, set name, card name, or `cardmarket` data — see
 // `BACKUP_FORMAT.md` and the PR review notes.
 //
-// Recognised keys (PR review § "Mapping" — locked):
-//   normal               → finish=normal     edition=unlimited
-//   holofoil             → finish=holo       edition=unlimited
+// Recognised keys:
+//   normal               → finish=normal       edition=unlimited
+//   holofoil             → finish=holo         edition=unlimited
 //   reverseHolofoil      → finish=reverse_holo edition=unlimited
-//   1stEditionNormal     → finish=normal     edition=first_edition
-//   1stEditionHolofoil   → finish=holo       edition=first_edition
+//   1stEditionNormal     → finish=normal       edition=first_edition
+//   1stEditionHolofoil   → finish=holo         edition=first_edition
+//   unlimitedNormal      → finish=normal       edition=unlimited
+//   unlimitedHolofoil    → finish=holo         edition=unlimited
 //
-// Every other key — including `unlimitedNormal` / `unlimitedHolofoil`
-// (not documented in pokemontcg.io v2 docs), lowercase `firstEdition*`,
-// other weird casings, future tcgplayer keys, and any cardmarket
-// fields — is deliberately ignored. No guessing. If a future PR proves
-// such a key actually exists in our cache via documented API fixture,
-// it can be added with its own dedicated test.
+// `unlimitedNormal` / `unlimitedHolofoil` were initially locked out
+// because PR 11's review couldn't prove they appeared in pokemontcg.io
+// data. The PR 14 QA report (F-2) verified them in live cache against
+// 837 cards (4.3% of the 19 545-card priced cache) — Base / Jungle /
+// Fossil unlimited holos in particular surface them. Mapping them to
+// the unlimited+normal / unlimited+holo pair lets the user record
+// these classic prints without falling through to the escape-hatch
+// path. (Live data also occasionally shows them coexisting with their
+// `1stEdition*` siblings; both edition values then surface, which is
+// what we want.)
+//
+// Every other key — lowercase `firstEdition*`, other weird casings,
+// future tcgplayer keys, and any cardmarket fields — is still
+// deliberately ignored. No guessing. If a future PR proves such a key
+// actually exists in our cache via documented API fixture, it can be
+// added with its own dedicated test.
 //
 // `availableVariants(card)` returns:
 //   { verified: true,  finishes, editions } — when at least one
@@ -138,6 +150,19 @@ export function availableVariants(card: CardRecord): AvailableVariants {
       case '1stEditionHolofoil':
         finishes.add('holo');
         editions.add('first_edition');
+        break;
+      case 'unlimitedNormal':
+        // F-2 (PR 14 QA) — verified in live cache. The `unlimited`
+        // edition was already implied by `normal`/`holofoil`, but
+        // these explicit keys appear on Base/Jungle/Fossil unlimited
+        // holos when the API also exposes a `1stEdition*` key, so
+        // ignoring them lost an entire printing.
+        finishes.add('normal');
+        editions.add('unlimited');
+        break;
+      case 'unlimitedHolofoil':
+        finishes.add('holo');
+        editions.add('unlimited');
         break;
       // Unrecognised keys are deliberately ignored. We do not guess.
     }

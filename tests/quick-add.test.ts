@@ -48,15 +48,43 @@ describe('decideQuickAdd', () => {
     expect(decision.defaults).toBeNull();
   });
 
-  it('refuses when prices only contains unrecognised keys (e.g. unlimitedHolofoil today)', () => {
-    // PR 15A finding F-2 — unlimitedHolofoil keys are not yet mapped
-    // by `availableVariants`. Quick Add must not silently invent a
-    // finish/edition for those.
+  it('refuses when prices only contains unrecognised keys (truly unknown)', () => {
+    // F-2 (post-PR-26 fix) lifted `unlimitedNormal` /
+    // `unlimitedHolofoil` into the recognised set, so a card with
+    // only those is now perfectly Quick-Add-eligible. To still cover
+    // the "no recognised key" path, exercise it with a key we have
+    // never seen in production data.
     const decision = decideQuickAdd(
-      withPrices({ unlimitedHolofoil: { market: 1 } }),
+      withPrices({ someFutureKeyTcgplayerInvented: { market: 1 } }),
     );
     expect(decision.canQuickAdd).toBe(false);
     expect(decision.reason).toContain('variant');
+  });
+
+  it('unlimitedHolofoil-only card → default holo + unlimited (F-2 fix)', () => {
+    // Base/Jungle/Fossil unlimited holos surface this key in live
+    // pokemontcg.io data; before F-2 it fell through to the
+    // escape-hatch path even though "unlimited holo" is the most
+    // common print run for those cards.
+    const decision = decideQuickAdd(
+      withPrices({ unlimitedHolofoil: { market: 1 } }),
+    );
+    expect(decision.canQuickAdd).toBe(true);
+    expect(decision.defaults).toEqual({
+      finish: 'holo',
+      edition: 'unlimited',
+    });
+  });
+
+  it('unlimitedNormal-only card → default normal + unlimited (F-2 fix)', () => {
+    const decision = decideQuickAdd(
+      withPrices({ unlimitedNormal: { market: 1 } }),
+    );
+    expect(decision.canQuickAdd).toBe(true);
+    expect(decision.defaults).toEqual({
+      finish: 'normal',
+      edition: 'unlimited',
+    });
   });
 
   it('normal-only card → default normal + unlimited', () => {

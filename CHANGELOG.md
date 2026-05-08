@@ -8,6 +8,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed (F-2 mini-PR — `unlimitedNormal` / `unlimitedHolofoil` variant mapping)
+The PR 14 QA report flagged `unlimitedNormal` and `unlimitedHolofoil` as live in pokemontcg.io's response payloads — 837 cards (4.3% of the 19 545-card priced cache), heavy on Base / Jungle / Fossil unlimited holos. PR 11's review had locked them out for safety; the QA fixtures now prove they're real, so they're accepted.
+
+`availableVariants(card)` now maps:
+- `unlimitedNormal` → `finish=normal`, `edition=unlimited`
+- `unlimitedHolofoil` → `finish=holo`, `edition=unlimited`
+
+Effects:
+- Quick Add Raw on a Base/Jungle/Fossil unlimited holo no longer falls through to the escape-hatch path. The form narrows to `holo + unlimited` automatically.
+- Cards that expose BOTH `1stEditionHolofoil` and `unlimitedHolofoil` (e.g. Jolteon Jungle `base2-4`) surface both editions in the form so the user can record either.
+- `decideQuickAdd` now returns `canQuickAdd=true` for these cards.
+
+Other unrecognised keys (lowercase `firstEdition*`, future tcgplayer keys, cardmarket fields) remain deliberately ignored — same "no guessing" rule.
+
+#### Touched files
+- `src/domain/card-variants.ts` — added 2 switch cases + updated header comment.
+- `tests/card-variants.test.ts` — 3 new fixture tests (`unlimitedNormal`, `unlimitedHolofoil`, both-editions surface together).
+- `tests/quick-add.test.ts` — flipped the F-2 placeholder test (was: `unlimitedHolofoil` rejected; now: accepted as `holo + unlimited`) and added an `unlimitedNormal` companion test plus a "truly unrecognised key" test to keep the no-key-found path covered.
+
+#### Test totals
+- 92 test files, **873 tests** (+5 vs PR 26). Typecheck green. Build 420.55 KB JS / 111.03 KB gzip.
+
+#### Out of scope
+- Lowercase / weird-cased variants of these keys.
+- Edition migration in `WishlistRecord` / `BinderSlotRecord` — the gap analysis still treats edition as informational only.
+
 ### Added (PR 26 — Desktop-ready app shell + workspace polish)
 PR 26 makes the app feel like a serious desktop workspace without changing any data model. App shell gets stable `data-region` hooks, the dashboard gets a workspace header and a next-best-action sentence inside Master Set Progress, the master-gap report gets a sticky toolbar with density / hide-complete / only-actionable toggles, the binder detail toolbar groups workflow actions vs view controls, and Vim-style keyboard shortcuts (`g d`, `g m`, etc.) land for desktop navigation. Workflow polish only — no schema migration, no new DB stores, no desktop wrapper, no Electron / Tauri / installer, no `package.json` desktop scripts, no pricing/value lookup, no external API.
 
