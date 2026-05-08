@@ -9,7 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Performance (PR 21 — Cards cache / cold mount)
-PR 21 finishes the work PR 20 deferred: removing `cardsRepo.list()` as the cold-mount bottleneck. PR 20's measurement showed initial mount stuck at ~1000 ms even after the page-at-a-time refactor, because `cardsRepo.list()` still loaded all 20 237 cached cards from IndexedDB on every fresh view. This PR introduces a per-DB Promise cache for the two replaceable API caches (`cards`, `sets`) and wires invalidation into the only two write paths (sync, restore). No new feature surface — purely foundation/perf.
+PR 21 finishes the work PR 20 deferred: removing `cardsRepo.list()` as the cold-mount bottleneck. PR 20's measurement showed initial mount stuck at ~1000 ms even after the page-at-a-time refactor, because `cardsRepo.list()` still loaded all 20 237 cached cards from IndexedDB on every fresh view. This PR introduces a per-DB Promise cache for the two replaceable API caches (`cards`, `sets`) and wires invalidation into the only two write paths (sync, restore) **and into the repo write methods themselves** (so the repo's read/write contract stays correct regardless of who calls it). No new feature surface — purely foundation/perf.
+
+#### Review patch (repo read/write consistency)
+The first revision invalidated only on the sync/restore paths. That left `cardsRepo.upsert / upsertMany / clear` (and the `sets` equivalents) silently inconsistent with `cardsRepo.list()` — a `list()` after `upsert()` would return the pre-write cached array. Production today only writes `cards` / `sets` via sync and restore, but the repo layer is foundation code; future modules and tests will reasonably expect repo writes to be visible on the next repo read.
+
+Patched in the review round before merge:
+- `cardsRepo.upsert / upsertMany / clear` invalidate the cards cache after the write.
+- `setsRepo.upsert / upsertMany / clear` invalidate the sets cache after the write.
+- Sync / restore invalidation kept — they write to `db.cards` / `db.sets` directly inside their atomic transactions (bypassing the repo) and still need the explicit invalidator after commit.
+- Cache header comment rewritten to reflect the new contract: repo writes auto-invalidate; direct `db.cards` / `db.sets` writes (today only sync + restore) must invalidate manually after commit.
+- Six new tests: `cardsRepo.upsert / upsertMany / clear` and `setsRepo.upsert / upsertMany / clear` each warm the cache, write, and assert the next `list()` reflects the write with a fresh Promise reference.
 
 #### What changed
 - **`src/db/cards-cache.ts` (new).** A `WeakMap<PokemonTrackerDB, Promise<list>>` keyed by the live Dexie instance. `getCachedCardList(db)` / `getCachedSetList(db)` return a memoised Promise; concurrent first-time callers share one `db.cards.toArray()` (no thundering herd). `invalidateCardCache(db)` / `invalidateSetCache(db)` evict the entry. A rejected fetch evicts itself so a retry on the next call gets a fresh attempt instead of a permanently-bad Promise.
@@ -37,10 +47,10 @@ The cold-mount cost drop comes from the cache surviving across view re-renders (
 - `src/repositories/sets-repo.ts` — `list()` reads through cache.
 - `src/db/sync.ts` — invalidates both caches after the success transaction.
 - `src/db/restore.ts` — invalidates both caches after the replace transaction commits.
-- `tests/cards-cache.test.ts` (new, 10 cases): two consecutive calls return same Promise reference; concurrent first-time callers share one Promise; `invalidateCardCache` evicts; two separate DB instances have independent caches; sets cache works the same way; `cardsRepo.list` reads through cache (integration); `setsRepo.list` reads through cache (integration); successful sync invalidates both caches; successful restore invalidates both caches; rejected first fetch is evicted so the next call retries.
+- `tests/cards-cache.test.ts` (new, 16 cases): two consecutive calls return same Promise reference; concurrent first-time callers share one Promise; `invalidateCardCache` evicts; two separate DB instances have independent caches; sets cache works the same way; `cardsRepo.list` / `setsRepo.list` read through cache (integration); successful sync invalidates both caches; successful restore invalidates both caches; rejected first fetch is evicted so the next call retries; **`cardsRepo.upsert` / `upsertMany` / `clear` invalidate the cards cache; `setsRepo.upsert` / `upsertMany` / `clear` invalidate the sets cache**.
 
 #### Test totals
-- 77 test files, **639 tests** (up from 627). Typecheck green. Build green (345 KB JS / 92 KB gzip).
+- 77 test files, **645 tests** (up from 627). Typecheck green. Build green (345 KB JS / 92 KB gzip).
 
 #### Browser-verified
 - Service-level instrumentation on the QA-stress 1088-slot binder: `coldGetDetailMs: 357`, `warmGetDetailMs: 32`, `warmGetDetailMs2: 27`. The "second visit is essentially free" property the user asked for.

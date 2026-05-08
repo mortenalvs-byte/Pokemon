@@ -282,6 +282,93 @@ describe('cards-cache (PR 21)', () => {
     expect(afterSets).not.toBe(beforeSets);
   });
 
+  it('cardsRepo.upsert invalidates the cache (next list sees the write)', async () => {
+    await db.cards.put(sampleCard);
+    const repo = createCardsRepo(db);
+    const before = await repo.list();
+    expect(before.map((c) => c.id)).toEqual(['base1-4']);
+
+    await repo.upsert({ ...sampleCard, id: 'base1-5', name: 'Other' });
+    const after = await repo.list();
+    expect(after.map((c) => c.id).sort()).toEqual(['base1-4', 'base1-5']);
+    // Promise reference is fresh — proves we re-fetched.
+    expect(after).not.toBe(before);
+  });
+
+  it('cardsRepo.upsertMany invalidates the cache', async () => {
+    await db.cards.put(sampleCard);
+    const repo = createCardsRepo(db);
+    const before = await repo.list();
+    expect(before.length).toBe(1);
+
+    await repo.upsertMany([
+      { ...sampleCard, id: 'bulk-1', name: 'Bulk1' },
+      { ...sampleCard, id: 'bulk-2', name: 'Bulk2' },
+    ]);
+    const after = await repo.list();
+    expect(after.map((c) => c.id).sort()).toEqual([
+      'base1-4',
+      'bulk-1',
+      'bulk-2',
+    ]);
+    expect(after).not.toBe(before);
+  });
+
+  it('cardsRepo.clear invalidates the cache (next list is empty)', async () => {
+    await db.cards.put(sampleCard);
+    const repo = createCardsRepo(db);
+    const before = await repo.list();
+    expect(before.length).toBe(1);
+
+    await repo.clear();
+    const after = await repo.list();
+    expect(after).toEqual([]);
+    expect(after).not.toBe(before);
+  });
+
+  it('setsRepo.upsert invalidates the cache (next list sees the write)', async () => {
+    await db.sets.put(sampleSet);
+    const repo = createSetsRepo(db);
+    const before = await repo.list();
+    expect(before.map((s) => s.id)).toEqual(['base1']);
+
+    await repo.upsert({ ...sampleSet, id: 'base2', name: 'Base 2' });
+    const after = await repo.list();
+    expect(after.map((s) => s.id).sort()).toEqual(['base1', 'base2']);
+    expect(after).not.toBe(before);
+  });
+
+  it('setsRepo.upsertMany invalidates the cache', async () => {
+    await db.sets.put(sampleSet);
+    const repo = createSetsRepo(db);
+    const before = await repo.list();
+    expect(before.length).toBe(1);
+
+    await repo.upsertMany([
+      { ...sampleSet, id: 'bulk-set-1', name: 'BulkSet1', series: 'Y' },
+      { ...sampleSet, id: 'bulk-set-2', name: 'BulkSet2', series: 'Y' },
+    ]);
+    const after = await repo.list();
+    expect(after.map((s) => s.id).sort()).toEqual([
+      'base1',
+      'bulk-set-1',
+      'bulk-set-2',
+    ]);
+    expect(after).not.toBe(before);
+  });
+
+  it('setsRepo.clear invalidates the cache (next list is empty)', async () => {
+    await db.sets.put(sampleSet);
+    const repo = createSetsRepo(db);
+    const before = await repo.list();
+    expect(before.length).toBe(1);
+
+    await repo.clear();
+    const after = await repo.list();
+    expect(after).toEqual([]);
+    expect(after).not.toBe(before);
+  });
+
   it('a rejected first fetch is evicted so the next call retries', async () => {
     // Close the DB so toArray rejects. Then call getCachedCardList,
     // expect rejection. Then reopen and call again — should get a

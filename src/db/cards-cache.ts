@@ -30,17 +30,22 @@
 //   exclusive ownership. Treat the cached array as `readonly` from
 //   this point forward.
 //
-// Invalidation hooks (called from the write paths):
-//   - `db/sync.ts` — after the atomic transaction that bulkPut-s
-//     fresh sets + cards.
-//   - `db/restore.ts` — after the atomic transaction that bulkPut-s
-//     the entire backup.
+// Invalidation contract:
+//   - `cardsRepo.upsert / upsertMany / clear` invalidate the cards
+//     cache after the write completes. Same for `setsRepo.*`.
+//     Repo callers therefore see their own writes on the very next
+//     `list()` — the read/write consistency you'd expect from any
+//     repo.
+//   - `db/sync.ts` writes to `db.cards` / `db.sets` directly inside
+//     a single atomic rw-transaction (clear + bulkPut), bypassing
+//     the repo. It calls `invalidateCardCache(db)` /
+//     `invalidateSetCache(db)` after the transaction commits.
+//   - `db/restore.ts` does the same for the replace-restore
+//     transaction.
 //   - Any future module that writes directly to `db.cards` /
-//     `db.sets` MUST call the corresponding invalidator. Going
-//     through `cardsRepo.upsert*` / `setsRepo.upsert*` writes
-//     straight to Dexie and does NOT auto-invalidate; the only
-//     production paths that touch these tables today are sync and
-//     restore.
+//     `db.sets` (not via the repo) MUST call the corresponding
+//     invalidator after the write commits. Going through the repo
+//     does this for you.
 
 import type { CardRecord, SetRecord } from '../domain/types';
 import type { PokemonTrackerDB } from './database';
