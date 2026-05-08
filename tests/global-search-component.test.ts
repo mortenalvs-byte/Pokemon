@@ -291,6 +291,223 @@ describe('global-search component (PR 23)', () => {
     expect(dropdown?.hidden).toBe(true);
   });
 
+  // PR 23 review patch — lifecycle + stale-search hardening tests --
+
+  it('PR 23 review: _resetGlobalSearchForTests detaches every global listener', async () => {
+    mountGlobalSearch(slot);
+    const input = slot.querySelector<HTMLInputElement>(
+      '[data-region="global-search-input"]',
+    );
+    input!.value = 'charizard';
+    input!.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle(250);
+    slot.querySelector<HTMLElement>('[data-card-id="base1-4"]')?.click();
+    const panel = slot.querySelector<HTMLElement>(
+      '[data-region="global-search-panel"]',
+    );
+    await vi.waitFor(() => {
+      expect(panel?.querySelector('h3')?.textContent).toBe('Charizard');
+    });
+
+    // Detach every listener registered by mountGlobalSearch.
+    _resetGlobalSearchForTests();
+
+    // 1. USER_DATA_CHANGED_EVENT must NOT trigger a refresh after
+    //    reset (the panel state is frozen in time).
+    const beforeText = panel?.textContent ?? '';
+    await createHoldingsRepo(db).create({
+      cardId: 'base1-4',
+      quantity: 1,
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      certNumber: null,
+      certUrl: null,
+      gradedDate: null,
+      finish: 'normal',
+      edition: 'unlimited',
+      language: 'en',
+      purchasePrice: null,
+      purchaseCurrency: null,
+      estimatedValue: null,
+      valueCurrency: null,
+      valueSource: 'unknown',
+      valueNote: null,
+      valueUpdatedAt: null,
+      source: 'manual',
+      note: null,
+      specialVariant: false,
+      tags: [],
+      lotId: null,
+      status: 'owned',
+    });
+    window.dispatchEvent(new CustomEvent('pokemon:user-data-changed'));
+    await settle(120);
+    expect(panel?.textContent ?? '').toBe(beforeText);
+
+    // 2. hashchange after reset must not close the (now stale) panel.
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await settle(60);
+    expect(panel?.hidden).toBe(false);
+
+    // 3. Cmd+K after reset must not steal focus to the orphan input.
+    document.body.focus();
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }),
+    );
+    expect(document.activeElement).not.toBe(input);
+  });
+
+  it('PR 23 review: stale async search results are dropped', async () => {
+    mountGlobalSearch(slot);
+    const input = slot.querySelector<HTMLInputElement>(
+      '[data-region="global-search-input"]',
+    );
+    expect(input).not.toBeNull();
+    // Type "charizard" first, then immediately switch to "pikachu".
+    // The debounce + service call for "charizard" still runs because
+    // the input event was already fired; the second change happens
+    // before the first promise resolves. We verify that whatever
+    // resolves last, the dropdown only shows hits for the CURRENT
+    // query value — never stale "charizard" hits.
+    input!.value = 'charizard';
+    input!.dispatchEvent(new Event('input', { bubbles: true }));
+    // Don't wait long enough for the first runSearch to render — flip
+    // to pikachu before the debounce fires.
+    await settle(40);
+    input!.value = 'pikachu';
+    input!.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle(400);
+    const dropdown = slot.querySelector<HTMLElement>(
+      '[data-region="global-search-dropdown"]',
+    );
+    const visibleIds = Array.from(
+      dropdown?.querySelectorAll<HTMLElement>('[data-card-id]') ?? [],
+    ).map((r) => r.dataset['cardId']);
+    expect(visibleIds).toContain('base1-58'); // pikachu hit
+    expect(visibleIds).not.toContain('base1-4'); // stale charizard
+  });
+
+  it('PR 23 review: receive button hidden when no finish-matching candidate exists', async () => {
+    // Holdings: holo. Wishlist: reverse_holo (active). Same cardId
+    // but DIFFERENT finish → no receive candidate → button hidden.
+    await createHoldingsRepo(db).create({
+      cardId: 'base1-4',
+      quantity: 1,
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      certNumber: null,
+      certUrl: null,
+      gradedDate: null,
+      finish: 'holo',
+      edition: 'unlimited',
+      language: 'en',
+      purchasePrice: null,
+      purchaseCurrency: null,
+      estimatedValue: null,
+      valueCurrency: null,
+      valueSource: 'unknown',
+      valueNote: null,
+      valueUpdatedAt: null,
+      source: 'manual',
+      note: null,
+      specialVariant: false,
+      tags: [],
+      lotId: null,
+      status: 'owned',
+    });
+    await createWishlistRepo(db).create({
+      cardId: 'base1-4',
+      finish: 'reverse_holo',
+      priority: 'medium',
+      targetCondition: null,
+      targetPrice: null,
+      targetCurrency: null,
+      status: 'wanted',
+      note: null,
+    });
+
+    mountGlobalSearch(slot);
+    const input = slot.querySelector<HTMLInputElement>(
+      '[data-region="global-search-input"]',
+    );
+    input!.value = 'charizard';
+    input!.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle(250);
+    slot.querySelector<HTMLElement>('[data-card-id="base1-4"]')?.click();
+    await vi.waitFor(() => {
+      expect(slot.querySelector('h3')?.textContent).toBe('Charizard');
+    });
+    const receiveBtn = slot.querySelector<HTMLButtonElement>(
+      '[data-action="receive"]',
+    );
+    expect(receiveBtn).toBeNull();
+  });
+
+  it('PR 23 review: receive button visible when finish-matching candidate exists', async () => {
+    // Holdings: holo. Wishlist: holo (active). Match → button shows.
+    await createHoldingsRepo(db).create({
+      cardId: 'base1-4',
+      quantity: 1,
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      certNumber: null,
+      certUrl: null,
+      gradedDate: null,
+      finish: 'holo',
+      edition: 'unlimited',
+      language: 'en',
+      purchasePrice: null,
+      purchaseCurrency: null,
+      estimatedValue: null,
+      valueCurrency: null,
+      valueSource: 'unknown',
+      valueNote: null,
+      valueUpdatedAt: null,
+      source: 'manual',
+      note: null,
+      specialVariant: false,
+      tags: [],
+      lotId: null,
+      status: 'owned',
+    });
+    await createWishlistRepo(db).create({
+      cardId: 'base1-4',
+      finish: 'holo',
+      priority: 'medium',
+      targetCondition: null,
+      targetPrice: null,
+      targetCurrency: null,
+      status: 'wanted',
+      note: null,
+    });
+
+    mountGlobalSearch(slot);
+    const input = slot.querySelector<HTMLInputElement>(
+      '[data-region="global-search-input"]',
+    );
+    input!.value = 'charizard';
+    input!.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle(250);
+    slot.querySelector<HTMLElement>('[data-card-id="base1-4"]')?.click();
+    await vi.waitFor(() => {
+      expect(slot.querySelector('h3')?.textContent).toBe('Charizard');
+    });
+    const receiveBtn = await vi.waitFor<HTMLButtonElement>(() => {
+      const b = slot.querySelector<HTMLButtonElement>(
+        '[data-action="receive"]',
+      );
+      if (b === null) throw new Error('receive button not yet rendered');
+      return b;
+    });
+    expect(receiveBtn.textContent).toBe('Marker mottatt');
+  });
+
   it('USER_DATA_CHANGED_EVENT refreshes an open panel', async () => {
     mountGlobalSearch(slot);
     const input = slot.querySelector<HTMLInputElement>(

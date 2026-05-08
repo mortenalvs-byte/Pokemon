@@ -68,6 +68,15 @@ interface SearchState {
   expanded: boolean;
   results: GlobalSearchResult[];
   panelCardId: string | null;
+  /**
+   * Monotonically incremented per `runSearch` call. Each search
+   * captures its id at start; if a later search has bumped the
+   * counter by the time this one's `await` resolves, we drop the
+   * stale result instead of rendering it. Same idea as a request
+   * cancellation token — protects against out-of-order resolution
+   * when an old slow search returns after a newer fast one.
+   */
+  searchRequestSeq: number;
 }
 
 interface SearchRefs {
@@ -114,6 +123,7 @@ export function mountGlobalSearch(slot: HTMLElement): void {
     expanded: false,
     results: [],
     panelCardId: null,
+    searchRequestSeq: 0,
   };
 
   attachEventListeners(refs, state);
@@ -147,6 +157,13 @@ function collectRefs(slot: HTMLElement): SearchRefs | null {
 function attachEventListeners(refs: SearchRefs, state: SearchState): void {
   detachListeners?.();
   const cleanups: Array<() => void> = [];
+  // Single AbortController gates all global listeners (window keydown,
+  // document click, USER_DATA_CHANGED_EVENT, route change). Calling
+  // `controller.abort()` from `_resetGlobalSearchForTests()` or a
+  // future re-mount drops every one in one go — no
+  // page-lifetime listener leaks (PR 15A — F-3 still applies).
+  const controller = new AbortController();
+  cleanups.push(() => controller.abort());
 
   // Cmd+K / Ctrl+K focuses the input from anywhere.
   const onKeydown = (event: KeyboardEvent): void => {
@@ -162,8 +179,7 @@ function attachEventListeners(refs: SearchRefs, state: SearchState): void {
       }
     }
   };
-  window.addEventListener('keydown', onKeydown);
-  cleanups.push(() => window.removeEventListener('keydown', onKeydown));
+  window.addEventListener('keydown', onKeydown, { signal: controller.signal });
 
   // Live debounced search.
   let searchTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -302,10 +318,10 @@ function attachEventListeners(refs: SearchRefs, state: SearchState): void {
     if (state.panelCardId !== null) closePanel(refs, state);
     if (!refs.dropdown.hidden) hideDropdown(refs);
   };
-  document.addEventListener('click', onDocClick);
-  cleanups.push(() => document.removeEventListener('click', onDocClick));
+  document.addEventListener('click', onDocClick, { signal: controller.signal });
 
-  // Refresh open panel after any user-data write.
+  // Refresh open panel after any user-data write. Use the AbortSignal
+  // path so the listener dies with the rest of the global listeners.
   onUserDataChanged(() => {
     if (state.panelCardId !== null) {
       void renderPanelStatus(refs, state, state.panelCardId);
@@ -314,10 +330,14 @@ function attachEventListeners(refs: SearchRefs, state: SearchState): void {
     if (state.query.length > 0 && !refs.dropdown.hidden) {
       void runSearch(refs, state);
     }
-  });
+  }, controller.signal);
 
   // Route changes close everything (the user just navigated away).
-  onRouteChange(() => closeAll(refs, state));
+  // `onRouteChange` returns its own removeEventListener cleanup; queue
+  // it alongside the AbortController so a single `detachListeners()`
+  // call tears the whole graph down.
+  const detachRoute = onRouteChange(() => closeAll(refs, state));
+  cleanups.push(detachRoute);
 
   detachListeners = () => {
     for (const fn of cleanups) fn();
@@ -328,17 +348,34 @@ function attachEventListeners(refs: SearchRefs, state: SearchState): void {
 async function runSearch(refs: SearchRefs, state: SearchState): Promise<void> {
   if (state.query.trim().length === 0) {
     state.results = [];
+    state.searchRequestSeq += 1; // invalidate any in-flight search
     hideDropdown(refs);
     return;
   }
+  // Stale-result guard: capture the seq + query at start; on resolve,
+  // drop the result if a newer search has run or the query string has
+  // moved on. Without this, an old slow search resolving after a
+  // newer one would overwrite the dropdown with stale matches (typing
+  // "charizard" then immediately "pikachu" with a slow first call).
+  state.searchRequestSeq += 1;
+  const requestId = state.searchRequestSeq;
+  const queryAtStart = state.query;
   const limit = state.expanded
     ? EXPANDED_GLOBAL_SEARCH_LIMIT
     : DEFAULT_GLOBAL_SEARCH_LIMIT;
+  let results: GlobalSearchResult[];
   try {
-    state.results = await searchGlobalCards(getDb(), state.query, { limit });
+    results = await searchGlobalCards(getDb(), queryAtStart, { limit });
   } catch {
-    state.results = [];
+    results = [];
   }
+  if (
+    requestId !== state.searchRequestSeq ||
+    queryAtStart !== state.query
+  ) {
+    return; // stale — a newer runSearch has taken over.
+  }
+  state.results = results;
   renderDropdown(refs, state);
 }
 
@@ -557,10 +594,11 @@ function buildPanelActions(status: CardStatus): HTMLElement {
   wishlist.textContent = 'Legg i ønskeliste';
   wrap.appendChild(wishlist);
 
-  if (
-    status.summary.activeWishlistCount > 0 &&
-    status.holdings.length > 0
-  ) {
+  // PR 23 review patch — only show the button when there are actual
+  // matching candidates (cardId + finish), not just "anything active
+  // exists". Prevents dead-end clicks that would only show the
+  // "ingen matchende oppføringer" alert.
+  if (status.summary.receiveCandidateCount > 0) {
     const receive = document.createElement('button');
     receive.type = 'button';
     receive.dataset['action'] = 'receive';

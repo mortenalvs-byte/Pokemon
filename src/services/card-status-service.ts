@@ -36,6 +36,7 @@ import type { LotItemsRepo } from '../repositories/lot-items-repo';
 import type { LotsRepo } from '../repositories/lots-repo';
 import type { SetsRepo } from '../repositories/sets-repo';
 import type { WishlistRepo } from '../repositories/wishlist-repo';
+import { findReceiveCandidatesForHoldings } from './wishlist-receive-service';
 
 export interface CardStatusBinderSlot {
   readonly binder: BinderRecord;
@@ -65,6 +66,14 @@ export interface CardStatus {
     readonly activeWishlistCount: number;
     readonly binderSlotCount: number;
     readonly unmaterialisedLotCount: number;
+    /**
+     * PR 23 review patch — actual receive candidates (cardId + finish
+     * matched), not just "active wishlist exists for cardId". Lets
+     * the panel hide the `Marker mottatt` button when no holding's
+     * finish matches any active wishlist row, so the user never
+     * lands in a dead-end "ingen matchende oppføringer" alert.
+     */
+    readonly receiveCandidateCount: number;
   };
 }
 
@@ -127,6 +136,15 @@ export async function getCardStatus(
     lotItemsAll,
   );
 
+  // PR 23 review patch — only count receive candidates that actually
+  // match holdings on cardId + finish (the same gate Quick Add /
+  // Bulk / Card Detail conflict banner use). Cheap because the
+  // wishlist set is already loaded.
+  const receiveCandidates =
+    holdings.length > 0 && activeWishlist.length > 0
+      ? await findReceiveCandidatesForHoldings(deps.wishlistRepo, holdings)
+      : [];
+
   return {
     card,
     set,
@@ -140,6 +158,7 @@ export async function getCardStatus(
       activeWishlistCount: activeWishlist.length,
       binderSlotCount: binderSlots.length,
       unmaterialisedLotCount: unmaterialisedLotItems.length,
+      receiveCandidateCount: receiveCandidates.length,
     },
   };
 }

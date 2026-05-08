@@ -289,6 +289,83 @@ describe('card-status-service (PR 23)', () => {
     expect(matchedBy).toEqual(['assigned', 'target']);
   });
 
+  it('PR 23 review: receiveCandidateCount counts only finish-matching candidates', async () => {
+    const deps = buildDeps(db);
+    // Holding: holo. Wishlist: reverse_holo. Should NOT match.
+    await deps.holdingsRepo.create({
+      cardId: 'base1-4',
+      quantity: 1,
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      certNumber: null,
+      certUrl: null,
+      gradedDate: null,
+      finish: 'holo',
+      edition: 'unlimited',
+      language: 'en',
+      purchasePrice: null,
+      purchaseCurrency: null,
+      estimatedValue: null,
+      valueCurrency: null,
+      valueSource: 'unknown',
+      valueNote: null,
+      valueUpdatedAt: null,
+      source: 'manual',
+      note: null,
+      specialVariant: false,
+      tags: [],
+      lotId: null,
+      status: 'owned',
+    });
+    await deps.wishlistRepo.create({
+      cardId: 'base1-4',
+      finish: 'reverse_holo',
+      priority: 'medium',
+      targetCondition: null,
+      targetPrice: null,
+      targetCurrency: null,
+      status: 'wanted',
+      note: null,
+    });
+    const status1 = await getCardStatus(deps, 'base1-4');
+    expect(status1.summary.activeWishlistCount).toBe(1);
+    expect(status1.summary.receiveCandidateCount).toBe(0);
+
+    // Add a holo wishlist row → should now have 1 candidate.
+    await deps.wishlistRepo.create({
+      cardId: 'base1-4',
+      finish: 'holo',
+      priority: 'high',
+      targetCondition: null,
+      targetPrice: null,
+      targetCurrency: null,
+      status: 'wanted',
+      note: null,
+    });
+    const status2 = await getCardStatus(deps, 'base1-4');
+    expect(status2.summary.activeWishlistCount).toBe(2);
+    expect(status2.summary.receiveCandidateCount).toBe(1);
+  });
+
+  it('PR 23 review: receiveCandidateCount is 0 when there are no holdings', async () => {
+    const deps = buildDeps(db);
+    await deps.wishlistRepo.create({
+      cardId: 'base1-4',
+      finish: 'holo',
+      priority: 'medium',
+      targetCondition: null,
+      targetPrice: null,
+      targetCurrency: null,
+      status: 'wanted',
+      note: null,
+    });
+    const status = await getCardStatus(deps, 'base1-4');
+    expect(status.summary.activeWishlistCount).toBe(1);
+    expect(status.summary.receiveCandidateCount).toBe(0);
+  });
+
   it('lists unmaterialised lot items only (skips materialised + soft-deleted)', async () => {
     const deps = buildDeps(db);
     const lot = await deps.lotsRepo.create({

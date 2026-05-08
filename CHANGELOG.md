@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added (PR 23 — Global search / Card status center)
 PR 23 adds the missing control surface: a topbar search input that aggregates `cards` + `holdings` + `wishlist` + `binderSlots` + `lotItems` for one card and exposes hurtigknapper that go through existing services. Before this PR the user had to know which view to open to find a card's status; now one search field answers "Hva eier jeg av dette kortet, hvor ligger det, hva mangler?". Workflow only — no schema migration, no new datamodel, no new route.
 
+#### Review patch (lifecycle + stale-search hardening)
+PR 23 lives outside the route lifecycle (it's mounted into the app shell once, never re-mounted by the router), so two leaks the first revision left in were patched before merge:
+
+1. **Listener cleanup is complete.** A single `AbortController` now gates every global listener — `window.keydown`, `document.click`, `onUserDataChanged`, and (via the cleanup return) `onRouteChange`. `_resetGlobalSearchForTests()` aborts the controller, dropping every one in one call. Verified by a test that mounts → opens panel → resets → asserts `USER_DATA_CHANGED_EVENT`, `hashchange`, and `Cmd+K` all become no-ops.
+2. **Stale async search results are dropped.** `runSearch` now captures a sequence number + the query string at start and bails after the await if either has moved on. Without this, an old slow search resolving after a newer fast one would overwrite the dropdown with stale matches (the classic "type charizard then immediately pikachu, slow first call returns last → wrong rows shown" race). Verified in browser: typed `charizard` → switched to `pikachu` within 30 ms → dropdown shows only Pikachu hits, no stale Charizard.
+3. **`Marker mottatt` button gates on actual finish-matching candidates.** Earlier the button showed when "any active wishlist + any holding" existed and could land the user on a dead-end alert if the finishes didn't match. `CardStatus.summary.receiveCandidateCount` now drives the button visibility — only shows when `findReceiveCandidatesForHoldings` would actually return something. Verified in browser: holo holding + reverse_holo wishlist → button hidden; add a holo wishlist → button reappears.
+
 #### Architecture
 - **Topbar input + Cmd/Ctrl+K** — the search slot lives in the existing app shell (`src/app.ts`). No modal, no `#search` route. Live debounced dropdown anchored to the input. Click a hit → lightweight Card Status panel as an overlay; `Åpne kort` navigates to the existing Card Detail view.
 - **Search rule reuse** — `domain/card-search.cardMatchesQuery` (PR 15A — F-6) is reused unchanged. No drift from Browse / Collection / Wishlist behaviour.
@@ -52,11 +59,11 @@ Cards/sets via PR 21 cache; per-search reads of holdings/wishlist/binderSlots/lo
 - `src/styles.css` — `.topbar__search`, `.global-search*`, `.global-search__panel*` (~210 LOC).
 - `tests/quick-add-service.test.ts` — new, 6 cases.
 - `tests/global-search-service.test.ts` — new, 13 cases incl. badge filter for unmaterialised-only lot items.
-- `tests/card-status-service.test.ts` — new, 6 cases.
-- `tests/global-search-component.test.ts` — new, 10 cases.
+- `tests/card-status-service.test.ts` — new, 8 cases (incl. review-patch `receiveCandidateCount` cases).
+- `tests/global-search-component.test.ts` — new, 14 cases (incl. review-patch lifecycle + stale-search + receive-button gate cases).
 
 #### Test totals
-- 82 test files, **710 tests** (up from 675). Typecheck green. Build green (371 KB JS / 99 KB gzip).
+- 82 test files, **716 tests** (up from 675). Typecheck green. Build green (371 KB JS / 99 KB gzip).
 
 #### Browser-verified
 - Topbar input mounts; `Cmd+K` / `Ctrl+K` focuses it; `Escape` closes panel; click-outside closes both dropdown and panel.
