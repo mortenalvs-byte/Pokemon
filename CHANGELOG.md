@@ -8,6 +8,83 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR 23 — Global search / Card status center)
+PR 23 adds the missing control surface: a topbar search input that aggregates `cards` + `holdings` + `wishlist` + `binderSlots` + `lotItems` for one card and exposes hurtigknapper that go through existing services. Before this PR the user had to know which view to open to find a card's status; now one search field answers "Hva eier jeg av dette kortet, hvor ligger det, hva mangler?". Workflow only — no schema migration, no new datamodel, no new route.
+
+#### Review patch (lifecycle + stale-search hardening)
+PR 23 lives outside the route lifecycle (it's mounted into the app shell once, never re-mounted by the router), so two leaks the first revision left in were patched before merge:
+
+1. **Listener cleanup is complete.** A single `AbortController` now gates every global listener — `window.keydown`, `document.click`, `onUserDataChanged`, and (via the cleanup return) `onRouteChange`. `_resetGlobalSearchForTests()` aborts the controller, dropping every one in one call. Verified by a test that mounts → opens panel → resets → asserts `USER_DATA_CHANGED_EVENT`, `hashchange`, and `Cmd+K` all become no-ops.
+2. **Stale async search results are dropped.** `runSearch` now captures a sequence number + the query string at start and bails after the await if either has moved on. Without this, an old slow search resolving after a newer fast one would overwrite the dropdown with stale matches (the classic "type charizard then immediately pikachu, slow first call returns last → wrong rows shown" race). Verified in browser: typed `charizard` → switched to `pikachu` within 30 ms → dropdown shows only Pikachu hits, no stale Charizard.
+3. **`Marker mottatt` button gates on actual finish-matching candidates.** Earlier the button showed when "any active wishlist + any holding" existed and could land the user on a dead-end alert if the finishes didn't match. `CardStatus.summary.receiveCandidateCount` now drives the button visibility — only shows when `findReceiveCandidatesForHoldings` would actually return something. Verified in browser: holo holding + reverse_holo wishlist → button hidden; add a holo wishlist → button reappears.
+
+#### Architecture
+- **Topbar input + Cmd/Ctrl+K** — the search slot lives in the existing app shell (`src/app.ts`). No modal, no `#search` route. Live debounced dropdown anchored to the input. Click a hit → lightweight Card Status panel as an overlay; `Åpne kort` navigates to the existing Card Detail view.
+- **Search rule reuse** — `domain/card-search.cardMatchesQuery` (PR 15A — F-6) is reused unchanged. No drift from Browse / Collection / Wishlist behaviour.
+- **No view-internal cross-imports** — Quick Add was lifted out of `views/browse.ts` into a new shared helper so global search uses the same pure path. Browse continues to handle its own DOM-side feedback chip; the helper does the repo write + receive-candidate lookup.
+
+#### New shared services
+- `src/services/quick-add-service.ts` — `quickAddRawCard(deps, card)`: runs `decideQuickAdd` → `holdingsRepo.upsertByVariant` → `findWishlistReceiveCandidates`. Throws `QuickAddNotEligibleError` on cards without verified variants. Used by global search now; Browse can migrate later without scope creep.
+- `src/services/global-search-service.ts` — `searchGlobalCards(db, query, { limit })`. Builds `Set` indexes once for owned / active wishlist / binder / unmaterialised lot, then walks the cards-cache (PR 21) once. Default limit 20, expanded 100. Ranking: exact id (1000) → compound query (200) → owned (60) → active wishlist (30) → in binder (10) → unmaterialised lot (5) → name-startsWith (25) → set release year capped to ±25..40.
+- `src/services/card-status-service.ts` — `getCardStatus(deps, cardId)`: aggregates per-card holdings (live), wishlist (active vs closed), unmaterialised lot items, and binder slots (delegated to PR 17's `binder-slot-service.slotsForCardId`). Throws `CardStatusNotFoundError` for unknown ids.
+
+#### Component
+- `src/components/global-search.ts` — topbar input + dropdown + status panel. Cmd/Ctrl+K focus, Escape closes, click-outside closes (with `stopPropagation` on dropdown/panel clicks so the document-level outside-click handler can't race the row click and close the panel before status loads). `USER_DATA_CHANGED_EVENT` refreshes any open panel + the dropdown badges. Route changes close everything. Idempotent per slot (`dataset.globalSearchMounted` flag) so test harnesses can re-mount.
+
+#### Hurtigknapper i panelet
+- `Åpne kort` → `navigateToCard(cardId)`
+- `+1 raw` → `quickAddRawCard` + opens receive prompt when active wishlist matches
+- `Legg i ønskeliste` → `openDialog(buildWishlistForm({ mode: 'add', cardId }))`
+- `Marker mottatt` (only when both holdings AND active wishlist exist) → `findReceiveCandidatesForHoldings` + `openWishlistReceivePrompt`
+- `Gå til side X.Y` per binder-slot → `navigateToBinderSlot(binderId, slotId)` (PR 17 deep-link)
+- `Åpne lot` per unmaterialised lot-item → `navigateToLot(lotId)`
+
+#### Performance contract
+Cards/sets via PR 21 cache; per-search reads of holdings/wishlist/binderSlots/lotItems built into O(1) Set indexes. Status panel delegates binder lookup to `binder-slot-service.slotsForCardId`.
+
+| Operation | Measured | Target |
+|-----------|---------:|-------:|
+| Cold global search over 20 237 cards | **173 ms** | < 600 ms |
+| Warm global search (cards/sets cache hit) | **22 ms** | < 50 ms |
+| Warm second search (different query) | **21 ms** | < 50 ms |
+| Cold status panel load (real data + binder-slot service) | **~611 ms** | bounded by binder-slot service, acceptable for one-time per-card load |
+
+#### Touched / new files
+- `src/services/quick-add-service.ts` — new.
+- `src/services/global-search-service.ts` — new.
+- `src/services/card-status-service.ts` — new.
+- `src/components/global-search.ts` — new.
+- `src/repositories/lot-items-repo.ts` — added `listByCardId(cardId)` using the existing `cardId` index from `db/schema.ts`. No schema migration.
+- `src/app.ts` — topbar shell now has a `data-region="topbar-search"` slot; `setupTopbar` mounts the global-search component there.
+- `src/styles.css` — `.topbar__search`, `.global-search*`, `.global-search__panel*` (~210 LOC).
+- `tests/quick-add-service.test.ts` — new, 6 cases.
+- `tests/global-search-service.test.ts` — new, 13 cases incl. badge filter for unmaterialised-only lot items.
+- `tests/card-status-service.test.ts` — new, 8 cases (incl. review-patch `receiveCandidateCount` cases).
+- `tests/global-search-component.test.ts` — new, 14 cases (incl. review-patch lifecycle + stale-search + receive-button gate cases).
+
+#### Test totals
+- 82 test files, **716 tests** (up from 675). Typecheck green. Build green (371 KB JS / 99 KB gzip).
+
+#### Browser-verified
+- Topbar input mounts; `Cmd+K` / `Ctrl+K` focuses it; `Escape` closes panel; click-outside closes both dropdown and panel.
+- Search "charizard" over the 20 237-card stress cache → 20 hits in 173 ms cold, 22 ms warm. First Charizard hit shows badges `Eid` + `Lot` matching the live data.
+- Click hit → status panel opens with section counts (Dine kort / Permer / Ønskeliste / Ufordelte lot-items). `+1 raw` on Pokémon Center (base4-114, previously unowned) wrote the holding (0 → 1).
+- After Quick Add, the panel is refreshed via `USER_DATA_CHANGED_EVENT`.
+- Lot badge fires only for unmaterialised items so the dropdown badge matches what the panel shows (badge said `Lot`, panel showed `Ufordelte lot-items` — tests + the live data confirmed the match).
+
+#### Out of scope (per the user's instruction)
+- ❌ Pricing / value layer
+- ❌ CSV import
+- ❌ Schema migration / new wishlist fields (edition, language)
+- ❌ Binder direct-add / auto-assign holdings (PR #24)
+- ❌ Master set gap analysis (PR #25)
+- ❌ Bulk operations from search
+- ❌ Dedicated `#search` route
+- ❌ Search history / saved searches
+- ❌ Note search (holdings / wishlist / lot notes)
+- ❌ Cross-page keyboard result navigation
+- ❌ Virtualised result list — top 100 covers v1
+
 ### Added (PR 22 — Wishlist receive flow / active vs closed)
 PR 22 closes the wishlist workflow loop: when a card lands in holdings, the app now offers to flip the matching wishlist row to `received`. Before this PR, a card could be both "owned" and "wanted/ordered" with no built-in path to close the wishlist entry; in long sessions that drift turned the wishlist into noise. Workflow only — no new datamodel, no schema migration.
 

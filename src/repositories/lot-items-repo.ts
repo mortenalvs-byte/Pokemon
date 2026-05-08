@@ -20,6 +20,13 @@ export interface LotItemsRepo {
   list(): Promise<LotItemRecord[]>;
   listLive(): Promise<LotItemRecord[]>;
   listByLotId(lotId: string): Promise<LotItemRecord[]>;
+  /**
+   * PR 23 — uses the `cardId` index already declared in
+   * `db/schema.ts`. Returns both live and soft-deleted entries; the
+   * caller (card-status-service) filters further if it only wants
+   * live unmaterialised items.
+   */
+  listByCardId(cardId: string): Promise<LotItemRecord[]>;
   update(id: string, changes: Partial<LotItemInput>): Promise<LotItemRecord>;
   softDelete(id: string, reason?: string): Promise<void>;
   restore(id: string, reason?: string): Promise<void>;
@@ -63,6 +70,10 @@ export function createLotItemsRepo(db: PokemonTrackerDB): LotItemsRepo {
 
     async listByLotId(lotId) {
       return db.lotItems.where('lotId').equals(lotId).toArray();
+    },
+
+    async listByCardId(cardId) {
+      return db.lotItems.where('cardId').equals(cardId).toArray();
     },
 
     async update(id, changes) {

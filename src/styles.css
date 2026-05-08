@@ -95,6 +95,304 @@ body {
   gap: var(--space-2);
 }
 
+/* PR 23 — global search slot in the topbar. Sits between brand and
+   status chip, takes the available space, and hosts the dropdown +
+   panel as absolutely-positioned overlays anchored to the slot. */
+.topbar__search {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  padding: 0 var(--space-4);
+  position: relative;
+}
+
+.global-search {
+  width: 100%;
+  max-width: 560px;
+  position: relative;
+}
+
+.global-search__form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: 0 var(--space-2);
+}
+
+.global-search__input {
+  flex: 1 1 auto;
+  border: none;
+  background: transparent;
+  outline: none;
+  height: 32px;
+  font-size: 13px;
+  color: var(--color-fg);
+}
+
+.global-search__clear {
+  border: none;
+  background: transparent;
+  color: var(--color-fg-muted);
+  font-size: 16px;
+  cursor: pointer;
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+}
+
+.global-search__clear:hover {
+  background: var(--color-bg-soft, #eee);
+}
+
+.global-search__dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  z-index: 80;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.global-search__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.global-search__row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2);
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.global-search__row:last-child {
+  border-bottom: none;
+}
+
+.global-search__row:hover,
+.global-search__row:focus {
+  background: var(--color-bg-soft, #f4f4f4);
+  outline: none;
+}
+
+.global-search__thumb-img {
+  width: 32px;
+  height: 44px;
+  object-fit: contain;
+}
+
+.global-search__title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.global-search__sub {
+  color: var(--color-fg-muted);
+  font-size: 12px;
+}
+
+.global-search__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.global-search__badge {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+.global-search__more {
+  width: 100%;
+  border: none;
+  background: var(--color-bg-soft, #f4f4f4);
+  color: var(--color-fg);
+  padding: var(--space-2);
+  cursor: pointer;
+  font-size: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.global-search__more:hover {
+  background: var(--color-border);
+}
+
+.global-search__empty {
+  margin: 0;
+  padding: var(--space-3);
+  text-align: center;
+  color: var(--color-fg-muted);
+  font-size: 13px;
+}
+
+/* Card status panel — overlay below the dropdown. */
+.global-search__panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  z-index: 90;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: var(--space-3);
+}
+
+.global-search__panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.global-search__panel-header {
+  display: grid;
+  grid-template-columns: auto 60px 1fr;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.global-search__panel-close {
+  border: none;
+  background: transparent;
+  color: var(--color-fg-muted);
+  font-size: 22px;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.global-search__panel-image {
+  width: 60px;
+  height: 84px;
+  object-fit: contain;
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.global-search__panel-meta {
+  grid-column: 3;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.global-search__panel-meta h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.global-search__panel-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.global-search__panel-rarity {
+  margin: 0;
+  font-size: 12px;
+}
+
+.global-search__panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.global-search__panel-actions button {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.global-search__panel-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.global-search__panel-actions button:hover:not(:disabled) {
+  background: var(--color-bg-soft, #f4f4f4);
+}
+
+.global-search__panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.global-search__panel-section h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.global-search__panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.global-search__panel-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.global-search__panel-action {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  padding: 2px 8px;
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.global-search__panel-action:hover {
+  background: var(--color-bg-soft, #f4f4f4);
+}
+
+.global-search__panel-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.global-search__panel-loading,
+.global-search__panel-error {
+  margin: 0;
+  font-size: 13px;
+  text-align: center;
+  color: var(--color-fg-muted);
+}
+
 /* Layout grid */
 
 .layout {
