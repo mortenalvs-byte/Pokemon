@@ -8,13 +8,24 @@ import { mountDashboardView } from './views/dashboard';
 import { mountLotDetailView } from './views/lot-detail';
 import { mountLotsView } from './views/lots';
 import { mountMasterGapView } from './views/master-gap';
-import { mountSettingsView, SYNC_STATUS_CHANGED_EVENT } from './views/settings';
+import {
+  mountSettingsView,
+  SETTINGS_CHANGED_EVENT,
+  SYNC_STATUS_CHANGED_EVENT,
+} from './views/settings';
 import { mountWishlistView } from './views/wishlist';
 import { mountGlobalSearch } from './components/global-search';
 import { mountKeyboardShortcuts } from './components/keyboard-shortcuts';
+import { mountKeyboardShortcutsHelp } from './components/keyboard-shortcuts-help';
 import { getCurrentRoute, onRouteChange, type Route } from './router';
 import { APP_META_KEYS } from './domain/types';
+import {
+  DEFAULT_PERSONAL_PREFERENCES,
+  type PersonalStartRoute,
+} from './domain/personal-preferences';
 import { getDb } from './db/database';
+import { createSettingsRepo } from './repositories/settings-repo';
+import { createPersonalPreferencesService } from './services/personal-preferences-service';
 
 // Each view receives an AbortSignal that the router aborts before
 // mounting the next view. Mounts use the signal on `addEventListener`
@@ -55,6 +66,15 @@ const NAV_LINKS: readonly NavLink[] = [
 
 export function mountApp(root: HTMLElement): void {
   root.innerHTML = renderShell();
+  // PR 27 — apply personal preferences AFTER the shell is in place so
+  // the brand text/href reflect the user's choices on first paint.
+  // Default-start-route runs before `renderActiveView()` so the empty
+  // hash case lands on the right view immediately, not after a
+  // re-render. Both paths are async + best-effort; the app keeps
+  // working with the shipped fallback brand if the settings read
+  // throws.
+  void applyPersonalPreferencesToShell();
+  applyDefaultStartRouteIfEmpty();
   renderActiveView();
   updateNavActive();
   setupTopbar();
@@ -62,10 +82,83 @@ export function mountApp(root: HTMLElement): void {
   // mountApp() call (test re-mount) doesn't double-register the
   // global keydown listener.
   mountKeyboardShortcuts();
+  // PR 27 — Snarveier-knapp i topbar (gated on showShortcutHints).
+  void mountKeyboardShortcutsHelp();
+  // PR 27 — refresh brand + shortcut-help visibility when the user
+  // saves personal preferences. We never re-mount the whole app.
+  window.addEventListener(SETTINGS_CHANGED_EVENT, () => {
+    void applyPersonalPreferencesToShell();
+    void mountKeyboardShortcutsHelp();
+  });
   onRouteChange(() => {
     renderActiveView();
     updateNavActive();
   });
+}
+
+// ---------------------------------------------------------------------
+// PR 27 — personal preferences glue for the shell.
+
+async function applyPersonalPreferencesToShell(): Promise<void> {
+  const fallbackName = DEFAULT_PERSONAL_PREFERENCES.appDisplayName;
+  const fallbackRoute: PersonalStartRoute =
+    DEFAULT_PERSONAL_PREFERENCES.defaultStartRoute;
+  let displayName = fallbackName;
+  let startRoute: PersonalStartRoute = fallbackRoute;
+  try {
+    const svc = createPersonalPreferencesService(
+      createSettingsRepo(getDb()),
+    );
+    const prefs = await svc.getPreferences();
+    displayName = prefs.appDisplayName;
+    startRoute = prefs.defaultStartRoute;
+  } catch {
+    // Fall back; brand stays on its shipped default.
+  }
+  const brand = document.querySelector<HTMLAnchorElement>(
+    '[data-region="topbar-brand"]',
+  );
+  if (brand !== null) {
+    brand.textContent = displayName;
+    brand.setAttribute('href', `#${startRoute}`);
+  }
+}
+
+const DEEP_LINK_PREFIXES = [
+  'card/',
+  'binder/',
+  'lot/',
+  'master-gap/',
+] as const;
+
+function applyDefaultStartRouteIfEmpty(): void {
+  // We only intervene when the user opens the app with NO hash. A
+  // bare `#dashboard` or any deep link is left alone. Reading the
+  // setting synchronously is not possible (settingsRepo is async),
+  // so we read it best-effort and patch the hash if the route
+  // changed by the time we resolve. The patched hash is itself a
+  // sidebar route, never a deep link.
+  const initialHash = window.location.hash.slice(1);
+  if (initialHash !== '') return; // user picked a route already
+  // Kick off async resolution; if it succeeds AND the user hasn't
+  // navigated in the meantime, navigate.
+  void (async () => {
+    try {
+      const svc = createPersonalPreferencesService(
+        createSettingsRepo(getDb()),
+      );
+      const prefs = await svc.getPreferences();
+      // Re-check current hash before navigating — a deep link may
+      // have arrived between our read kick-off and resolve.
+      const live = window.location.hash.slice(1);
+      if (live !== '') return;
+      if (DEEP_LINK_PREFIXES.some((p) => live.startsWith(p))) return;
+      if (prefs.defaultStartRoute === 'dashboard') return; // no-op
+      window.location.hash = prefs.defaultStartRoute;
+    } catch {
+      // Fall back: dashboard is the default route already.
+    }
+  })();
 }
 
 // PR 26 — sidebar nav links advertise their keyboard shortcut via

@@ -12,6 +12,7 @@
 // other actions are pure navigation links.
 
 import { onUserDataChanged } from '../components/events';
+import { buildPersonalWorkspaceSummary } from '../components/personal-workspace-summary';
 import { getDb } from '../db/database';
 import {
   filterStripItems,
@@ -19,6 +20,10 @@ import {
   type ActionSeverity,
 } from '../domain/dashboard-actions';
 import type { MasterGapDashboardSummary } from '../domain/master-set-gap';
+import {
+  DEFAULT_PERSONAL_PREFERENCES,
+  type PersonalPreferences,
+} from '../domain/personal-preferences';
 import { createAppMetaRepo } from '../repositories/app-meta-repo';
 import { createBindersRepo } from '../repositories/binders-repo';
 import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
@@ -27,6 +32,7 @@ import { createHoldingsRepo } from '../repositories/holdings-repo';
 import { createLotItemsRepo } from '../repositories/lot-items-repo';
 import { createLotsRepo } from '../repositories/lots-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
+import { createSettingsRepo } from '../repositories/settings-repo';
 import { createWishlistRepo } from '../repositories/wishlist-repo';
 import {
   navigate,
@@ -35,7 +41,13 @@ import {
   navigateToMasterGap,
   navigateToMasterGapBinder,
 } from '../router';
+import {
+  buildCommandCenterItems,
+  type CommandCenterItem,
+  type CommandCenterItemSeverity,
+} from '../services/command-center-service';
 import { createMasterSetGapService } from '../services/master-set-gap-service';
+import { createPersonalPreferencesService } from '../services/personal-preferences-service';
 import {
   createDashboardService,
   type BindersSection,
@@ -114,6 +126,16 @@ async function renderInto(container: HTMLElement): Promise<void> {
   loading.remove();
 
   root.appendChild(buildActionStrip(snapshot));
+
+  // PR 27 — command center + personal workspace summary. Both are
+  // lazy-fed: scaffold paints first, the master-gap summary populates
+  // them when it resolves so the main dashboard render stays fast.
+  const commandCenter = buildCommandCenterSkeleton();
+  root.appendChild(commandCenter);
+  const personalSummarySlot = document.createElement('div');
+  personalSummarySlot.dataset['region'] = 'personal-workspace-summary-slot';
+  root.appendChild(personalSummarySlot);
+
   const grid = document.createElement('div');
   grid.className = 'dashboard-view__grid';
   grid.appendChild(buildDatabaseHealthCard(snapshot));
@@ -126,7 +148,11 @@ async function renderInto(container: HTMLElement): Promise<void> {
   // renders a skeleton, then runs the gap service in the background.
   const masterGapCard = buildMasterGapCardSkeleton();
   grid.appendChild(masterGapCard);
-  void populateMasterGapCard(masterGapCard);
+  void populateMasterGapCard(masterGapCard, {
+    snapshot,
+    commandCenter,
+    personalSummarySlot,
+  });
   grid.appendChild(buildLotsCard(snapshot));
   grid.appendChild(buildWishlistCard(snapshot));
   root.appendChild(grid);
@@ -471,10 +497,21 @@ function buildMasterGapCardSkeleton(): HTMLElement {
   return card;
 }
 
-async function populateMasterGapCard(card: HTMLElement): Promise<void> {
+async function populateMasterGapCard(
+  card: HTMLElement,
+  hooks: {
+    snapshot: DashboardSnapshot;
+    commandCenter: HTMLElement;
+    personalSummarySlot: HTMLElement;
+  },
+): Promise<void> {
   let summary: MasterGapDashboardSummary;
+  let prefs: PersonalPreferences = DEFAULT_PERSONAL_PREFERENCES;
   try {
     const db = getDb();
+    prefs = await createPersonalPreferencesService(
+      createSettingsRepo(db),
+    ).getPreferences();
     summary = await createMasterSetGapService({
       bindersRepo: createBindersRepo(db),
       binderSlotsRepo: createBinderSlotsRepo(db),
@@ -485,19 +522,37 @@ async function populateMasterGapCard(card: HTMLElement): Promise<void> {
       lotItemsRepo: createLotItemsRepo(db),
     }).buildDashboardSummary();
   } catch (caught) {
-    if (!card.isConnected) return;
-    const loading = card.querySelector<HTMLElement>(
-      '[data-region="master-gap-loading"]',
-    );
-    loading?.remove();
-    const err = document.createElement('p');
-    err.className = 'dashboard-card__warning';
-    err.dataset['region'] = 'master-gap-error';
-    err.textContent =
-      caught instanceof Error
-        ? `Kunne ikke laste master gap: ${caught.message}`
-        : 'Kunne ikke laste master gap.';
-    card.appendChild(err);
+    if (card.isConnected) {
+      const loading = card.querySelector<HTMLElement>(
+        '[data-region="master-gap-loading"]',
+      );
+      loading?.remove();
+      const err = document.createElement('p');
+      err.className = 'dashboard-card__warning';
+      err.dataset['region'] = 'master-gap-error';
+      err.textContent =
+        caught instanceof Error
+          ? `Kunne ikke laste master gap: ${caught.message}`
+          : 'Kunne ikke laste master gap.';
+      card.appendChild(err);
+    }
+    // PR 27 — even when master gap failed we can still surface a
+    // dashboard-only command center (collection / backup / sync).
+    populateCommandCenter(hooks.commandCenter, {
+      masterGap: null,
+      dashboard: hooks.snapshot,
+      preferences: prefs,
+    });
+    populatePersonalWorkspaceSummary(hooks.personalSummarySlot, {
+      preferences: prefs,
+      dashboard: hooks.snapshot,
+      masterGap: null,
+      commandCenter: buildCommandCenterItems({
+        masterGap: null,
+        dashboard: hooks.snapshot,
+        preferences: prefs,
+      }),
+    });
     return;
   }
   if (!card.isConnected) return;
@@ -513,6 +568,24 @@ async function populateMasterGapCard(card: HTMLElement): Promise<void> {
     empty.textContent =
       'Ingen permer ennå. Lag en perm for å se master gap-analyse.';
     card.appendChild(empty);
+    // PR 27 — even with no binders the rest of the dashboard
+    // (command center + workspace summary) should still render so
+    // the user sees their app name and any non-master-gap signals.
+    populateCommandCenter(hooks.commandCenter, {
+      masterGap: summary,
+      dashboard: hooks.snapshot,
+      preferences: prefs,
+    });
+    populatePersonalWorkspaceSummary(hooks.personalSummarySlot, {
+      preferences: prefs,
+      dashboard: hooks.snapshot,
+      masterGap: summary,
+      commandCenter: buildCommandCenterItems({
+        masterGap: summary,
+        dashboard: hooks.snapshot,
+        preferences: prefs,
+      }),
+    });
     return;
   }
 
@@ -565,6 +638,144 @@ async function populateMasterGapCard(card: HTMLElement): Promise<void> {
     weak.addEventListener('click', () => navigateToMasterGapBinder(weakestId));
     card.appendChild(weak);
   }
+
+  // PR 27 — feed the (already rendered) command center + personal
+  // workspace summary now that we have the full master-gap summary.
+  const items = buildCommandCenterItems({
+    masterGap: summary,
+    dashboard: hooks.snapshot,
+    preferences: prefs,
+  });
+  populateCommandCenter(hooks.commandCenter, {
+    masterGap: summary,
+    dashboard: hooks.snapshot,
+    preferences: prefs,
+  });
+  populatePersonalWorkspaceSummary(hooks.personalSummarySlot, {
+    preferences: prefs,
+    dashboard: hooks.snapshot,
+    masterGap: summary,
+    commandCenter: items,
+  });
+}
+
+// ---------------------------------------------------------------------
+// PR 27 — command center skeleton + populate.
+
+const COMMAND_CENTER_SEVERITY_CLASS: Record<
+  CommandCenterItemSeverity,
+  string
+> = {
+  critical: 'status-chip status-chip--danger',
+  warning: 'status-chip status-chip--warning',
+  info: 'status-chip status-chip--info',
+  success: 'status-chip status-chip--success',
+};
+
+function buildCommandCenterSkeleton(): HTMLElement {
+  const wrap = document.createElement('section');
+  wrap.className = 'dashboard-command-center';
+  wrap.dataset['region'] = 'command-center';
+
+  const heading = document.createElement('h2');
+  heading.className = 'dashboard-command-center__heading';
+  heading.textContent = 'Arbeidskø';
+  wrap.appendChild(heading);
+
+  const subtitle = document.createElement('p');
+  subtitle.className = 'dashboard-command-center__subtitle';
+  subtitle.textContent =
+    'Personlig prioritert liste over det som bør ryddes først.';
+  wrap.appendChild(subtitle);
+
+  const list = document.createElement('ul');
+  list.className = 'dashboard-command-center__list';
+  list.dataset['region'] = 'command-center-list';
+  wrap.appendChild(list);
+
+  const loading = document.createElement('p');
+  loading.className = 'dashboard-command-center__loading';
+  loading.dataset['region'] = 'command-center-loading';
+  loading.textContent = 'Bygger arbeidskø …';
+  wrap.appendChild(loading);
+
+  return wrap;
+}
+
+function populateCommandCenter(
+  wrap: HTMLElement,
+  input: Parameters<typeof buildCommandCenterItems>[0],
+): void {
+  if (!wrap.isConnected) return;
+  const list = wrap.querySelector<HTMLElement>(
+    '[data-region="command-center-list"]',
+  );
+  const loading = wrap.querySelector<HTMLElement>(
+    '[data-region="command-center-loading"]',
+  );
+  loading?.remove();
+  if (list === null) return;
+  list.replaceChildren();
+  const items = buildCommandCenterItems(input);
+  if (items.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'dashboard-command-center__empty';
+    empty.textContent = 'Ingen ventende oppgaver akkurat nå.';
+    list.appendChild(empty);
+    return;
+  }
+  for (const item of items) {
+    list.appendChild(buildCommandCenterItem(item));
+  }
+}
+
+function buildCommandCenterItem(item: CommandCenterItem): HTMLElement {
+  const li = document.createElement('li');
+  li.className = `dashboard-command-center__item dashboard-command-center__item--${item.severity}`;
+  li.dataset['kind'] = item.kind;
+  li.dataset['severity'] = item.severity;
+
+  const chip = document.createElement('span');
+  chip.className = COMMAND_CENTER_SEVERITY_CLASS[item.severity];
+  chip.textContent = item.severity;
+  li.appendChild(chip);
+
+  const body = document.createElement('div');
+  body.className = 'dashboard-command-center__body';
+  const title = document.createElement('p');
+  title.className = 'dashboard-command-center__title';
+  title.textContent = item.title;
+  body.appendChild(title);
+  const message = document.createElement('p');
+  message.className = 'dashboard-command-center__message';
+  message.textContent = item.message;
+  body.appendChild(message);
+  li.appendChild(body);
+
+  if (item.target.type === 'hash') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'dashboard-command-center__action';
+    button.dataset['action'] = 'command-center-action';
+    button.dataset['hash'] = item.target.hash;
+    button.textContent = item.actionLabel;
+    const targetHash = item.target.hash;
+    button.addEventListener('click', () => {
+      window.location.hash = targetHash;
+    });
+    li.appendChild(button);
+  }
+  return li;
+}
+
+function populatePersonalWorkspaceSummary(
+  slot: HTMLElement,
+  input: Parameters<typeof buildPersonalWorkspaceSummary>[0],
+): void {
+  if (!slot.isConnected) return;
+  slot.replaceChildren();
+  if (!input.preferences.showPersonalWorkspaceSummary) return;
+  slot.appendChild(buildPersonalWorkspaceSummary(input));
 }
 
 function buildLotsCard(snapshot: DashboardSnapshot): HTMLElement {

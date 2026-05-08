@@ -4220,3 +4220,215 @@ body {
     margin-left: 0;
   }
 }
+
+/* ========================================================== */
+/* PR 27 — Personal command center                              */
+/* ========================================================== */
+
+.dashboard-view__workspace + .dashboard-strip {
+  margin-top: var(--space-2);
+}
+
+.dashboard-command-center {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+}
+
+.dashboard-command-center__heading {
+  margin: 0 0 var(--space-1);
+  font-size: 18px;
+}
+
+.dashboard-command-center__subtitle {
+  margin: 0 0 var(--space-3);
+  font-size: 13px;
+  color: var(--color-fg-muted);
+}
+
+.dashboard-command-center__loading,
+.dashboard-command-center__empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-fg-muted);
+  font-style: italic;
+}
+
+.dashboard-command-center__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.dashboard-command-center__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+}
+
+.dashboard-command-center__item--critical {
+  border-left: 3px solid var(--color-danger, #b00020);
+}
+
+.dashboard-command-center__item--warning {
+  border-left: 3px solid var(--color-accent);
+}
+
+.dashboard-command-center__item--info {
+  border-left: 3px solid var(--color-fg-muted);
+}
+
+.dashboard-command-center__item--success {
+  border-left: 3px solid var(--color-success, #007a4d);
+}
+
+.dashboard-command-center__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dashboard-command-center__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.dashboard-command-center__message {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-fg-muted);
+}
+
+.dashboard-command-center__action {
+  padding: 6px 12px;
+  font-size: 13px;
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border: none;
+  border-radius: var(--radius-1);
+  cursor: pointer;
+}
+
+.dashboard-command-center__action:hover {
+  filter: brightness(1.05);
+}
+
+/* Personal workspace summary */
+
+.personal-workspace-summary {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+}
+
+.personal-workspace-summary__heading {
+  margin: 0 0 var(--space-2);
+  font-size: 16px;
+}
+
+.personal-workspace-summary__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-2);
+}
+
+.personal-workspace-summary__stats dt {
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  margin: 0;
+}
+
+.personal-workspace-summary__stats dd {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.personal-workspace-summary__next {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-fg);
+}
+
+/* Master-gap preferences feedback */
+
+.master-gap-view__feedback {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.master-gap-view__feedback--error {
+  color: var(--color-danger, #b00020);
+}
+
+/* Settings — Personlig app */
+
+.settings-view__field--inline {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-view__field--inline input[type="checkbox"] {
+  margin: 0;
+}
+
+/* Topbar shortcut-help button */
+
+.topbar__shortcut-help {
+  padding: 4px 10px;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  color: var(--color-fg);
+}
+
+.topbar__shortcut-help:hover {
+  background: var(--color-surface);
+}
+
+/* Shortcuts help dialog body */
+
+.shortcuts-help h2 {
+  margin: 0 0 var(--space-3);
+  font-size: 18px;
+}
+
+.shortcuts-help__list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.shortcuts-help__list dt {
+  margin: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+}
+
+.shortcuts-help__list dd {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-fg);
+}

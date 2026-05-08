@@ -116,6 +116,13 @@ export interface MasterGapDashboardSummary {
   readonly complete: number;
   readonly missing: number;
   readonly ownedUnplaced: number;
+  /**
+   * PR 27 — aggregated `ambiguous_owned` count across binders. Only
+   * an aggregate (per-binder counts already exist in
+   * `MasterGapBinderSummary.ambiguousOwned`); the classification rules
+   * from PR 25 are unchanged. Used by the dashboard command center.
+   */
+  readonly ambiguousOwned: number;
   readonly wishlistWanted: number;
   readonly wishlistOrdered: number;
   readonly inLotUnmaterialized: number;
@@ -585,6 +592,7 @@ export function buildDashboardSummary(
       complete: 0,
       missing: 0,
       ownedUnplaced: 0,
+      ambiguousOwned: 0,
       wishlistWanted: 0,
       wishlistOrdered: 0,
       inLotUnmaterialized: 0,
@@ -600,6 +608,7 @@ export function buildDashboardSummary(
   let complete = 0;
   let missing = 0;
   let ownedUnplaced = 0;
+  let ambiguousOwned = 0;
   let wishlistWanted = 0;
   let wishlistOrdered = 0;
   let inLotUnmaterialized = 0;
@@ -610,6 +619,7 @@ export function buildDashboardSummary(
     complete += b.complete;
     missing += b.missing;
     ownedUnplaced += b.ownedUnplaced;
+    ambiguousOwned += b.ambiguousOwned;
     wishlistWanted += b.wishlistWanted;
     wishlistOrdered += b.wishlistOrdered;
     inLotUnmaterialized += b.inLotUnmaterialized;
@@ -653,6 +663,7 @@ export function buildDashboardSummary(
     complete,
     missing,
     ownedUnplaced,
+    ambiguousOwned,
     wishlistWanted,
     wishlistOrdered,
     inLotUnmaterialized,
