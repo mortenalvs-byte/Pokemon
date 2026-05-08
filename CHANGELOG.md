@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added (PR 22 — Wishlist receive flow / active vs closed)
 PR 22 closes the wishlist workflow loop: when a card lands in holdings, the app now offers to flip the matching wishlist row to `received`. Before this PR, a card could be both "owned" and "wanted/ordered" with no built-in path to close the wishlist entry; in long sessions that drift turned the wishlist into noise. Workflow only — no new datamodel, no schema migration.
 
+#### Review patch — Card Detail banner respects finish
+The first revision of the conflict banner pulled holdings + active wishlist for the cardId only and offered to mark them all received in one click. That broke the PR 22 match rule (`cardId + finish`). With it, owning Charizard `normal` + wishing Charizard `reverse_holo` would surface a banner that, when confirmed, would close the `reverse_holo` row even though the user never received that variant.
+
+Patched before merge:
+- `buildOwnedActiveWishlistBanner` now routes through `findReceiveCandidatesForHoldings(wishlistRepo, liveHoldings)` — the same shared helper Quick Add / Bulk Add / Lot Materialise use. The banner only appears when at least one candidate matches `cardId + finish + active + live`, and it carries exactly those candidates.
+- The banner button no longer auto-marks. It opens the existing receive prompt with the matched candidates so the user keeps the same checkbox UX (`exact` checked, `condition_mismatch` unchecked) as the rest of the receive flow.
+- Per-row `Marker mottatt` on the Card Detail wishlist table stays as a direct action — that one is an explicit single-row click, so re-opening the prompt would be friction without payoff.
+- Three new tests in `tests/card-detail-with-wishlist.test.ts`: owned `normal` + wishlist `reverse_holo` hides the banner; owned `holo` + multi-finish wishlist surfaces only the `holo` candidate in the prompt; `condition_mismatch` candidate appears unchecked and is left active when submitted as-is.
+- Browser-verified: with two holdings (`normal` + `holo`) and two wishlists (`normal` + `holo`), banner reads "Marker 2 som mottatt" and the prompt lists both ids; with only `normal` holding + only `holo` wishlist, banner is hidden.
+
 #### Definitions (locked in `src/domain/wishlist-status.ts`)
 - **Aktiv wishlist:** `wanted | ordered`
 - **Lukket wishlist:** `received | cancelled`
@@ -53,10 +63,10 @@ PR 22 closes the wishlist workflow loop: when a card lands in holdings, the app 
 - `src/styles.css` — `.browse-table__action--success`, `.card-detail-view__conflict*`, `.wishlist-receive-prompt*`, `.browse-view__bulk-summary-receive`.
 - `tests/wishlist-receive-service.test.ts` — new, 19 cases.
 - `tests/wishlist-view.test.ts` — 3 new cases (counts split, per-row gating, click flips status).
-- `tests/card-detail-with-wishlist.test.ts` — 4 new cases (banner shown, hidden when no holdings, hidden when wishlist already closed, click flips status, per-row gating).
+- `tests/card-detail-with-wishlist.test.ts` — 8 new cases: banner shown when both exist, hidden when no holdings, hidden when wishlist already closed, click opens prompt + submitting flips status, per-row gating, **review patch — wrong-finish hides banner, multi-finish prompt only includes matching candidates, condition_mismatch unchecked by default**.
 
 #### Test totals
-- 78 test files, **672 tests** (up from 645). Typecheck green. Build green (354 KB JS / 95 KB gzip).
+- 78 test files, **675 tests** (up from 645). Typecheck green. Build green (354 KB JS / 95 KB gzip).
 
 #### Browser-verified (preview server, real wishlist + card-detail flow)
 - Wishlist counts header now reads `Aktive: 166 (Ønsket: 120 · Bestilt: 46) · Mottatt: 24 · Avbrutt: 22 · Slettede: 3 · Matcher filteret: 212`.

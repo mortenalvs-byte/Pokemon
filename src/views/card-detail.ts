@@ -39,7 +39,12 @@ import {
   type WishlistRow,
 } from '../services/wishlist-service';
 import { isActiveWishlistStatus } from '../domain/wishlist-status';
-import { markWishlistCandidatesReceived } from '../services/wishlist-receive-service';
+import {
+  findReceiveCandidatesForHoldings,
+  markWishlistCandidatesReceived,
+  type WishlistReceiveCandidate,
+} from '../services/wishlist-receive-service';
+import { openWishlistReceivePrompt } from '../components/wishlist-receive-prompt';
 import { createLazyImage } from '../utils/lazy-image';
 import type {
   BinderSlotStatus,
@@ -167,18 +172,23 @@ async function renderInto(container: HTMLElement): Promise<void> {
 async function buildOwnedActiveWishlistBanner(
   cardId: string,
 ): Promise<HTMLElement | null> {
+  // PR 22 review patch — the banner must respect the same match rule
+  // as the rest of the receive flow (cardId + finish). The earlier
+  // revision used cardId-only "anything live + anything active" which
+  // could mark a `reverse_holo` wishlist row as received when the user
+  // only owned the `normal` print. Route through the shared service
+  // so the banner offers the *same* candidate set the prompt would.
   const db = getDb();
   const holdingsRepo = createHoldingsRepo(db);
   const wishlistRepo = createWishlistRepo(db);
-  const [holdings, wishlistAll] = await Promise.all([
-    holdingsRepo.listByCardId(cardId),
-    wishlistRepo.listByCardId(cardId),
-  ]);
+  const holdings = await holdingsRepo.listByCardId(cardId);
   const liveHoldings = holdings.filter((h) => h.deletedAt === null);
-  const activeWishlist = wishlistAll.filter(
-    (w) => w.deletedAt === null && isActiveWishlistStatus(w.status),
+  if (liveHoldings.length === 0) return null;
+  const candidates = await findReceiveCandidatesForHoldings(
+    wishlistRepo,
+    liveHoldings,
   );
-  if (liveHoldings.length === 0 || activeWishlist.length === 0) return null;
+  if (candidates.length === 0) return null;
 
   const wrap = document.createElement('section');
   wrap.className = 'card-detail-view__conflict';
@@ -191,10 +201,10 @@ async function buildOwnedActiveWishlistBanner(
 
   const body = document.createElement('p');
   body.className = 'card-detail-view__conflict-body';
-  const summary = activeWishlist.length === 1
-    ? 'Kortet ligger fortsatt aktivt på ønskelisten — vil du markere oppføringen som mottatt?'
-    : `${activeWishlist.length} aktive ønskeliste-oppføringer for dette kortet — marker som mottatt?`;
-  body.textContent = summary;
+  body.textContent =
+    candidates.length === 1
+      ? 'Kortet ligger fortsatt aktivt på ønskelisten — vil du markere oppføringen som mottatt?'
+      : `${candidates.length} aktive ønskeliste-oppføringer matcher dine holdings — marker som mottatt?`;
   wrap.appendChild(body);
 
   const action = document.createElement('button');
@@ -202,24 +212,36 @@ async function buildOwnedActiveWishlistBanner(
   action.className = 'card-detail-view__conflict-action';
   action.dataset['action'] = 'mark-active-received';
   action.textContent =
-    activeWishlist.length === 1
+    candidates.length === 1
       ? 'Marker som mottatt'
-      : `Marker alle ${activeWishlist.length} som mottatt`;
+      : `Marker ${candidates.length} som mottatt`;
   action.addEventListener('click', () => {
-    void handleMarkActiveReceived(activeWishlist.map((w) => w.id));
+    void openCardDetailReceivePrompt(candidates);
   });
   wrap.appendChild(action);
   return wrap;
 }
 
-async function handleMarkActiveReceived(
-  wishlistIds: readonly string[],
+async function openCardDetailReceivePrompt(
+  candidates: readonly WishlistReceiveCandidate[],
 ): Promise<void> {
-  if (wishlistIds.length === 0) return;
+  if (candidates.length === 0) return;
+  await openWishlistReceivePrompt({
+    candidates,
+    heading:
+      candidates.length === 1
+        ? 'Eid + aktiv ønskeliste — én match på samme kort + finish.'
+        : `Eid + aktiv ønskeliste — ${candidates.length} matcher på samme kort + finish.`,
+  });
+}
+
+async function handleMarkSingleWishlistReceived(
+  wishlistId: string,
+): Promise<void> {
   await markWishlistCandidatesReceived(
     createWishlistRepo(getDb()),
-    wishlistIds,
-    'Marked received from Card Detail conflict banner',
+    [wishlistId],
+    'Marked received from Card Detail wishlist row',
   );
   window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
 }
@@ -650,7 +672,10 @@ function buildWishlistRow(row: WishlistRow): HTMLTableRowElement {
   });
   actions.appendChild(edit);
 
-  // PR 22 — Marker mottatt available on active rows only.
+  // PR 22 — Marker mottatt available on active rows only. This is an
+  // explicit per-row action, so we go straight to
+  // `markWishlistCandidatesReceived` without re-opening the prompt
+  // (the user already picked the specific row they want closed).
   if (isActiveWishlistStatus(row.wishlist.status)) {
     const markReceived = document.createElement('button');
     markReceived.type = 'button';
@@ -659,7 +684,7 @@ function buildWishlistRow(row: WishlistRow): HTMLTableRowElement {
     markReceived.dataset['action'] = 'mark-received';
     markReceived.textContent = 'Marker mottatt';
     markReceived.addEventListener('click', () => {
-      void handleMarkActiveReceived([row.wishlist.id]);
+      void handleMarkSingleWishlistReceived(row.wishlist.id);
     });
     actions.appendChild(markReceived);
   }

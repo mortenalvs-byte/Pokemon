@@ -283,7 +283,7 @@ describe('Card Detail + wishlist', () => {
     expect(banner).toBeNull();
   });
 
-  it('PR 22: clicking conflict banner action flips wishlist to received', async () => {
+  it('PR 22: clicking conflict banner action opens prompt; submitting flips wishlist to received', async () => {
     const wishlistRepo = createWishlistRepo(db);
     const w = await wishlistRepo.create(baseInput);
     const { createHoldingsRepo } = await import('../src/repositories/holdings-repo');
@@ -325,10 +325,227 @@ describe('Card Detail + wishlist', () => {
     );
     expect(action).not.toBeNull();
     action?.click();
+
+    // The banner now opens the shared receive prompt — submit it to
+    // actually flip the status. This proves the banner respects the
+    // same prompt UX (exact match default-checked).
+    const promptForm = await vi.waitFor<HTMLFormElement>(() => {
+      const f = document.querySelector<HTMLFormElement>(
+        'form.wishlist-receive-prompt',
+      );
+      if (f === null) throw new Error('prompt did not open');
+      return f;
+    });
+    const checked = promptForm.querySelectorAll<HTMLInputElement>(
+      'input[name="receive"]:checked',
+    );
+    expect(checked.length).toBe(1);
+    expect(checked[0]?.dataset['wishlistId']).toBe(w.id);
+    promptForm.dispatchEvent(
+      new Event('submit', { cancelable: true, bubbles: true }),
+    );
     await vi.waitFor(async () => {
       const stored = await wishlistRepo.get(w.id);
       expect(stored?.status).toBe('received');
     });
+  });
+
+  it('PR 22 review: banner respects finish — owned normal + wishlist reverse_holo hides banner', async () => {
+    const wishlistRepo = createWishlistRepo(db);
+    const reverseHoloWish = await wishlistRepo.create({
+      ...baseInput,
+      finish: 'reverse_holo',
+    });
+    const { createHoldingsRepo } = await import('../src/repositories/holdings-repo');
+    await createHoldingsRepo(db).create({
+      cardId: 'base1-4',
+      quantity: 1,
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      certNumber: null,
+      certUrl: null,
+      gradedDate: null,
+      finish: 'normal',
+      edition: 'unlimited',
+      language: 'en',
+      purchasePrice: null,
+      purchaseCurrency: null,
+      estimatedValue: null,
+      valueCurrency: null,
+      valueSource: 'unknown',
+      valueNote: null,
+      valueUpdatedAt: null,
+      source: 'manual',
+      note: null,
+      specialVariant: false,
+      tags: [],
+      lotId: null,
+      status: 'owned',
+    });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCardDetailView(root);
+    await settle();
+
+    const banner = root.querySelector(
+      '[data-region="owned-active-wishlist-banner"]',
+    );
+    // No banner: holding finish (normal) does not match wishlist finish
+    // (reverse_holo). The reverse_holo wishlist row stays active.
+    expect(banner).toBeNull();
+    const stillActive = await wishlistRepo.get(reverseHoloWish.id);
+    expect(stillActive?.status).toBe('wanted');
+  });
+
+  it('PR 22 review: banner only includes finish-matching candidates when card has multi-finish wishlist', async () => {
+    const wishlistRepo = createWishlistRepo(db);
+    const holoWish = await wishlistRepo.create({ ...baseInput, finish: 'holo' });
+    const reverseHoloWish = await wishlistRepo.create({
+      ...baseInput,
+      finish: 'reverse_holo',
+    });
+    const { createHoldingsRepo } = await import('../src/repositories/holdings-repo');
+    // Holding only matches the holo wishlist row.
+    await createHoldingsRepo(db).create({
+      cardId: 'base1-4',
+      quantity: 1,
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      certNumber: null,
+      certUrl: null,
+      gradedDate: null,
+      finish: 'holo',
+      edition: 'unlimited',
+      language: 'en',
+      purchasePrice: null,
+      purchaseCurrency: null,
+      estimatedValue: null,
+      valueCurrency: null,
+      valueSource: 'unknown',
+      valueNote: null,
+      valueUpdatedAt: null,
+      source: 'manual',
+      note: null,
+      specialVariant: false,
+      tags: [],
+      lotId: null,
+      status: 'owned',
+    });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCardDetailView(root);
+    await settle();
+
+    const action = root.querySelector<HTMLButtonElement>(
+      '[data-region="owned-active-wishlist-banner"] button[data-action="mark-active-received"]',
+    );
+    expect(action).not.toBeNull();
+    // Banner says "Marker som mottatt" (single) since only the holo
+    // candidate matches — even though the user has 2 active wishlist
+    // rows for the same card.
+    expect(action?.textContent ?? '').toBe('Marker som mottatt');
+    action?.click();
+
+    const promptForm = await vi.waitFor<HTMLFormElement>(() => {
+      const f = document.querySelector<HTMLFormElement>(
+        'form.wishlist-receive-prompt',
+      );
+      if (f === null) throw new Error('prompt did not open');
+      return f;
+    });
+    const rowIds = Array.from(
+      promptForm.querySelectorAll<HTMLInputElement>('input[name="receive"]'),
+    ).map((cb) => cb.dataset['wishlistId']);
+    expect(rowIds).toEqual([holoWish.id]);
+    expect(rowIds).not.toContain(reverseHoloWish.id);
+    // Submit and verify only holo flipped.
+    promptForm.dispatchEvent(
+      new Event('submit', { cancelable: true, bubbles: true }),
+    );
+    await vi.waitFor(async () => {
+      const post = await wishlistRepo.get(holoWish.id);
+      expect(post?.status).toBe('received');
+    });
+    const reverseAfter = await wishlistRepo.get(reverseHoloWish.id);
+    expect(reverseAfter?.status).toBe('wanted');
+  });
+
+  it('PR 22 review: condition_mismatch candidate appears in prompt unchecked', async () => {
+    const wishlistRepo = createWishlistRepo(db);
+    const w = await wishlistRepo.create({
+      ...baseInput,
+      targetCondition: 'NM',
+    });
+    const { createHoldingsRepo } = await import('../src/repositories/holdings-repo');
+    await createHoldingsRepo(db).create({
+      cardId: 'base1-4',
+      quantity: 1,
+      conditionType: 'raw',
+      rawCondition: 'LP',
+      gradingCompany: null,
+      grade: null,
+      certNumber: null,
+      certUrl: null,
+      gradedDate: null,
+      finish: 'holo',
+      edition: 'unlimited',
+      language: 'en',
+      purchasePrice: null,
+      purchaseCurrency: null,
+      estimatedValue: null,
+      valueCurrency: null,
+      valueSource: 'unknown',
+      valueNote: null,
+      valueUpdatedAt: null,
+      source: 'manual',
+      note: null,
+      specialVariant: false,
+      tags: [],
+      lotId: null,
+      status: 'owned',
+    });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCardDetailView(root);
+    await settle();
+
+    const action = root.querySelector<HTMLButtonElement>(
+      '[data-region="owned-active-wishlist-banner"] button[data-action="mark-active-received"]',
+    );
+    expect(action).not.toBeNull();
+    action?.click();
+
+    const promptForm = await vi.waitFor<HTMLFormElement>(() => {
+      const f = document.querySelector<HTMLFormElement>(
+        'form.wishlist-receive-prompt',
+      );
+      if (f === null) throw new Error('prompt did not open');
+      return f;
+    });
+    const rows = promptForm.querySelectorAll<HTMLLIElement>(
+      '.wishlist-receive-prompt__row',
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.dataset['matchType']).toBe('condition_mismatch');
+    const cb = rows[0]?.querySelector<HTMLInputElement>(
+      'input[name="receive"]',
+    );
+    expect(cb?.checked).toBe(false);
+    // User did not check it — submit-as-is leaves wishlist active.
+    promptForm.dispatchEvent(
+      new Event('submit', { cancelable: true, bubbles: true }),
+    );
+    // Give the submit handler a tick to close the dialog.
+    await settle(50);
+    const after = await wishlistRepo.get(w.id);
+    expect(after?.status).toBe('wanted');
   });
 
   it('PR 22: per-row Marker mottatt only on active rows in Card Detail wishlist table', async () => {
