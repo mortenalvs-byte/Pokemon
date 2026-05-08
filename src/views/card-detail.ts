@@ -38,6 +38,8 @@ import {
   createWishlistService,
   type WishlistRow,
 } from '../services/wishlist-service';
+import { isActiveWishlistStatus } from '../domain/wishlist-status';
+import { markWishlistCandidatesReceived } from '../services/wishlist-receive-service';
 import { createLazyImage } from '../utils/lazy-image';
 import type {
   BinderSlotStatus,
@@ -152,9 +154,74 @@ async function renderInto(container: HTMLElement): Promise<void> {
 
   root.appendChild(buildBody(card, set ?? null));
   root.appendChild(buildActions(cardId));
+  // PR 22 — surface the "owned + active wishlist" conflict above the
+  // holdings + wishlist tables so the user sees it without scrolling.
+  // Reads the same data the two sections below use; cheap.
+  const conflictBanner = await buildOwnedActiveWishlistBanner(cardId);
+  if (conflictBanner !== null) root.appendChild(conflictBanner);
   root.appendChild(await buildHoldingsSection(cardId));
   root.appendChild(await buildBindersSection(cardId));
   root.appendChild(await buildWishlistSection(cardId));
+}
+
+async function buildOwnedActiveWishlistBanner(
+  cardId: string,
+): Promise<HTMLElement | null> {
+  const db = getDb();
+  const holdingsRepo = createHoldingsRepo(db);
+  const wishlistRepo = createWishlistRepo(db);
+  const [holdings, wishlistAll] = await Promise.all([
+    holdingsRepo.listByCardId(cardId),
+    wishlistRepo.listByCardId(cardId),
+  ]);
+  const liveHoldings = holdings.filter((h) => h.deletedAt === null);
+  const activeWishlist = wishlistAll.filter(
+    (w) => w.deletedAt === null && isActiveWishlistStatus(w.status),
+  );
+  if (liveHoldings.length === 0 || activeWishlist.length === 0) return null;
+
+  const wrap = document.createElement('section');
+  wrap.className = 'card-detail-view__conflict';
+  wrap.dataset['region'] = 'owned-active-wishlist-banner';
+
+  const heading = document.createElement('h3');
+  heading.className = 'card-detail-view__conflict-heading';
+  heading.textContent = 'Eid + aktiv ønskeliste';
+  wrap.appendChild(heading);
+
+  const body = document.createElement('p');
+  body.className = 'card-detail-view__conflict-body';
+  const summary = activeWishlist.length === 1
+    ? 'Kortet ligger fortsatt aktivt på ønskelisten — vil du markere oppføringen som mottatt?'
+    : `${activeWishlist.length} aktive ønskeliste-oppføringer for dette kortet — marker som mottatt?`;
+  body.textContent = summary;
+  wrap.appendChild(body);
+
+  const action = document.createElement('button');
+  action.type = 'button';
+  action.className = 'card-detail-view__conflict-action';
+  action.dataset['action'] = 'mark-active-received';
+  action.textContent =
+    activeWishlist.length === 1
+      ? 'Marker som mottatt'
+      : `Marker alle ${activeWishlist.length} som mottatt`;
+  action.addEventListener('click', () => {
+    void handleMarkActiveReceived(activeWishlist.map((w) => w.id));
+  });
+  wrap.appendChild(action);
+  return wrap;
+}
+
+async function handleMarkActiveReceived(
+  wishlistIds: readonly string[],
+): Promise<void> {
+  if (wishlistIds.length === 0) return;
+  await markWishlistCandidatesReceived(
+    createWishlistRepo(getDb()),
+    wishlistIds,
+    'Marked received from Card Detail conflict banner',
+  );
+  window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
 }
 
 function appendMessage(root: HTMLElement, text: string): void {
@@ -582,6 +649,20 @@ function buildWishlistRow(row: WishlistRow): HTMLTableRowElement {
     void handleWishlistEdit(row.wishlist);
   });
   actions.appendChild(edit);
+
+  // PR 22 — Marker mottatt available on active rows only.
+  if (isActiveWishlistStatus(row.wishlist.status)) {
+    const markReceived = document.createElement('button');
+    markReceived.type = 'button';
+    markReceived.className =
+      'browse-table__action browse-table__action--success';
+    markReceived.dataset['action'] = 'mark-received';
+    markReceived.textContent = 'Marker mottatt';
+    markReceived.addEventListener('click', () => {
+      void handleMarkActiveReceived([row.wishlist.id]);
+    });
+    actions.appendChild(markReceived);
+  }
 
   const remove = document.createElement('button');
   remove.type = 'button';

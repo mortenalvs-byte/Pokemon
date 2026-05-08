@@ -47,6 +47,16 @@ export interface WishlistResult {
   readonly total: number;
   readonly liveTotal: number;
   readonly deletedTotal: number;
+  /**
+   * PR 22 — counts per wishlist status across LIVE entries only.
+   * Lets the view label "Aktive: X · Bestilt: Y · Mottatt: Z ·
+   * Avbrutt: W · Slettede: D" without a second list call.
+   * `received | cancelled` rows still count here even though they're
+   * hidden from the active-flow.
+   */
+  readonly statusCounts: Record<WishlistStatus, number>;
+  readonly activeTotal: number;
+  readonly closedTotal: number;
 }
 
 export interface WishlistService {
@@ -72,8 +82,20 @@ export function createWishlistService(
   return {
     async list(criteria) {
       const all = await wishlistRepo.list();
-      const liveTotal = all.filter((w) => w.deletedAt === null).length;
+      const live = all.filter((w) => w.deletedAt === null);
+      const liveTotal = live.length;
       const deletedTotal = all.length - liveTotal;
+      const statusCounts: Record<WishlistStatus, number> = {
+        wanted: 0,
+        ordered: 0,
+        received: 0,
+        cancelled: 0,
+      };
+      for (const w of live) {
+        statusCounts[w.status] += 1;
+      }
+      const activeTotal = statusCounts.wanted + statusCounts.ordered;
+      const closedTotal = statusCounts.received + statusCounts.cancelled;
 
       const cards = await cardsRepo.list();
       const sets = await setsRepo.list();
@@ -99,7 +121,15 @@ export function createWishlistService(
         set: getSetForCardId(wishlist.cardId, cardsById, setsById),
       }));
 
-      return { rows, total, liveTotal, deletedTotal };
+      return {
+        rows,
+        total,
+        liveTotal,
+        deletedTotal,
+        statusCounts,
+        activeTotal,
+        closedTotal,
+      };
     },
 
     async listForCard(cardId) {

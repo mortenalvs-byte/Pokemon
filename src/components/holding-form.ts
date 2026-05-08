@@ -10,10 +10,13 @@
 
 import { DIALOG_SUBMITTED_EVENT } from './dialog';
 import { USER_DATA_CHANGED_EVENT } from './events';
+import { openWishlistReceivePrompt } from './wishlist-receive-prompt';
 import { getDb } from '../db/database';
 import { availableVariants } from '../domain/card-variants';
 import { ValidationError } from '../domain/validators';
 import { formatTags, parseTags } from '../domain/tags';
+import { findWishlistReceiveCandidates } from '../services/wishlist-receive-service';
+import { createWishlistRepo } from '../repositories/wishlist-repo';
 import {
   type CardFinish,
   type CardRecord,
@@ -493,10 +496,11 @@ async function handleSubmit(
   const submitButton = root.querySelector<HTMLButtonElement>('.holding-form__submit');
   if (submitButton !== null) submitButton.disabled = true;
 
+  let createdHolding: HoldingRecord | null = null;
   try {
     const repo = createHoldingsRepo(getDb());
     if (options.mode === 'add') {
-      await repo.create(input);
+      createdHolding = await repo.create(input);
     } else {
       await repo.update(options.holding.id, input);
     }
@@ -508,6 +512,36 @@ async function handleSubmit(
 
   window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
   host.dispatchEvent(new CustomEvent(DIALOG_SUBMITTED_EVENT));
+
+  // PR 22 — after a fresh holding lands, surface any active wishlist
+  // entries for the same card+finish so the user can close the
+  // receive flow with one click. We do NOT run this on edit: editing
+  // an existing holding rarely signals "I just received this".
+  if (createdHolding !== null) {
+    void runReceivePromptForHolding(createdHolding);
+  }
+}
+
+async function runReceivePromptForHolding(
+  holding: HoldingRecord,
+): Promise<void> {
+  try {
+    const wishlistRepo = createWishlistRepo(getDb());
+    const candidates = await findWishlistReceiveCandidates(
+      wishlistRepo,
+      holding,
+    );
+    if (candidates.length === 0) return;
+    await openWishlistReceivePrompt({
+      candidates,
+      heading: `Lagt til i samlingen — ${candidates.length} match${candidates.length === 1 ? '' : 'er'} på ønskelisten.`,
+    });
+  } catch {
+    // Receive-flow is non-blocking. The holding is already saved; if
+    // the prompt itself errors, the user can still mark via the
+    // Wishlist view. Swallow silently to avoid disturbing the main
+    // success path.
+  }
 }
 
 function collectFormInput(

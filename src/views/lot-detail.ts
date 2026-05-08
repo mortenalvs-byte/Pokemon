@@ -12,12 +12,15 @@
 import { openDialog } from '../components/dialog';
 import { USER_DATA_CHANGED_EVENT, onUserDataChanged } from '../components/events';
 import { buildLotItemForm } from '../components/lot-item-form';
+import { openWishlistReceivePrompt } from '../components/wishlist-receive-prompt';
 import { getDb } from '../db/database';
 import { getCurrentLotId, navigate, navigateToCard } from '../router';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createHoldingsRepo } from '../repositories/holdings-repo';
 import { createLotItemsRepo } from '../repositories/lot-items-repo';
 import { createLotsRepo } from '../repositories/lots-repo';
+import { createWishlistRepo } from '../repositories/wishlist-repo';
+import { findReceiveCandidatesForHoldings } from '../services/wishlist-receive-service';
 import {
   createLotDetailService,
   type LotDetail,
@@ -780,12 +783,37 @@ async function runMaterialize(
       );
     }
     window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
+    // PR 22 — surface wishlist receive candidates for the freshly
+    // materialised holdings. One grouped prompt, never one per card.
+    void runReceivePromptForLotMaterialize(result.created);
   } catch (caught) {
     if (caught instanceof Error) {
       window.alert(`Kunne ikke legge i samling: ${caught.message}`);
     } else {
       window.alert('Kunne ikke legge i samling av en ukjent grunn.');
     }
+  }
+}
+
+async function runReceivePromptForLotMaterialize(
+  created: readonly HoldingRecord[],
+): Promise<void> {
+  if (created.length === 0) return;
+  try {
+    const candidates = await findReceiveCandidatesForHoldings(
+      createWishlistRepo(getDb()),
+      created,
+    );
+    if (candidates.length === 0) return;
+    await openWishlistReceivePrompt({
+      candidates,
+      heading:
+        candidates.length === 1
+          ? `Lot-materialisering: 1 match på aktiv ønskeliste.`
+          : `Lot-materialisering: ${candidates.length} matcher på aktiv ønskeliste.`,
+    });
+  } catch {
+    // Non-fatal: holdings are already in the collection.
   }
 }
 

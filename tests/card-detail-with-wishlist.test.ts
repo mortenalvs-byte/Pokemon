@@ -174,4 +174,190 @@ describe('Card Detail + wishlist', () => {
     expect(headings).toContain('Dine kort');
     expect(headings).toContain('Ønskeliste-status');
   });
+
+  // PR 22 — Card Detail receive-flow tests --------------------------
+
+  it('PR 22: shows owned + active wishlist conflict banner when both exist', async () => {
+    const wishlistRepo = createWishlistRepo(db);
+    await wishlistRepo.create(baseInput);
+    const { createHoldingsRepo } = await import('../src/repositories/holdings-repo');
+    await createHoldingsRepo(db).create({
+      cardId: 'base1-4',
+      quantity: 1,
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      certNumber: null,
+      certUrl: null,
+      gradedDate: null,
+      finish: 'holo',
+      edition: 'unlimited',
+      language: 'en',
+      purchasePrice: null,
+      purchaseCurrency: null,
+      estimatedValue: null,
+      valueCurrency: null,
+      valueSource: 'unknown',
+      valueNote: null,
+      valueUpdatedAt: null,
+      source: 'manual',
+      note: null,
+      specialVariant: false,
+      tags: [],
+      lotId: null,
+      status: 'owned',
+    });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCardDetailView(root);
+    await settle();
+
+    const banner = root.querySelector(
+      '[data-region="owned-active-wishlist-banner"]',
+    );
+    expect(banner).not.toBeNull();
+    const action = banner?.querySelector<HTMLButtonElement>(
+      'button[data-action="mark-active-received"]',
+    );
+    expect(action?.textContent ?? '').toMatch(/Marker.*mottatt/i);
+  });
+
+  it('PR 22: conflict banner is hidden when there are no holdings', async () => {
+    const repo = createWishlistRepo(db);
+    await repo.create(baseInput);
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCardDetailView(root);
+    await settle();
+
+    const banner = root.querySelector(
+      '[data-region="owned-active-wishlist-banner"]',
+    );
+    expect(banner).toBeNull();
+  });
+
+  it('PR 22: conflict banner is hidden when wishlist is only received/cancelled', async () => {
+    const wishlistRepo = createWishlistRepo(db);
+    const w = await wishlistRepo.create(baseInput);
+    await wishlistRepo.update(w.id, { status: 'received' });
+    const { createHoldingsRepo } = await import('../src/repositories/holdings-repo');
+    await createHoldingsRepo(db).create({
+      cardId: 'base1-4',
+      quantity: 1,
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      certNumber: null,
+      certUrl: null,
+      gradedDate: null,
+      finish: 'holo',
+      edition: 'unlimited',
+      language: 'en',
+      purchasePrice: null,
+      purchaseCurrency: null,
+      estimatedValue: null,
+      valueCurrency: null,
+      valueSource: 'unknown',
+      valueNote: null,
+      valueUpdatedAt: null,
+      source: 'manual',
+      note: null,
+      specialVariant: false,
+      tags: [],
+      lotId: null,
+      status: 'owned',
+    });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCardDetailView(root);
+    await settle();
+
+    const banner = root.querySelector(
+      '[data-region="owned-active-wishlist-banner"]',
+    );
+    expect(banner).toBeNull();
+  });
+
+  it('PR 22: clicking conflict banner action flips wishlist to received', async () => {
+    const wishlistRepo = createWishlistRepo(db);
+    const w = await wishlistRepo.create(baseInput);
+    const { createHoldingsRepo } = await import('../src/repositories/holdings-repo');
+    await createHoldingsRepo(db).create({
+      cardId: 'base1-4',
+      quantity: 1,
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      certNumber: null,
+      certUrl: null,
+      gradedDate: null,
+      finish: 'holo',
+      edition: 'unlimited',
+      language: 'en',
+      purchasePrice: null,
+      purchaseCurrency: null,
+      estimatedValue: null,
+      valueCurrency: null,
+      valueSource: 'unknown',
+      valueNote: null,
+      valueUpdatedAt: null,
+      source: 'manual',
+      note: null,
+      specialVariant: false,
+      tags: [],
+      lotId: null,
+      status: 'owned',
+    });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCardDetailView(root);
+    await settle();
+
+    const action = root.querySelector<HTMLButtonElement>(
+      '[data-region="owned-active-wishlist-banner"] button[data-action="mark-active-received"]',
+    );
+    expect(action).not.toBeNull();
+    action?.click();
+    await vi.waitFor(async () => {
+      const stored = await wishlistRepo.get(w.id);
+      expect(stored?.status).toBe('received');
+    });
+  });
+
+  it('PR 22: per-row Marker mottatt only on active rows in Card Detail wishlist table', async () => {
+    const repo = createWishlistRepo(db);
+    const wanted = await repo.create({ ...baseInput, status: 'wanted' });
+    const ordered = await repo.create({ ...baseInput, status: 'ordered' });
+    const closed = await repo.create({ ...baseInput });
+    await repo.update(closed.id, { status: 'received' });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCardDetailView(root);
+    await settle();
+
+    const table = root.querySelector(
+      '.card-detail-view__wishlist-table tbody',
+    );
+    expect(table).not.toBeNull();
+    const rows = table!.querySelectorAll<HTMLTableRowElement>('tr');
+    const findRow = (id: string): HTMLTableRowElement | null =>
+      Array.from(rows).find((r) => r.dataset['wishlistId'] === id) ?? null;
+    expect(
+      findRow(wanted.id)?.querySelector('button[data-action="mark-received"]'),
+    ).not.toBeNull();
+    expect(
+      findRow(ordered.id)?.querySelector('button[data-action="mark-received"]'),
+    ).not.toBeNull();
+    expect(
+      findRow(closed.id)?.querySelector('button[data-action="mark-received"]'),
+    ).toBeNull();
+  });
 });

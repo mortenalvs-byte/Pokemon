@@ -8,6 +8,72 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR 22 — Wishlist receive flow / active vs closed)
+PR 22 closes the wishlist workflow loop: when a card lands in holdings, the app now offers to flip the matching wishlist row to `received`. Before this PR, a card could be both "owned" and "wanted/ordered" with no built-in path to close the wishlist entry; in long sessions that drift turned the wishlist into noise. Workflow only — no new datamodel, no schema migration.
+
+#### Definitions (locked in `src/domain/wishlist-status.ts`)
+- **Aktiv wishlist:** `wanted | ordered`
+- **Lukket wishlist:** `received | cancelled`
+
+`isActiveWishlistStatus`, `isClosedWishlistStatus`, `wishlistStatusLabel`, plus `ACTIVE_WISHLIST_STATUSES` / `CLOSED_WISHLIST_STATUSES` constants — single source of truth so views can't drift on what counts as "open".
+
+#### Service (`src/services/wishlist-receive-service.ts`)
+- `findWishlistReceiveCandidates(repo, holding)` — match rule: `cardId === cardId && finish === finish && status ∈ active && deletedAt === null`. Returns `{ wishlist, matchType, reason }` per candidate. Sort: ordered → wanted; priority desc; updatedAt desc.
+- `findReceiveCandidatesForHoldings(repo, holdings[])` — batch helper for Bulk Add / Lot Materialise. Dedupes by `wishlist.id`.
+- `markWishlistCandidatesReceived(repo, ids[])` — flips status to `received` via `wishlistRepo.update`, so the existing audit + variant validator path runs unchanged. Returns the updated records.
+- Match types: `exact` (default-checked in the prompt) or `condition_mismatch` (default-unchecked when `wishlist.targetCondition` is set and the holding's `rawCondition` differs).
+
+#### Receive-prompt dialog (`src/components/wishlist-receive-prompt.ts`)
+- Reused by every write-path. One dialog, one click, never one modal per card.
+- Exact matches default-checked; condition_mismatch starts unchecked (user opt-in).
+- "Ikke nå" closes without writes; "Marker som mottatt" goes through `markWishlistCandidatesReceived` and dispatches `USER_DATA_CHANGED_EVENT` once.
+
+#### Integration points
+- **Full holding form** (`src/components/holding-form.ts`): after a successful create, opens the prompt with single-card candidates.
+- **Browse Quick Add** (`src/views/browse.ts`): single `runQuickAddRaw` runs the prompt for the row's holding right after the success chip flashes.
+- **Browse Bulk Add** (`src/views/browse.ts`): the post-bulk summary banner now carries a `Marker N som mottatt` button that opens the prompt with the deduped batch — no per-card modals. Failures + skips stay listed; the banner's existing `Lukk` still dismisses cleanly.
+- **Lot Materialise** (`src/views/lot-detail.ts`): after `materializeHoldings`, the prompt fires once for the deduped batch of `result.created`.
+- **Card Detail conflict banner**: when the card has both live holdings AND an active wishlist row, a banner above the holdings table offers `Marker som mottatt` (single) or `Marker alle N som mottatt` (multi), going through the same service.
+- **Wishlist view per-row action**: `Marker mottatt` button on every active row (wanted/ordered, live). Hidden on received/cancelled/deleted rows.
+- **Wishlist view counts header**: split from `${liveTotal} aktive · ${deletedTotal} slettede` to `Aktive: X (Ønsket: A · Bestilt: B) · Mottatt: C · Avbrutt: D · Slettede: E · Matcher filteret: F`. Service exposes `statusCounts: Record<WishlistStatus, number>` plus `activeTotal` / `closedTotal` so the view can label without a second list call.
+
+#### Match rule (PR 22 v1)
+`cardId + finish + active + live`. Edition-aware matching is **not** in this PR because `WishlistRecord` does not carry an `edition` field — adding one would be a schema migration, out of scope. Same reason `targetCondition` is treated as a soft check (badge + opt-in) rather than a hard filter.
+
+#### Touched files
+- `src/domain/wishlist-status.ts` — new.
+- `src/services/wishlist-receive-service.ts` — new.
+- `src/services/wishlist-service.ts` — `WishlistResult` now exposes `statusCounts`, `activeTotal`, `closedTotal`.
+- `src/components/wishlist-receive-prompt.ts` — new dialog component.
+- `src/components/holding-form.ts` — runs the prompt after `repo.create`.
+- `src/views/browse.ts` — Quick Add prompt + bulk-summary `Marker N mottatt`.
+- `src/views/lot-detail.ts` — post-materialise prompt.
+- `src/views/card-detail.ts` — conflict banner + per-row `Marker mottatt` action.
+- `src/views/wishlist.ts` — counts split + per-row `Marker mottatt` action.
+- `src/styles.css` — `.browse-table__action--success`, `.card-detail-view__conflict*`, `.wishlist-receive-prompt*`, `.browse-view__bulk-summary-receive`.
+- `tests/wishlist-receive-service.test.ts` — new, 19 cases.
+- `tests/wishlist-view.test.ts` — 3 new cases (counts split, per-row gating, click flips status).
+- `tests/card-detail-with-wishlist.test.ts` — 4 new cases (banner shown, hidden when no holdings, hidden when wishlist already closed, click flips status, per-row gating).
+
+#### Test totals
+- 78 test files, **672 tests** (up from 645). Typecheck green. Build green (354 KB JS / 95 KB gzip).
+
+#### Browser-verified (preview server, real wishlist + card-detail flow)
+- Wishlist counts header now reads `Aktive: 166 (Ønsket: 120 · Bestilt: 46) · Mottatt: 24 · Avbrutt: 22 · Slettede: 3 · Matcher filteret: 212`.
+- `Marker mottatt` shows on wanted + ordered rows; absent on received rows; clicking flips status to `received` and the row immediately drops the action button.
+- Card-detail conflict banner shows for owned + wanted, hides immediately after click; `wishlistRepo.update` audit row recorded with `status=received`.
+
+#### Out of scope (per the user's instruction)
+- No global search.
+- No CSV import.
+- No binder direct-add.
+- No cross-page bulk selection.
+- No scanner/barcode.
+- No pricing/value dashboard.
+- No schema migration (wishlist still does not store `edition`).
+- No automatic deletion of wishlist entries; `received` rows stay as history.
+- No silent auto-marking — the prompt always asks first.
+
 ### Performance (PR 21 — Cards cache / cold mount)
 PR 21 finishes the work PR 20 deferred: removing `cardsRepo.list()` as the cold-mount bottleneck. PR 20's measurement showed initial mount stuck at ~1000 ms even after the page-at-a-time refactor, because `cardsRepo.list()` still loaded all 20 237 cached cards from IndexedDB on every fresh view. This PR introduces a per-DB Promise cache for the two replaceable API caches (`cards`, `sets`) and wires invalidation into the only two write paths (sync, restore) **and into the repo write methods themselves** (so the repo's read/write contract stays correct regardless of who calls it). No new feature surface — purely foundation/perf.
 
