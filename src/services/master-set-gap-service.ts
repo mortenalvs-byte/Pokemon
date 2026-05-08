@@ -19,11 +19,13 @@ import {
   buildBinderSummary,
   buildDashboardSummary,
   classifySlot,
+  type MasterGapBestCopyRecommendation,
   type MasterGapBinderSummary,
   type MasterGapDashboardSummary,
   type MasterGapReport,
   type MasterGapRow,
 } from '../domain/master-set-gap';
+import { recommendBestCopy } from './best-copy-service';
 import type {
   BinderRecord,
   BinderSlotRecord,
@@ -236,6 +238,29 @@ function buildRow(
   });
   const setRecord =
     card !== null ? (lookups.setsById.get(card.setId) ?? null) : null;
+
+  // PR 28 — best-copy overlay. Only computed for ambiguous rows so
+  // every other row stays at the same cost as PR 25/27. Resolves
+  // candidates from the existing in-memory holdings lookup; no extra
+  // DB calls.
+  let bestCopyRecommendation: MasterGapBestCopyRecommendation | null = null;
+  if (result.status === 'ambiguous_owned') {
+    const candidates = result.matchingUnplacedHoldingIds
+      .map((id) => lookups.holdingsById.get(id))
+      .filter((h): h is NonNullable<typeof h> => h !== undefined);
+    const rec = recommendBestCopy({
+      requiredFinish: result.required.finish,
+      candidates,
+    });
+    bestCopyRecommendation = {
+      status: rec.status,
+      recommendedHoldingId: rec.recommendedHoldingId,
+      score: rec.score,
+      reasons: rec.reasons,
+      candidateCount: rec.candidates.length,
+    };
+  }
+
   return {
     binderId: binder.id,
     binderName: binder.name,
@@ -257,5 +282,6 @@ function buildRow(
     orderedWishlistIds: result.orderedWishlistIds,
     unmaterializedLotItemIds: result.unmaterializedLotItemIds,
     canPlaceDirectly: result.canPlaceDirectly,
+    bestCopyRecommendation,
   };
 }

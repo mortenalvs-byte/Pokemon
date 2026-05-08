@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal capability for the main desktop window. Frontend has no filesystem, shell, clipboard, or remote-URL access via Tauri APIs — all data stays in the existing IndexedDB / Dexie store via the WebView.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default"
+  ]
+}

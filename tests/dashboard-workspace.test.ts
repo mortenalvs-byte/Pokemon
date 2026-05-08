@@ -55,6 +55,8 @@ function summary(
     inLotUnmaterialized: 0,
     invalidCount: 0,
     canPlaceDirectlyCount: 0,
+    recommendedAmbiguousCount: 0,
+    manualAmbiguousCount: 0,
     averageCompletionPercent: 0,
     closestBinder: null,
     weakestBinder: null,

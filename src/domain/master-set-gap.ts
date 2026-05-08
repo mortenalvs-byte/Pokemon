@@ -54,6 +54,20 @@ export interface MasterGapRequiredVariant {
   readonly reason: string;
 }
 
+/**
+ * PR 28 — best-copy overlay attached to ambiguous_owned rows. The
+ * row's `status` is unchanged (PR 25 classification semantics are
+ * locked); the recommendation is informational + drives the row's
+ * `Plasser anbefalt` button. `null` for non-ambiguous rows.
+ */
+export interface MasterGapBestCopyRecommendation {
+  readonly status: 'recommended' | 'manual_required' | 'no_candidates';
+  readonly recommendedHoldingId: string | null;
+  readonly score: number | null;
+  readonly reasons: readonly string[];
+  readonly candidateCount: number;
+}
+
 export interface MasterGapRow {
   readonly binderId: string;
   readonly binderName: string;
@@ -80,6 +94,13 @@ export interface MasterGapRow {
   readonly unmaterializedLotItemIds: readonly string[];
 
   readonly canPlaceDirectly: boolean;
+
+  /**
+   * PR 28 — populated only for `ambiguous_owned` rows; null elsewhere.
+   * Drives the master-gap UI's `Plasser anbefalt` button and the
+   * dashboard command-center split.
+   */
+  readonly bestCopyRecommendation: MasterGapBestCopyRecommendation | null;
 }
 
 export interface MasterGapBinderSummary {
@@ -101,6 +122,10 @@ export interface MasterGapBinderSummary {
   readonly completionPercent: number;
   readonly actionableCount: number;
   readonly canPlaceDirectlyCount: number;
+  /** PR 28 — ambiguous rows that have a deterministic best-copy winner. */
+  readonly recommendedAmbiguousCount: number;
+  /** PR 28 — ambiguous rows that still need a manual choice (ties / no candidates). */
+  readonly manualAmbiguousCount: number;
 }
 
 export interface MasterGapReport {
@@ -128,6 +153,10 @@ export interface MasterGapDashboardSummary {
   readonly inLotUnmaterialized: number;
   readonly invalidCount: number;
   readonly canPlaceDirectlyCount: number;
+  /** PR 28 — sum of binder.recommendedAmbiguousCount across binders. */
+  readonly recommendedAmbiguousCount: number;
+  /** PR 28 — sum of binder.manualAmbiguousCount across binders. */
+  readonly manualAmbiguousCount: number;
   readonly averageCompletionPercent: number;
   readonly closestBinder: MasterGapBinderSummary | null;
   readonly weakestBinder: MasterGapBinderSummary | null;
@@ -479,6 +508,14 @@ interface BinderRowAggregate {
   invalidVariant: number;
   unverifiedVariantData: number;
   canPlaceDirectlyCount: number;
+  /** PR 28 — ambiguous rows with a deterministic best-copy winner. */
+  recommendedAmbiguousCount: number;
+  /**
+   * PR 28 — ambiguous rows that still need a manual choice. Includes
+   * the `manual_required` (top-score tie) and `no_candidates` cases
+   * so a single chip can communicate "still needs your eyes".
+   */
+  manualAmbiguousCount: number;
 }
 
 function emptyAggregate(): BinderRowAggregate {
@@ -495,12 +532,18 @@ function emptyAggregate(): BinderRowAggregate {
     invalidVariant: 0,
     unverifiedVariantData: 0,
     canPlaceDirectlyCount: 0,
+    recommendedAmbiguousCount: 0,
+    manualAmbiguousCount: 0,
   };
 }
 
 function addToAggregate(
   agg: BinderRowAggregate,
-  row: { status: MasterGapStatus; canPlaceDirectly: boolean },
+  row: {
+    status: MasterGapStatus;
+    canPlaceDirectly: boolean;
+    bestCopyRecommendation: MasterGapBestCopyRecommendation | null;
+  },
 ): void {
   if (row.status === 'blank_slot') return;
   agg.totalTargetSlots += 1;
@@ -526,6 +569,14 @@ function addToAggregate(
       break;
     case 'ambiguous_owned':
       agg.ambiguousOwned += 1;
+      // PR 28 — split ambiguous rows by whether best-copy can pick a
+      // deterministic winner. The classification stays
+      // `ambiguous_owned`; only the overlay decides.
+      if (row.bestCopyRecommendation?.status === 'recommended') {
+        agg.recommendedAmbiguousCount += 1;
+      } else {
+        agg.manualAmbiguousCount += 1;
+      }
       break;
     case 'invalid_assignment':
       agg.invalidAssignment += 1;
@@ -577,6 +628,8 @@ export function buildBinderSummary(
     completionPercent,
     actionableCount,
     canPlaceDirectlyCount: agg.canPlaceDirectlyCount,
+    recommendedAmbiguousCount: agg.recommendedAmbiguousCount,
+    manualAmbiguousCount: agg.manualAmbiguousCount,
   };
 }
 
@@ -598,6 +651,8 @@ export function buildDashboardSummary(
       inLotUnmaterialized: 0,
       invalidCount: 0,
       canPlaceDirectlyCount: 0,
+      recommendedAmbiguousCount: 0,
+      manualAmbiguousCount: 0,
       averageCompletionPercent: 0,
       closestBinder: null,
       weakestBinder: null,
@@ -614,6 +669,8 @@ export function buildDashboardSummary(
   let inLotUnmaterialized = 0;
   let invalidCount = 0;
   let canPlaceDirectlyCount = 0;
+  let recommendedAmbiguousCount = 0;
+  let manualAmbiguousCount = 0;
   for (const b of binders) {
     totalTargetSlots += b.totalTargetSlots;
     complete += b.complete;
@@ -625,6 +682,8 @@ export function buildDashboardSummary(
     inLotUnmaterialized += b.inLotUnmaterialized;
     invalidCount += b.invalidAssignment + b.invalidVariant;
     canPlaceDirectlyCount += b.canPlaceDirectlyCount;
+    recommendedAmbiguousCount += b.recommendedAmbiguousCount;
+    manualAmbiguousCount += b.manualAmbiguousCount;
   }
   // Closest = highest completion %, but only among binders that
   // actually have target slots and aren't yet at 100%. Weakest =
@@ -669,6 +728,8 @@ export function buildDashboardSummary(
     inLotUnmaterialized,
     invalidCount,
     canPlaceDirectlyCount,
+    recommendedAmbiguousCount,
+    manualAmbiguousCount,
     averageCompletionPercent,
     closestBinder,
     weakestBinder,

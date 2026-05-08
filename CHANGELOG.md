@@ -8,6 +8,137 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR 28 — Desktop app + smart placement engine)
+PR 28 lands two big changes in one bounded PR:
+
+1. **Desktop app shell** — Tauri v2 scaffold so the app can run as a native window with its own icon and persistent IndexedDB store, alongside the existing browser app.
+2. **Smart placement engine** — best-copy scoring + recommended-placement service + master-gap UI overlay + dashboard command-center split. The 44 ambiguous_owned-rader brukeren hadde i Base Set 1 Master kan nå plasseres med ett klikk per rad eller én bulk-operasjon.
+
+**Hard rules carried forward:** no schema migration, no new IndexedDB store, no Electron, no auto-update, no code signing, no external API beyond the existing pokemontcg.io sync, no pricing/value lookup, no scanner, no CSV import, no broad Tauri filesystem/shell capabilities, no silent assignment, no direct `binderSlotsRepo.update` for recommended placement (PR 24's `assignHoldingToSlot` is reused), no PR 25 classification change.
+
+#### Desktop app (Tauri v2)
+- `src-tauri/{Cargo.toml,build.rs,tauri.conf.json,src/main.rs,capabilities/main.json}` — full Tauri v2 scaffold.
+- `package.json` — added `tauri`, `desktop:dev`, `desktop:build`, `desktop:check` scripts and `@tauri-apps/cli` devDependency. Existing browser scripts unchanged.
+- `vite.config.ts` — fixed dev port 5173, `strictPort: true`, `src-tauri/**` ignored in the watcher, `clearScreen: false` so Tauri's own startup messages survive. Browser dev/build behaviour unchanged.
+- `src-tauri/capabilities/main.json` — only `core:default`. **No `fs:`, `shell:`, `clipboard:`, or remote-URL permissions.** A static test asserts these are absent.
+- `src-tauri/src/main.rs` — minimal Tauri builder; no custom commands, no filesystem, no shell, no network.
+- `docs/DESKTOP_APP.md` — Windows prerequisites (Rust, MSVC, WebView2), commands, data note (separate IndexedDB profiles, backup is the migration path), security note (no signing, no auto-update), troubleshooting.
+- Topbar runtime badge: `data-region="runtime-badge"` reads `window.__TAURI_INTERNALS__` and renders `Desktop` only when present. Browser tests verify it stays hidden by default.
+
+#### Best-copy scoring engine
+- `src/services/best-copy-service.ts` — pure function `recommendBestCopy({ requiredFinish, candidates })`. No DB, no DOM, no external API, no price lookup. Score components: +100 base, +100 finish-match, condition (NM/LP/MP/HP/DMG), language (en/other/empty), status (owned beats duplicate / for_sale / for_trade / upgrade_needed / ordered / wanted), graded penalty when a raw alternative exists, special-variant penalty when a non-special alternative exists. Tied top scores → `manual_required`. Wrong-finish disqualifies before scoring.
+- `src/domain/master-set-gap.ts` — added `MasterGapBestCopyRecommendation` overlay (`status` / `recommendedHoldingId` / `score` / `reasons` / `candidateCount`) on `MasterGapRow`. Per-binder + dashboard summaries gain `recommendedAmbiguousCount` and `manualAmbiguousCount` aggregates. PR 25 `ambiguous_owned` classification semantics are unchanged.
+- `src/services/master-set-gap-service.ts` — runs `recommendBestCopy` only for ambiguous rows, reusing the existing in-memory `holdingsById` map. No extra DB calls — the no-per-slot-Dexie-call performance contract still holds.
+
+#### Master-gap UI
+- Ambiguous rows render an overlay in the reason cell:
+  - `recommended` → "Anbefalt kopi · score N" + bullet-list of reasons + a primary `Plasser anbefalt` action button (alongside `Velg holding`).
+  - `manual_required` → "Ingen trygg anbefaling — velg manuelt" + only `Velg holding`.
+  - `no_candidates` → "Ingen kandidat funnet — oppdater eller velg manuelt".
+- `Plasser anbefalt` calls PR 24's `assignHoldingToSlot` directly (never `binderSlotsRepo.update`); failure is surfaced inline.
+- New binder-header bulk button: `Plasser alle anbefalte (N)`. Disabled when `recommendedAmbiguousCount === 0`. Click opens a confirmation dialog (`Avbryt` / `Plasser anbefalte`) that explicitly states "Bare rader med én trygg anbefaling blir plassert. Uklare valg hoppes over.". Result chip shows `X plassert · Y hoppet over — manuell vurdering kreves · Z feilet`. Summary survives the post-placement re-render via `state.lastBulkSummary`.
+
+#### Bulk recommended placement service
+- `src/services/recommended-placement-service.ts` — sequential walk over the report's ambiguous rows. Re-reads slot + holding + binder from the repo before each assignment so a stale snapshot can never write through outdated data. Failures (slot deleted, holding deleted, contract violation) are recorded individually and never abort the loop. Skips `manual_required`, `no_candidates`, null-recommendation, and non-ambiguous rows. **Does not touch `binderSlotsRepo.update` directly** — verified by both a mock-based test (the assign service is the only writer in the path) and a static-source test that greps for the call.
+
+#### Command center upgrade
+- `src/services/command-center-service.ts` — split `resolve_ambiguous_owned` into two new kinds: `place_recommended_copies` (warning, count = `recommendedAmbiguousCount`, action `Åpne master gap`) and `resolve_manual_ambiguous` (warning, count = `manualAmbiguousCount`). Sort order: critical first, then `place_recommended_copies` before `resolve_manual_ambiguous`. Both kinds get the focus-mode boost in `master_set` and `binder_work` modes. Legacy fallback: when a summary doesn't carry the new aggregates, the original `resolve_ambiguous_owned` chip still renders.
+
+#### Performance / safety
+- Browser JS bundle: 446 KB → ~462 KB (+16 KB, gzip +~10 KB). Well inside the +35 KB stop condition.
+- No new IndexedDB store, no schema migration, no per-slot DB queries.
+- Bulk placement is sequential and never silently auto-assigns without confirmation.
+- Tauri capabilities are minimal (`core:default` only).
+- Recommended placement is a thin orchestration over `assignHoldingToSlot`; PR 24's one-holding-one-slot contract remains the single writer.
+
+#### Touched / new files
+- `package.json`, `vite.config.ts` — Tauri scripts + Vite port pinning.
+- `src-tauri/{Cargo.toml,build.rs,tauri.conf.json,src/main.rs,capabilities/main.json}` — new.
+- `docs/DESKTOP_APP.md` — new.
+- `src/services/best-copy-service.ts` — new.
+- `src/services/recommended-placement-service.ts` — new.
+- `src/domain/master-set-gap.ts` — recommendation overlay types + aggregates.
+- `src/services/master-set-gap-service.ts` — best-copy integration.
+- `src/services/command-center-service.ts` — split + sort order.
+- `src/views/master-gap.ts` — overlay, row action, bulk button, confirmation, summary.
+- `src/app.ts` — `isTauriRuntime` + `Desktop` runtime badge.
+- `src/styles.css` — PR 28 sections.
+- 5 new test files: `desktop-app-config.test.ts` (30), `best-copy-service.test.ts` (22), `master-gap-best-copy.test.ts` (16), `recommended-placement-service.test.ts` (16), `command-center-best-copy.test.ts` (9). Plus 3 added cases to `app-shell-desktop.test.ts` covering the runtime badge.
+
+#### Test totals
+- 105 test files, **~1063 tests** (up from 970; +93). Typecheck green. Browser build green.
+
+#### Verification matrix
+
+```
+Baseline:
+[x] npm run typecheck before changes — 970 tests
+[x] npm test before changes — 970 tests
+[x] npm run build before changes — 446 KB JS / 117 KB gzip
+
+Desktop scaffold:
+[x] package scripts added (tauri, desktop:dev, desktop:build, desktop:check)
+[x] Tauri config present (src-tauri/tauri.conf.json)
+[x] capabilities minimal (core:default only)
+[x] docs present (docs/DESKTOP_APP.md)
+[x] desktop config tests pass (30 cases)
+
+Browser app:
+[x] npm run typecheck
+[x] npm test
+[x] npm run build
+[x] browser smoke pass
+[x] 0 console errors/warnings
+
+Desktop app:
+[ ] npm run desktop:dev — NOT VERIFIED, prerequisite missing: cargo / Rust toolchain not installed on this machine
+[ ] npm run desktop:build — NOT VERIFIED, same prerequisite
+[ ] Desktop badge visible in Tauri — NOT VERIFIED, but mocked test confirms
+    `window.__TAURI_INTERNALS__` toggles the badge on/off correctly
+
+Smart placement:
+[x] best-copy service tests pass (22)
+[x] master-gap recommendation tests pass (16)
+[x] recommended placement service tests pass (16)
+[x] command center split tests pass (9)
+[x] Plasser anbefalt browser smoke pass
+[x] Plasser alle anbefalte browser smoke pass
+
+Safety:
+[x] no schema migration
+[x] no new DB store
+[x] no direct binderSlotsRepo.update for recommended placement
+[x] PR24 assignHoldingToSlot reused
+[x] no PR25 classification change
+[x] no fs/shell Tauri permissions
+[x] no pricing/value scoring
+```
+
+#### Known limitations
+- Desktop app does not auto-update.
+- Desktop app is not code-signed (Windows SmartScreen will warn on first run of a self-built `.exe`).
+- Browser and desktop IndexedDB stores are separate WebView profiles; the user must use Backup → Eksporter / Restore to move data between them.
+- Best-copy scoring does not use market value (deliberate — PR 28 hard scope).
+- Best-copy scoring does not split `quantity > 1` holdings.
+- Tied top scores still require manual choice (no silent disambiguation).
+- Desktop build verification depends on local Rust / MSVC / WebView2; this PR's verifier could not run them and the desktop scripts are documented as scaffold-only on this machine.
+
+#### Out of scope
+- ❌ Electron / cloud / backend / login
+- ❌ Auto-update / code signing / publishing workflow
+- ❌ External API calls beyond the existing Pokémon sync
+- ❌ Pricing / value layer
+- ❌ CardMarket integration
+- ❌ Scanner / barcode
+- ❌ CSV import
+- ❌ Schema migration
+- ❌ New IndexedDB store
+- ❌ Backup format change
+- ❌ Quantity splitting
+- ❌ PR 24 assignment rule changes
+- ❌ PR 25 master-gap classification changes
+- ❌ Broad Tauri filesystem / shell permissions
+
 ### Added (PR 27 — Morten personal command center + persistent workspace)
 The app is no longer "a Pokémon tracker" — it's Morten's personal Pokémon operating system. Personal preferences persist in the existing settings store; the dashboard gains a prioritised "Arbeidskø" command center; master-gap density / hide-complete / only-actionable / default filter survive page reloads; the topbar brand and default start route are configurable; and a `Snarveier` button surfaces every keyboard shortcut. Workflow polish only — **no schema migration**, **no new IndexedDB store**, **no desktop wrapper**, **no `package.json` desktop scripts**, **no external API**, **no pricing/value lookup**, **no CSV import**, **no scanner**. Existing PR 24 assignment rules and PR 25 master-gap classification semantics are unchanged. Backup format is unchanged.
 

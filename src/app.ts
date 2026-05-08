@@ -173,6 +173,18 @@ const SIDEBAR_KEYSHORTCUT: Partial<Record<Route, string>> = {
   wishlist: 'g w',
 };
 
+// PR 28 — runtime detection. Tauri v2 injects `window.__TAURI_INTERNALS__`
+// before the app boots, which is the documented signal Tauri itself
+// uses. We never import a Tauri JS API — this is a pure feature flag,
+// safe in browser tests (where the property is absent) and safe in
+// the desktop shell (where it is present).
+export function isTauriRuntime(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    Object.prototype.hasOwnProperty.call(window, '__TAURI_INTERNALS__')
+  );
+}
+
 function renderShell(): string {
   const navItems = NAV_LINKS.map((link) => {
     const shortcut = SIDEBAR_KEYSHORTCUT[link.route];
@@ -198,6 +210,7 @@ function renderShell(): string {
       <header class="topbar" role="banner" data-region="topbar">
         <a class="topbar__brand" href="#dashboard" data-region="topbar-brand">Pokemon TCG Tracker</a>
         <div class="topbar__search" data-region="topbar-search"></div>
+        ${isTauriRuntime() ? '<span class="topbar__runtime-badge" data-region="runtime-badge" title="Kjører i Tauri desktop-shell">Desktop</span>' : ''}
         <div class="topbar__status" data-region="topbar-status" aria-live="polite"></div>
       </header>
       <div class="layout">

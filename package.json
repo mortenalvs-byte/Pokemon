@@ -15,9 +15,14 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:check": "npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
     "@vitest/ui": "^4.1.5",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
