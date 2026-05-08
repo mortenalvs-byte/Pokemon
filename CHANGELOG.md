@@ -8,6 +8,97 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR 25 — Master set gap analysis + dashboard intelligence)
+PR 25 adds a read-only analysis layer that answers — per binder slot — what is complete, what is missing, what is owned but unplaced, what is on the wishlist, what is in a lot, what can be placed directly, and what is invalidly assigned or has the wrong variant. PR 24 made binders practical to fill; PR 25 makes the app intelligent about it. Workflow only — no schema migration, no schema fields added, no pricing/value changes, no global search changes.
+
+#### Review patch (lot-finish gate + weighted dashboard average)
+The first revision left two correctness gaps that surfaced in code review:
+
+1. **Lot coverage matched cardId only**, ignoring `LotItemRecord.finish`. A reverse-holo template slot was reported as `in_lot_unmaterialized` even when the lot only contained the normal print of that card. Fixed in `classifySlot`: the lot filter now requires `li.finish === required.finish` when `required.finish !== null`. Edition is still informational only — `WishlistRecord` carries no edition, so adding edition as a hard gate would surface false negatives in the same row. Three new service tests cover the rule (reverse template + normal lot → missing; reverse template + reverse_holo lot → in_lot; normal slot + reverse_holo-only lot → missing).
+
+2. **`averageCompletionPercent` was an unweighted mean** of per-binder completion %, so an empty binder with `totalTargetSlots=0` dragged the global Dashboard average down by counting equally with a 100-slot binder. Switched to **weighted by total target slots**: `averageCompletionPercent = totalTargetSlots === 0 ? 0 : round(complete / totalTargetSlots * 100)`. New service test #23 verifies that a (1/1=100%) binder + (0/100=0%) binder yields a weighted 1%, not the unweighted 50%. Per-binder `completionPercent` is unchanged; this only affects the cross-binder rollup.
+
+Also: the multi-slot performance test was renamed from "1088-slot" to "multi-slot" to match the actual fixture (50 slots — call-count invariance proves the no-per-slot-Dexie contract; the QA-data smoke test confirms the same on 1088-slot Vault X 16-pocket binders).
+
+#### Locked rules (carried forward)
+- Read-only service. Writes only happen when the user clicks an existing safe action (`Plasser`, `Velg holding`, `Legg i ønskeliste`).
+- No schema migration. `BinderSlotRecord` still has no `finish` / `edition` field; reverse-holo encoding stays in `note` via `REVERSE_HOLO_TEMPLATE_MARKER`.
+- `tcgplayer.prices` is variant truth. The required-finish derivation reuses `availableVariants(card)` from `domain/card-variants.ts` — no rarity / set-name guessing.
+- Reverse-holo template slots require `finish=reverse_holo`. A normal-finish holding bound to a reverse template surfaces as `invalid_variant`, never `complete`.
+- Normal target slots never invent phantom reverse-holo gaps. Holo-only cards may require `holo` when no `normal` printing exists.
+- Ambiguous matches (>1 unassigned matching holding) are never auto-picked — user picks via the existing assign modal.
+- PR 24's `assignHoldingToSlot` is reused for placement; the gap view never duplicates the slot-write contract.
+- Edition is informational only in PR 25 — `WishlistRecord` carries no `edition`, so introducing a hard edition match would surface false negatives.
+
+#### New domain module: `src/domain/master-set-gap.ts`
+- 11 status classes: `complete | missing | owned_unplaced | wishlist_wanted | wishlist_ordered | in_lot_unmaterialized | ambiguous_owned | invalid_assignment | invalid_variant | unverified_variant_data | blank_slot`.
+- `deriveRequiredVariant(slot, card)` — reverse template → `reverse_holo`; otherwise the first available finish (`normal` > `holo` > `reverse_holo`); cards with no recognised tcgplayer keys mark `verified=false`.
+- `classifySlot(slot, deps)` — pure classifier consuming pre-built lookups so the service can run a 1088-slot binder without per-slot work.
+- `buildBinderSummary` + `buildDashboardSummary` — aggregates that drive the dashboard card and binder banner. `closestBinder` is the highest-completion binder under 100%; `weakestBinder` is the lowest.
+- `STATUS_LABEL_NB` — Norwegian status labels for the UI (never exposes the raw `template:reverse_holo` token).
+
+#### New shared service: `src/services/master-set-gap-service.ts`
+- `createMasterSetGapService(deps)` returns `{ buildBinderReport, buildDashboardSummary }`.
+- Bulk-load contract: one `listLive()` call per store (binders / binderSlots / holdings / wishlist / lotItems) plus one `cardsRepo.list()` and `setsRepo.list()` (PR 21 caches handle 20k cards / 172 sets without going to disk twice). The 22nd test asserts via repo spies that `holdingsRepo.listByCardId`, `wishlistRepo.listByCardId`, `lotItemsRepo.listByCardId`, and `binderSlotsRepo.listByBinderId` are NEVER called during a binder report — proving the no-per-slot-Dexie contract.
+- Service never dispatches `USER_DATA_CHANGED_EVENT`. The view fires it once after a successful `Plasser` click.
+
+#### Router additions: `src/router.ts`
+- New `'master-gap'` route. Two URL forms — `#master-gap` (binder selector view) and `#master-gap/<binderId>` (full report).
+- `navigateToMasterGap()`, `navigateToMasterGapBinder(binderId)`, `getCurrentMasterGapBinderId()`.
+- Malformed encoding → null. Bare `#master-gap/` falls through the master-gap route with no binder id (selector view handles it).
+
+#### New view: `src/views/master-gap.ts`
+- Selector mode (no binder id): dashboard summary chips + clickable binder list with completion %, candidate counts and feil counts.
+- Report mode (binder id): per-binder header (counts + `Åpne perm`), filter strip (`Alle | Mangler | Eier ikke plassert | Ønsket / bestilt | Lot | Feil`), table with `Side | Kort | Set | Finish | Status | Reason | Handlinger`, in-memory filter (no DB roundtrip), pagination at 50 rows per page.
+- Per-row actions match the status: `Åpne kort`, `Gå til slot`, `Legg i ønskeliste`, `Plasser` (only `owned_unplaced` with `canPlaceDirectly`), `Velg holding` (ambiguous → existing assign modal), `Åpne wishlist`, `Åpne lot`. `invalid_*` rows surface critical styling but do NOT auto-fix anything.
+
+#### Dashboard "Master Set Progress" card
+- Lazy-loaded in `src/views/dashboard.ts` so the main `DashboardSnapshot` (which only does `count()` for cards/sets) stays light. Skeleton paints first; counts populate when `buildDashboardSummary()` resolves.
+- Average completion %, total target slots, complete, missing, owned-unplaced, wanted, ordered, in lots, invalid, can-place-directly, plus `Nærmest komplett` / `Svakeste` quick-jumps to `#master-gap/<binderId>`.
+- Refreshes on `USER_DATA_CHANGED_EVENT` and `SYNC_STATUS_CHANGED_EVENT` via the existing dashboard refresh path.
+- Service throw renders an inline error chip; the rest of the dashboard keeps rendering.
+
+#### Binder Detail summary banner + toolbar
+- New banner above the toolbar: `Master gap: A / B fullført · X mangler · Y eies men ikke plassert · Z ønsket · W bestilt · V feil`. When `canPlaceDirectlyCount > 0`: append `· N kan plasseres direkte`. `Vis gap` button → `#master-gap/<binderId>`.
+- New toolbar button: `Gap-analyse` → `navigateToMasterGapBinder(binder.id)`.
+- Banner is lazy-loaded with the same pattern as the dashboard card so it never blocks the binder render.
+
+#### Touched / new files
+- `src/domain/master-set-gap.ts` — new.
+- `src/services/master-set-gap-service.ts` — new.
+- `src/views/master-gap.ts` — new.
+- `src/router.ts` — `'master-gap'` added to `Route`, prefix parsing, three navigation helpers.
+- `src/app.ts` — `master-gap` registered in `VIEW_MOUNTERS`.
+- `src/views/dashboard.ts` — Master Set Progress card builder + lazy populate.
+- `src/views/binder-detail.ts` — `Gap-analyse` toolbar button + lazy gap summary banner.
+- `src/styles.css` — `.master-gap-view*`, `.master-gap-table*`, `.master-gap-row*`, `.binder-detail-view__gap-summary*`, `.binder-detail-view__gap-analysis`, `.dashboard-card__loading`, `.dashboard-card__empty` (~280 LOC).
+- `tests/master-set-gap-service.test.ts` — new, 26 cases covering every status class + aggregations + the no-per-slot-Dexie performance contract + 4 review-patch cases (lot-finish mismatch × 3, weighted dashboard average).
+- `tests/router-master-gap.test.ts` — new, 5 cases (route resolution, decode, malformed input, navigation helpers).
+- `tests/master-gap-view.test.ts` — new, 11 cases (loading / selector / report mode, filter, `Plasser` only on canPlaceDirectly, `Velg holding` for ambiguous, invalid_variant styling, soft-deleted binder, wishlist row).
+- `tests/dashboard-master-gap.test.ts` — new, 7 cases (card render, lazy populate, empty state, navigation, refresh on event, error survival).
+
+#### Test totals
+- 88 test files, **810 tests** (up from 761; +4 review-patch cases). Typecheck green. Build green.
+
+#### Known limitations
+- Edition is not part of the matching key in PR 25. A wishlist row for `first_edition` and a holding for `unlimited` of the same card+finish still match here because the wishlist/binder schemas don't carry edition. A future PR would need a schema migration to tighten this.
+- `unverified_variant_data` is reported but never auto-fixed. The user must edit the underlying data (sync the cache, or override via the existing escape-hatch path).
+- "Best copy" preference for `owned_unplaced` (NM > LP, ungraded > graded) is intentionally not implemented — this matches PR 24's explicit deferral. `ambiguous_owned` covers the >1-candidate case.
+- Lot navigation from a row picks the first unmaterialised lot item; lots with multiple matching items still all link to the same lot detail.
+
+#### Out of scope (per the spec)
+- ❌ Desktop wrapper / Electron / Tauri / installer / .exe / auto-update
+- ❌ Pricing / value layer
+- ❌ CSV import
+- ❌ Scanner / barcode
+- ❌ Wishlist edition migration / new schema fields
+- ❌ Quantity splitting (per-unit physical placement)
+- ❌ Best-copy logic
+- ❌ Cross-binder optimisation
+- ❌ Automatic purchase recommendations
+- ❌ External price lookup
+- ❌ Schema migration
+
 ### Added (PR 24 — Binder direct-add / auto-assign holdings)
 PR 24 makes binders practical to fill. Before this PR, getting an owned card into the right slot required scrolling to the slot, opening the assign modal, picking the holding from a list, and submitting — fine for one slot, painful for a 360-slot master set. Workflow only — no schema migration, no master-set gap analysis, no pricing/value, no global search changes.
 

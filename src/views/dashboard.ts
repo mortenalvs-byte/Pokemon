@@ -18,6 +18,7 @@ import {
   type ActionItem,
   type ActionSeverity,
 } from '../domain/dashboard-actions';
+import type { MasterGapDashboardSummary } from '../domain/master-set-gap';
 import { createAppMetaRepo } from '../repositories/app-meta-repo';
 import { createBindersRepo } from '../repositories/binders-repo';
 import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
@@ -27,7 +28,14 @@ import { createLotItemsRepo } from '../repositories/lot-items-repo';
 import { createLotsRepo } from '../repositories/lots-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
 import { createWishlistRepo } from '../repositories/wishlist-repo';
-import { navigate, navigateToBinder, navigateToCard } from '../router';
+import {
+  navigate,
+  navigateToBinder,
+  navigateToCard,
+  navigateToMasterGap,
+  navigateToMasterGapBinder,
+} from '../router';
+import { createMasterSetGapService } from '../services/master-set-gap-service';
 import {
   createDashboardService,
   type BindersSection,
@@ -103,6 +111,12 @@ async function renderInto(container: HTMLElement): Promise<void> {
   grid.appendChild(buildBackupCard(snapshot));
   grid.appendChild(buildCollectionCard(snapshot));
   grid.appendChild(buildBindersCard(snapshot));
+  // PR 25 — Master Set Progress card. Lazy-loaded so the main snapshot
+  // (which only walks `count()` for cards/sets) stays light. The card
+  // renders a skeleton, then runs the gap service in the background.
+  const masterGapCard = buildMasterGapCardSkeleton();
+  grid.appendChild(masterGapCard);
+  void populateMasterGapCard(masterGapCard);
   grid.appendChild(buildLotsCard(snapshot));
   grid.appendChild(buildWishlistCard(snapshot));
   root.appendChild(grid);
@@ -384,6 +398,124 @@ function buildTopBindersList(binders: BindersSection): HTMLElement {
     list.appendChild(li);
   }
   return list;
+}
+
+// ---------------------------------------------------------------------
+// PR 25 — Master Set Progress card (lazy-loaded)
+
+function buildMasterGapCardSkeleton(): HTMLElement {
+  const card = document.createElement('article');
+  card.className = 'dashboard-card';
+  card.dataset['region'] = 'card-master-gap';
+
+  const header = document.createElement('header');
+  header.className = 'dashboard-card__header';
+  const heading = document.createElement('h2');
+  heading.className = 'dashboard-card__title';
+  heading.textContent = 'Master Set Progress';
+  header.appendChild(heading);
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'dashboard-card__nav';
+  open.dataset['action'] = 'open-master-gap';
+  open.textContent = 'Åpne gap-rapport';
+  open.addEventListener('click', () => navigateToMasterGap());
+  header.appendChild(open);
+  card.appendChild(header);
+
+  const skeleton = document.createElement('p');
+  skeleton.className = 'dashboard-card__loading';
+  skeleton.dataset['region'] = 'master-gap-loading';
+  skeleton.textContent = 'Laster gap-analyse …';
+  card.appendChild(skeleton);
+  return card;
+}
+
+async function populateMasterGapCard(card: HTMLElement): Promise<void> {
+  let summary: MasterGapDashboardSummary;
+  try {
+    const db = getDb();
+    summary = await createMasterSetGapService({
+      bindersRepo: createBindersRepo(db),
+      binderSlotsRepo: createBinderSlotsRepo(db),
+      cardsRepo: createCardsRepo(db),
+      setsRepo: createSetsRepo(db),
+      holdingsRepo: createHoldingsRepo(db),
+      wishlistRepo: createWishlistRepo(db),
+      lotItemsRepo: createLotItemsRepo(db),
+    }).buildDashboardSummary();
+  } catch (caught) {
+    if (!card.isConnected) return;
+    const loading = card.querySelector<HTMLElement>(
+      '[data-region="master-gap-loading"]',
+    );
+    loading?.remove();
+    const err = document.createElement('p');
+    err.className = 'dashboard-card__warning';
+    err.dataset['region'] = 'master-gap-error';
+    err.textContent =
+      caught instanceof Error
+        ? `Kunne ikke laste master gap: ${caught.message}`
+        : 'Kunne ikke laste master gap.';
+    card.appendChild(err);
+    return;
+  }
+  if (!card.isConnected) return;
+  const loading = card.querySelector<HTMLElement>(
+    '[data-region="master-gap-loading"]',
+  );
+  loading?.remove();
+
+  if (summary.binderCount === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'dashboard-card__empty';
+    empty.dataset['region'] = 'master-gap-empty';
+    empty.textContent =
+      'Ingen permer ennå. Lag en perm for å se master gap-analyse.';
+    card.appendChild(empty);
+    return;
+  }
+
+  const stats = document.createElement('dl');
+  stats.className = 'dashboard-card__stats';
+  appendStat(stats, 'Snitt fullført', `${summary.averageCompletionPercent}%`);
+  appendStat(stats, 'Mål-slots', String(summary.totalTargetSlots));
+  appendStat(stats, 'Fullført', String(summary.complete));
+  appendStat(stats, 'Mangler', String(summary.missing));
+  appendStat(stats, 'Eier, ikke plassert', String(summary.ownedUnplaced));
+  appendStat(stats, 'Ønsket', String(summary.wishlistWanted));
+  appendStat(stats, 'Bestilt', String(summary.wishlistOrdered));
+  appendStat(stats, 'I lot', String(summary.inLotUnmaterialized));
+  appendStat(stats, 'Feil', String(summary.invalidCount));
+  appendStat(
+    stats,
+    'Kan plasseres direkte',
+    String(summary.canPlaceDirectlyCount),
+  );
+  card.appendChild(stats);
+
+  if (summary.closestBinder !== null) {
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'dashboard-card__nav';
+    close.dataset['action'] = 'open-closest-binder';
+    close.textContent = `Nærmest komplett: ${summary.closestBinder.binderName} (${summary.closestBinder.completionPercent}%)`;
+    const closestId = summary.closestBinder.binderId;
+    close.addEventListener('click', () =>
+      navigateToMasterGapBinder(closestId),
+    );
+    card.appendChild(close);
+  }
+  if (summary.weakestBinder !== null) {
+    const weak = document.createElement('button');
+    weak.type = 'button';
+    weak.className = 'dashboard-card__nav';
+    weak.dataset['action'] = 'open-weakest-binder';
+    weak.textContent = `Svakeste: ${summary.weakestBinder.binderName} (${summary.weakestBinder.completionPercent}%)`;
+    const weakestId = summary.weakestBinder.binderId;
+    weak.addEventListener('click', () => navigateToMasterGapBinder(weakestId));
+    card.appendChild(weak);
+  }
 }
 
 function buildLotsCard(snapshot: DashboardSnapshot): HTMLElement {

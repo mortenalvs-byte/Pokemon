@@ -23,16 +23,17 @@ export const SIDEBAR_ROUTES = [
 
 export type SidebarRoute = (typeof SIDEBAR_ROUTES)[number];
 
-// Includes `card-detail`, `binder-detail`, and `lot-detail` so the
-// view-mounter map can register them, but the router intentionally
-// does not treat the bare strings as valid hashes — they are only
-// reachable via their `#card/<id>`, `#binder/<id>`, and `#lot/<id>`
-// forms.
+// Includes `card-detail`, `binder-detail`, `lot-detail`, and
+// `master-gap` so the view-mounter map can register them. `master-gap`
+// is reachable as `#master-gap` (binder selector) or
+// `#master-gap/<binderId>` (full report); the others stay
+// `#card/<id>`, `#binder/<id>`, `#lot/<id>` only.
 export type Route =
   | SidebarRoute
   | 'card-detail'
   | 'binder-detail'
-  | 'lot-detail';
+  | 'lot-detail'
+  | 'master-gap';
 
 // Existing tests import `ROUTES`; keep it pointing at the sidebar list
 // so the canonical-routes assertion stays meaningful.
@@ -43,6 +44,13 @@ export const DEFAULT_ROUTE: SidebarRoute = 'dashboard';
 const CARD_PATH_PREFIX = 'card/';
 const BINDER_PATH_PREFIX = 'binder/';
 const LOT_PATH_PREFIX = 'lot/';
+// PR 25 — master gap. Two URL forms:
+//   `#master-gap`            → binder selector view
+//   `#master-gap/<binderId>` → full report for a binder
+// We treat both as the same `'master-gap'` route, then read the binder
+// id (if any) via `getCurrentMasterGapBinderId()`.
+const MASTER_GAP_ROUTE = 'master-gap';
+const MASTER_GAP_BINDER_PREFIX = 'master-gap/';
 
 export function isRoute(value: string): value is SidebarRoute {
   return (SIDEBAR_ROUTES as readonly string[]).includes(value);
@@ -50,6 +58,12 @@ export function isRoute(value: string): value is SidebarRoute {
 
 export function getCurrentRoute(): Route {
   const hash = window.location.hash.slice(1);
+  if (
+    hash === MASTER_GAP_ROUTE ||
+    hash.startsWith(MASTER_GAP_BINDER_PREFIX)
+  ) {
+    return 'master-gap';
+  }
   if (extractCardId(hash) !== null) {
     return 'card-detail';
   }
@@ -112,6 +126,27 @@ export function navigateToLot(lotId: string): void {
   window.location.hash = `${LOT_PATH_PREFIX}${encodeURIComponent(lotId)}`;
 }
 
+/**
+ * PR 25 — master gap report. With no binderId, opens the binder
+ * selector view. With a binderId, opens the full per-binder report.
+ */
+export function navigateToMasterGap(): void {
+  window.location.hash = MASTER_GAP_ROUTE;
+}
+
+export function navigateToMasterGapBinder(binderId: string): void {
+  window.location.hash = `${MASTER_GAP_BINDER_PREFIX}${encodeURIComponent(binderId)}`;
+}
+
+/**
+ * Returns the binder id from a `#master-gap/<binderId>` hash, or
+ * `null` for `#master-gap` and any other route. Malformed encoding
+ * returns `null`.
+ */
+export function getCurrentMasterGapBinderId(): string | null {
+  return extractMasterGapBinderId(window.location.hash.slice(1));
+}
+
 export function onRouteChange(handler: (route: Route) => void): () => void {
   const listener = (): void => {
     handler(getCurrentRoute());
@@ -163,6 +198,10 @@ function extractBinderSlotId(hash: string): string | null {
 
 function extractLotId(hash: string): string | null {
   return extractIdAfterPrefix(hash, LOT_PATH_PREFIX);
+}
+
+function extractMasterGapBinderId(hash: string): string | null {
+  return extractIdAfterPrefix(hash, MASTER_GAP_BINDER_PREFIX);
 }
 
 function extractIdAfterPrefix(hash: string, prefix: string): string | null {

@@ -7,6 +7,7 @@ import { mountCollectionView } from './views/collection';
 import { mountDashboardView } from './views/dashboard';
 import { mountLotDetailView } from './views/lot-detail';
 import { mountLotsView } from './views/lots';
+import { mountMasterGapView } from './views/master-gap';
 import { mountSettingsView, SYNC_STATUS_CHANGED_EVENT } from './views/settings';
 import { mountWishlistView } from './views/wishlist';
 import { mountGlobalSearch } from './components/global-search';
@@ -32,6 +33,7 @@ const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
   'card-detail': mountCardDetailView,
   'binder-detail': mountBinderDetailView,
   'lot-detail': mountLotDetailView,
+  'master-gap': mountMasterGapView,
 };
 
 interface NavLink {
