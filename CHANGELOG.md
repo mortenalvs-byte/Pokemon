@@ -8,6 +8,93 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR 26 — Desktop-ready app shell + workspace polish)
+PR 26 makes the app feel like a serious desktop workspace without changing any data model. App shell gets stable `data-region` hooks, the dashboard gets a workspace header and a next-best-action sentence inside Master Set Progress, the master-gap report gets a sticky toolbar with density / hide-complete / only-actionable toggles, the binder detail toolbar groups workflow actions vs view controls, and Vim-style keyboard shortcuts (`g d`, `g m`, etc.) land for desktop navigation. Workflow polish only — no schema migration, no new DB stores, no desktop wrapper, no Electron / Tauri / installer, no `package.json` desktop scripts, no pricing/value lookup, no external API.
+
+#### App shell regions (`src/app.ts`)
+- `<div class="app-shell" data-region="app-shell">` wraps topbar + layout.
+- Topbar carries `data-region="topbar"`, `topbar-brand`, the existing `topbar-search` (preserved verbatim — PR 23 global search still mounts there), and `topbar-status`.
+- Brand is now an anchor pointing at `#dashboard` so clicking the title acts like a typical desktop logo home button.
+- Sidebar carries `data-region="sidebar"`, content carries `data-region="content"` and keeps `id="content"` so existing CSS / mount targets continue to work.
+- Sidebar nav links advertise their keyboard shortcut via `aria-keyshortcuts` (e.g. `aria-keyshortcuts="g d"` on the Dashboard link) so screen readers and devtools can surface them without us shipping a visual hint.
+
+#### Keyboard shortcuts (new component `src/components/keyboard-shortcuts.ts`)
+- Vim-style two-key sequences: `g d` Dashboard, `g b` Browse, `g c` Collection, `g p` Permer, `g l` Lots, `g w` Wishlist, `g m` Master gap.
+- Single global `keydown` listener; `mountKeyboardShortcuts()` is idempotent so a re-mount (HMR / test) does not double-register. `resetKeyboardShortcutsForTests()` provided for test isolation.
+- Pending state expires after 1200 ms; Escape cancels.
+- Shortcut is silently ignored when the event target is `<input>`, `<textarea>`, `<select>`, `[contenteditable]`, or any element inside `[role="dialog"]`.
+- Modifier chords (Ctrl / Cmd / Alt) are ignored so `Ctrl+G` cannot start the sequence and `Cmd+K` continues to belong to PR 23's global search.
+
+#### View-density helpers (new domain module `src/domain/view-density.ts`)
+- Pure types + helpers: `ViewDensity = 'comfortable' | 'compact'`, `viewDensityLabel`, `nextViewDensity`. Per-view in-memory state only — no DB persistence in PR 26.
+
+#### Dashboard workspace polish (`src/views/dashboard.ts`)
+- New workspace header under `<h1>Dashboard`: "Kontrollrom for samling, permer, master set og backup." (`data-region="dashboard-workspace"`).
+- New `getMasterGapNextAction(summary)` helper picks one sentence based on the same Master Set Progress summary the chips already use. Priority: invalid > can-place-directly > owned-unplaced > ordered > wanted > missing > all-clear. Rendered as `<p data-region="master-gap-next-action">Neste beste handling: …</p>` after the lazy summary populates.
+- Master Set Progress card still loads lazy: skeleton paints first, then stats / empty / error replaces it. The main `DashboardSnapshot` is unchanged so dashboard load time stays bounded.
+- Dashboard grid now uses an explicit 3 / 2 / 1 column breakpoint set (≥1200, 768–1199, ≤767) instead of `auto-fill minmax(280px, 1fr)` so wide-screen layout is predictable.
+
+#### Master gap view polish (`src/views/master-gap.ts`)
+- New table toolbar wraps the existing filter strip plus three new toggles (`data-region="table-toolbar"`).
+- Density toggle (`data-action="toggle-density"`): `Tetthet: Kompakt` ↔ `Tetthet: Komfortabel`. Default is compact. Flips the table class between `master-gap-table--compact` and `master-gap-table--comfortable`. Pure cosmetic — does NOT reset `tablePage` and does NOT touch the cached report.
+- "Skjul fullførte" (`data-action="toggle-hide-complete"`): drops `complete` rows. Resets `tablePage = 0`.
+- "Kun handling" (`data-action="toggle-only-actionable"`): drops `complete` and `blank_slot` via the new `isActionableRow` predicate. Resets `tablePage = 0`. Strictly dominates "Skjul fullførte" — combining both still yields actionable-only.
+- Filter order: status filter (PR 25) → hideComplete → onlyActionable → pagination. None of these toggles reload the report; all run in-memory against the cached `MasterGapReport`. Test asserts `binderSlotsRepo.listLive` is not called when density is toggled.
+- Toolbar is sticky on screens ≥900px so it stays in view while scrolling a 1088-row report.
+
+#### Binder Detail workspace polish (`src/views/binder-detail.ts`)
+- Toolbar buttons are now grouped: view controls (Sider / Sjekkliste, search, filter) on the left, workflow actions (Auto-plasser, Gap-analyse, Eksporter sjekkliste) on the right.
+- Gap summary banner exposes `data-region="binder-gap-summary"` (PR 25's `data-region="gap-summary"` is preserved for callers that already use it). Banner text order is unchanged: `Master gap: X / Y fullført · Z mangler · A eies men ikke plassert · B ønsket · C bestilt · D feil`, with `· E kan plasseres` appended only when `canPlaceDirectlyCount > 0`.
+- `Gap-analyse` toolbar still routes to `#master-gap/<binderId>`; no new query params.
+
+#### CSS / desktop layout (`src/styles.css`)
+- Sticky sidebar on screens ≥1200px (anchored under `--topbar-height`).
+- Dashboard grid: 3 / 2 / 1 columns at 1200 / 768 / <768 breakpoints.
+- Master gap thead is sticky at ≥900px, offset by `--topbar-height + table-toolbar height` so column headers never disappear when scrolling.
+- Compact density: `padding-block: 0.35rem`, `font-size: 0.875rem`. Comfortable density: `padding-block: 0.65rem`.
+- Row actions wrap cleanly; binder toolbar action group floats right on desktop, stacks naturally on narrow widths.
+- All new selectors are clearly delimited by `/* PR 26 — … */` comment headers.
+
+#### Touched / new files
+- `src/app.ts` — shell wrapper, data-regions, keyboard-shortcut mount.
+- `src/components/keyboard-shortcuts.ts` — new.
+- `src/domain/view-density.ts` — new.
+- `src/views/dashboard.ts` — workspace header, `getMasterGapNextAction` (exported for tests), next-best-action render.
+- `src/views/master-gap.ts` — table toolbar, density / hideComplete / onlyActionable, filter composition.
+- `src/views/binder-detail.ts` — toolbar grouping, banner data-region.
+- `src/styles.css` — PR 26 desktop sections.
+- `tests/keyboard-shortcuts.test.ts` — new, 19 cases.
+- `tests/app-shell-desktop.test.ts` — new, 9 cases.
+- `tests/dashboard-workspace.test.ts` — new, 14 cases.
+- `tests/master-gap-desktop-polish.test.ts` — new, 15 cases.
+
+#### Test totals
+- 92 test files, **867 tests** (up from 810). Typecheck green. Build green.
+
+#### Performance
+- Dashboard Master Set Progress remains lazy-loaded; the main `DashboardSnapshot` does not start loading the cards/sets list.
+- Master-gap density / hide-complete / only-actionable toggles re-render from the cached report — verified by spy: `binderSlotsRepo.listLive` is not called on density toggle.
+- Single global `keydown` listener; idempotent mount.
+- CSS layout uses media queries only — no JS measurement loops.
+
+#### Known limitations
+- View density is per-mount in-memory state. Reloading the page or switching routes resets it to compact. Persisting density across sessions would need a settings entry; explicitly out of scope for PR 26.
+- Sticky thead offset assumes the standard topbar + table-toolbar combined height; very small viewports may stack differently and the offset is rounded to a constant.
+- Keyboard shortcut hint is exposed only via `aria-keyshortcuts` attributes — no visible cheatsheet UI in this PR.
+
+#### Out of scope (per the spec)
+- ❌ Electron / Tauri / desktop wrapper / installer / .exe / auto-update
+- ❌ `package.json` desktop packaging scripts
+- ❌ Schema migration / new IndexedDB stores
+- ❌ Backup format changes
+- ❌ Pricing / value layer
+- ❌ External API calls
+- ❌ CSV import
+- ❌ Scanner / barcode
+- ❌ Login / cloud / backend
+- ❌ Changes to PR 24 assignment rules
+- ❌ Changes to PR 25 master-gap classification rules
+
 ### Added (PR 25 — Master set gap analysis + dashboard intelligence)
 PR 25 adds a read-only analysis layer that answers — per binder slot — what is complete, what is missing, what is owned but unplaced, what is on the wishlist, what is in a lot, what can be placed directly, and what is invalidly assigned or has the wrong variant. PR 24 made binders practical to fill; PR 25 makes the app intelligent about it. Workflow only — no schema migration, no schema fields added, no pricing/value changes, no global search changes.
 
