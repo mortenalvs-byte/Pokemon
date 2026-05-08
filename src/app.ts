@@ -9,6 +9,7 @@ import { mountLotDetailView } from './views/lot-detail';
 import { mountLotsView } from './views/lots';
 import { mountSettingsView, SYNC_STATUS_CHANGED_EVENT } from './views/settings';
 import { mountWishlistView } from './views/wishlist';
+import { mountGlobalSearch } from './components/global-search';
 import { getCurrentRoute, onRouteChange, type Route } from './router';
 import { APP_META_KEYS } from './domain/types';
 import { getDb } from './db/database';
@@ -74,6 +75,7 @@ function renderShell(): string {
   return `
     <header class="topbar" role="banner">
       <div class="topbar__brand">Pokemon TCG Tracker</div>
+      <div class="topbar__search" data-region="topbar-search"></div>
       <div class="topbar__status" data-region="topbar-status" aria-live="polite"></div>
     </header>
     <div class="layout">
@@ -135,6 +137,14 @@ function setupTopbar(): void {
   window.addEventListener(SYNC_STATUS_CHANGED_EVENT, () => {
     void renderTopbarStatus();
   });
+  // PR 23 — global search lives next to the brand. The component is
+  // idempotent; one mount per app session.
+  const searchSlot = document.querySelector<HTMLElement>(
+    '[data-region="topbar-search"]',
+  );
+  if (searchSlot !== null) {
+    mountGlobalSearch(searchSlot);
+  }
 }
 
 async function renderTopbarStatus(): Promise<void> {
