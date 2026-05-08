@@ -26,10 +26,17 @@ import {
   type CurrencyCode,
   type RawCondition,
 } from '../domain/types';
+import {
+  type DashboardFocusMode,
+  type MasterGapDefaultFilter,
+  type PersonalStartRoute,
+} from '../domain/personal-preferences';
+import type { ViewDensity } from '../domain/view-density';
 import { createAppMetaRepo } from '../repositories/app-meta-repo';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
 import { createSettingsRepo } from '../repositories/settings-repo';
+import { createPersonalPreferencesService } from '../services/personal-preferences-service';
 
 // Dispatched after every sync attempt — both successful and failed.
 // Listeners (currently the topbar; later possibly the dashboard) read
@@ -37,6 +44,14 @@ import { createSettingsRepo } from '../repositories/settings-repo';
 // show. Using one event for both outcomes means the chip never gets
 // stuck on a stale "ok" state after a subsequent failure.
 export const SYNC_STATUS_CHANGED_EVENT = 'pokemon:sync-status-changed';
+
+// PR 27 — dispatched after the user saves a personal-app preference.
+// The app shell listens for this to refresh the brand text/href and
+// the topbar shortcut-help button visibility without remounting the
+// whole app. Master-gap and dashboard refresh themselves through the
+// existing `USER_DATA_CHANGED_EVENT` plus a per-mount preferences
+// load on next render.
+export const SETTINGS_CHANGED_EVENT = 'pokemon:settings-changed';
 
 // `signal` is accepted for ViewMounter signature parity (PR 15A — F-3).
 // Settings registers no window listeners; the signal is unused.
@@ -114,6 +129,95 @@ export function mountSettingsView(
         <p class="settings-view__feedback" data-region="defaults-feedback" aria-live="polite"></p>
       </section>
 
+      <section class="settings-view__panel" aria-labelledby="personal-heading">
+        <h2 id="personal-heading">Personlig app</h2>
+        <p class="settings-view__hint">
+          Dette er din personlige Pokémon-arbeidsstasjon. Endringer her
+          gjelder kun denne maskinen og lagres lokalt i innstillinger.
+        </p>
+        <label class="settings-view__field">
+          <span>App-navn</span>
+          <input type="text" data-region="app-display-name" maxlength="60" />
+        </label>
+        <label class="settings-view__field">
+          <span>Startside</span>
+          <select data-region="default-start-route">
+            <option value="dashboard">Dashboard</option>
+            <option value="master-gap">Master gap</option>
+            <option value="browse">Browse</option>
+            <option value="collection">Min samling</option>
+            <option value="binders">Permer</option>
+            <option value="lots">Lotter</option>
+            <option value="wishlist">Ønskeliste</option>
+            <option value="backup">Backup</option>
+            <option value="settings">Innstillinger</option>
+          </select>
+        </label>
+        <label class="settings-view__field">
+          <span>Dashboard-fokus</span>
+          <select data-region="dashboard-focus-mode">
+            <option value="balanced">Balansert</option>
+            <option value="master_set">Master set</option>
+            <option value="binder_work">Permarbeid</option>
+            <option value="wishlist">Ønskeliste</option>
+            <option value="lots">Lotter</option>
+            <option value="collection_health">Samlingshelse</option>
+          </select>
+        </label>
+        <label class="settings-view__field">
+          <span>Master gap tetthet</span>
+          <select data-region="master-gap-density">
+            <option value="compact">Kompakt</option>
+            <option value="comfortable">Komfortabel</option>
+          </select>
+        </label>
+        <label class="settings-view__field">
+          <span>Master gap standardfilter</span>
+          <select data-region="master-gap-default-filter">
+            <option value="all">Alle</option>
+            <option value="missing">Mangler</option>
+            <option value="owned_unplaced">Eier, ikke plassert</option>
+            <option value="wishlist">Ønsket / bestilt</option>
+            <option value="in_lot">Lot</option>
+            <option value="invalid">Feil</option>
+          </select>
+        </label>
+        <label class="settings-view__field settings-view__field--inline">
+          <input type="checkbox" data-region="master-gap-hide-complete" />
+          <span>Skjul fullførte rader i master gap som standard</span>
+        </label>
+        <label class="settings-view__field settings-view__field--inline">
+          <input type="checkbox" data-region="master-gap-only-actionable" />
+          <span>Vis kun rader som krever handling i master gap</span>
+        </label>
+        <label class="settings-view__field">
+          <span>Arbeidskø: maks elementer</span>
+          <select data-region="command-center-max-items">
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="8">8</option>
+            <option value="10">10</option>
+            <option value="12">12</option>
+          </select>
+        </label>
+        <label class="settings-view__field settings-view__field--inline">
+          <input type="checkbox" data-region="command-center-show-all-clear" />
+          <span>Vis "alt ryddig"-melding når arbeidskøen er tom</span>
+        </label>
+        <label class="settings-view__field settings-view__field--inline">
+          <input type="checkbox" data-region="show-shortcut-hints" />
+          <span>Vis Snarveier-knapp i topplinjen</span>
+        </label>
+        <label class="settings-view__field settings-view__field--inline">
+          <input type="checkbox" data-region="show-personal-workspace-summary" />
+          <span>Vis personlig arbeidsstasjon-oversikt på dashboard</span>
+        </label>
+        <button type="button" class="settings-view__button settings-view__button--primary" data-action="save-personal-preferences">Lagre personlig app</button>
+        <p class="settings-view__feedback" data-region="personal-preferences-feedback" aria-live="polite"></p>
+      </section>
+
       <section class="settings-view__panel" aria-labelledby="storage-heading">
         <h2 id="storage-heading">Lagring</h2>
         <dl class="settings-view__status" data-region="storage-status"></dl>
@@ -167,6 +271,49 @@ export function mountSettingsView(
     '[data-region="storage-status"]',
   );
 
+  // PR 27 — personal preferences controls.
+  const personalRegions = {
+    appDisplayName: container.querySelector<HTMLInputElement>(
+      '[data-region="app-display-name"]',
+    ),
+    defaultStartRoute: container.querySelector<HTMLSelectElement>(
+      '[data-region="default-start-route"]',
+    ),
+    dashboardFocusMode: container.querySelector<HTMLSelectElement>(
+      '[data-region="dashboard-focus-mode"]',
+    ),
+    masterGapDensity: container.querySelector<HTMLSelectElement>(
+      '[data-region="master-gap-density"]',
+    ),
+    masterGapDefaultFilter: container.querySelector<HTMLSelectElement>(
+      '[data-region="master-gap-default-filter"]',
+    ),
+    masterGapHideComplete: container.querySelector<HTMLInputElement>(
+      '[data-region="master-gap-hide-complete"]',
+    ),
+    masterGapOnlyActionable: container.querySelector<HTMLInputElement>(
+      '[data-region="master-gap-only-actionable"]',
+    ),
+    commandCenterMaxItems: container.querySelector<HTMLSelectElement>(
+      '[data-region="command-center-max-items"]',
+    ),
+    commandCenterShowAllClear: container.querySelector<HTMLInputElement>(
+      '[data-region="command-center-show-all-clear"]',
+    ),
+    showShortcutHints: container.querySelector<HTMLInputElement>(
+      '[data-region="show-shortcut-hints"]',
+    ),
+    showPersonalWorkspaceSummary: container.querySelector<HTMLInputElement>(
+      '[data-region="show-personal-workspace-summary"]',
+    ),
+  };
+  const savePersonalButton = container.querySelector<HTMLButtonElement>(
+    '[data-action="save-personal-preferences"]',
+  );
+  const personalFeedback = container.querySelector<HTMLElement>(
+    '[data-region="personal-preferences-feedback"]',
+  );
+
   if (
     !apiKeyInput ||
     !apiFeedback ||
@@ -181,7 +328,20 @@ export function mountSettingsView(
     !defaultSlotsSelect ||
     !saveDefaultsButton ||
     !defaultsFeedback ||
-    !storageStatusRegion
+    !storageStatusRegion ||
+    !savePersonalButton ||
+    !personalFeedback ||
+    !personalRegions.appDisplayName ||
+    !personalRegions.defaultStartRoute ||
+    !personalRegions.dashboardFocusMode ||
+    !personalRegions.masterGapDensity ||
+    !personalRegions.masterGapDefaultFilter ||
+    !personalRegions.masterGapHideComplete ||
+    !personalRegions.masterGapOnlyActionable ||
+    !personalRegions.commandCenterMaxItems ||
+    !personalRegions.commandCenterShowAllClear ||
+    !personalRegions.showShortcutHints ||
+    !personalRegions.showPersonalWorkspaceSummary
   ) {
     return;
   }
@@ -193,6 +353,26 @@ export function mountSettingsView(
     defaultConditionSelect,
     defaultSlotsSelect,
     storageStatusRegion,
+  });
+  // After the early return above we know every personal region is
+  // non-null; narrow into the strict shape `PersonalRegions` expects.
+  const narrowedPersonal: PersonalRegions = {
+    appDisplayName: personalRegions.appDisplayName,
+    defaultStartRoute: personalRegions.defaultStartRoute,
+    dashboardFocusMode: personalRegions.dashboardFocusMode,
+    masterGapDensity: personalRegions.masterGapDensity,
+    masterGapDefaultFilter: personalRegions.masterGapDefaultFilter,
+    masterGapHideComplete: personalRegions.masterGapHideComplete,
+    masterGapOnlyActionable: personalRegions.masterGapOnlyActionable,
+    commandCenterMaxItems: personalRegions.commandCenterMaxItems,
+    commandCenterShowAllClear: personalRegions.commandCenterShowAllClear,
+    showShortcutHints: personalRegions.showShortcutHints,
+    showPersonalWorkspaceSummary: personalRegions.showPersonalWorkspaceSummary,
+  };
+  void hydratePersonalPreferences(narrowedPersonal);
+
+  savePersonalButton.addEventListener('click', () => {
+    void handleSavePersonalPreferences(narrowedPersonal, personalFeedback);
   });
 
   saveApiKeyButton.addEventListener('click', () => {
@@ -505,5 +685,87 @@ async function handleSaveDefaults(refs: DefaultsRefs): Promise<void> {
   } catch (caught) {
     refs.defaultsFeedback.classList.add('settings-view__feedback--error');
     refs.defaultsFeedback.textContent = `Kunne ikke lagre: ${sanitizeErrorMessage(caught)}`;
+  }
+}
+
+// PR 27 — personal preferences hydrate / save.
+//
+// Hydrate reads the live preferences once at mount time, falling back
+// to defaults if the read fails. We do NOT subscribe to live updates
+// here — the user is editing the form, and refreshing form values
+// from a USER_DATA_CHANGED_EVENT mid-edit would silently drop their
+// in-progress changes.
+
+interface PersonalRegions {
+  readonly appDisplayName: HTMLInputElement;
+  readonly defaultStartRoute: HTMLSelectElement;
+  readonly dashboardFocusMode: HTMLSelectElement;
+  readonly masterGapDensity: HTMLSelectElement;
+  readonly masterGapDefaultFilter: HTMLSelectElement;
+  readonly masterGapHideComplete: HTMLInputElement;
+  readonly masterGapOnlyActionable: HTMLInputElement;
+  readonly commandCenterMaxItems: HTMLSelectElement;
+  readonly commandCenterShowAllClear: HTMLInputElement;
+  readonly showShortcutHints: HTMLInputElement;
+  readonly showPersonalWorkspaceSummary: HTMLInputElement;
+}
+
+async function hydratePersonalPreferences(
+  regions: PersonalRegions,
+): Promise<void> {
+  try {
+    const svc = createPersonalPreferencesService(createSettingsRepo(getDb()));
+    const prefs = await svc.getPreferences();
+    regions.appDisplayName.value = prefs.appDisplayName;
+    regions.defaultStartRoute.value = prefs.defaultStartRoute;
+    regions.dashboardFocusMode.value = prefs.dashboardFocusMode;
+    regions.masterGapDensity.value = prefs.masterGapDensity;
+    regions.masterGapDefaultFilter.value = prefs.masterGapDefaultFilter;
+    regions.masterGapHideComplete.checked = prefs.masterGapHideComplete;
+    regions.masterGapOnlyActionable.checked = prefs.masterGapOnlyActionable;
+    regions.commandCenterMaxItems.value = String(prefs.commandCenterMaxItems);
+    regions.commandCenterShowAllClear.checked = prefs.commandCenterShowAllClear;
+    regions.showShortcutHints.checked = prefs.showShortcutHints;
+    regions.showPersonalWorkspaceSummary.checked =
+      prefs.showPersonalWorkspaceSummary;
+  } catch {
+    // The form will display its initial fallback values from the
+    // markup; we never crash the settings view because the prefs
+    // read failed.
+  }
+}
+
+async function handleSavePersonalPreferences(
+  regions: PersonalRegions,
+  feedback: HTMLElement,
+): Promise<void> {
+  feedback.replaceChildren();
+  feedback.classList.remove('settings-view__feedback--error');
+  try {
+    const svc = createPersonalPreferencesService(createSettingsRepo(getDb()));
+    await svc.updatePreferences({
+      appDisplayName: regions.appDisplayName.value,
+      defaultStartRoute: regions.defaultStartRoute.value as PersonalStartRoute,
+      dashboardFocusMode:
+        regions.dashboardFocusMode.value as DashboardFocusMode,
+      masterGapDensity: regions.masterGapDensity.value as ViewDensity,
+      masterGapDefaultFilter:
+        regions.masterGapDefaultFilter.value as MasterGapDefaultFilter,
+      masterGapHideComplete: regions.masterGapHideComplete.checked,
+      masterGapOnlyActionable: regions.masterGapOnlyActionable.checked,
+      commandCenterMaxItems: Number.parseInt(
+        regions.commandCenterMaxItems.value,
+        10,
+      ),
+      commandCenterShowAllClear: regions.commandCenterShowAllClear.checked,
+      showShortcutHints: regions.showShortcutHints.checked,
+      showPersonalWorkspaceSummary:
+        regions.showPersonalWorkspaceSummary.checked,
+    });
+    feedback.textContent = 'Personlige valg lagret.';
+    window.dispatchEvent(new CustomEvent(SETTINGS_CHANGED_EVENT));
+  } catch (caught) {
+    feedback.classList.add('settings-view__feedback--error');
+    feedback.textContent = `Kunne ikke lagre: ${sanitizeErrorMessage(caught)}`;
   }
 }

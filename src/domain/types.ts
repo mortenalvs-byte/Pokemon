@@ -315,6 +315,21 @@ export const SETTINGS_KEYS = {
   preferredCurrency: 'preferredCurrency',
   defaultCondition: 'defaultCondition',
   defaultBinderSlotsPerPage: 'defaultBinderSlotsPerPage',
+  // PR 27 — personal preferences. All live in the existing settings
+  // key/value store; no schema migration, no new IndexedDB store.
+  // Reads default to safe fallbacks when a key is missing or holds an
+  // invalid value, so a fresh DB / partial backup never breaks the app.
+  appDisplayName: 'appDisplayName',
+  defaultStartRoute: 'defaultStartRoute',
+  dashboardFocusMode: 'dashboardFocusMode',
+  masterGapDensity: 'masterGapDensity',
+  masterGapHideComplete: 'masterGapHideComplete',
+  masterGapOnlyActionable: 'masterGapOnlyActionable',
+  masterGapDefaultFilter: 'masterGapDefaultFilter',
+  commandCenterMaxItems: 'commandCenterMaxItems',
+  commandCenterShowAllClear: 'commandCenterShowAllClear',
+  showShortcutHints: 'showShortcutHints',
+  showPersonalWorkspaceSummary: 'showPersonalWorkspaceSummary',
 } as const;
 
 export type SettingsKey = (typeof SETTINGS_KEYS)[keyof typeof SETTINGS_KEYS];

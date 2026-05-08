@@ -50,6 +50,8 @@ import { createSetsRepo } from '../repositories/sets-repo';
 import { createWishlistRepo } from '../repositories/wishlist-repo';
 import { assignHoldingToSlot } from '../services/binder-assignment-service';
 import { createMasterSetGapService } from '../services/master-set-gap-service';
+import { createPersonalPreferencesService } from '../services/personal-preferences-service';
+import { createSettingsRepo } from '../repositories/settings-repo';
 import type { CardFinish, SlotsPerPage } from '../domain/types';
 
 // PR 25 row count cap per page in the report table. Same scale as
@@ -93,10 +95,15 @@ interface ViewState {
   cachedReport: MasterGapReport | null;
   cachedBinderId: string | null;
   cachedDashboard: MasterGapDashboardSummary | null;
-  // PR 26 — desktop polish toggles. Per-mount, in-memory only.
+  // PR 26 — desktop polish toggles. PR 27 — values seed from
+  // PersonalPreferences on mount and persist async on user change.
   density: ViewDensity;
   hideComplete: boolean;
   onlyActionable: boolean;
+  // PR 27 — flips to true after the first preferences read so the
+  // first render can display the user's saved choices instead of
+  // hardcoded defaults.
+  preferencesLoaded: boolean;
 }
 
 // PR 26 — actionable predicate. Hides `complete` (already done) and
@@ -118,7 +125,15 @@ export function mountMasterGapView(
     density: 'compact',
     hideComplete: false,
     onlyActionable: false,
+    preferencesLoaded: false,
   };
+  // PR 27 — load persisted view preferences. We seed the state and
+  // re-render so the first paint reflects the user's saved density /
+  // hide-complete / only-actionable / default filter choices. The
+  // load is best-effort: if it throws, the hardcoded defaults stand.
+  void loadPersistedPreferences(state).then(() => {
+    if (container.isConnected) void renderInto(container, state);
+  });
   void renderInto(container, state);
   onUserDataChanged(() => {
     if (!container.isConnected) return;
@@ -404,11 +419,64 @@ function buildFilterStrip(
       if (state.filter === opt.value) return;
       state.filter = opt.value;
       state.tablePage = 0;
+      // PR 27 — only persist filter choices that map to a stored
+      // PersonalPreferences default-filter value. Internal filters
+      // beyond the documented set are skipped.
+      void persistMasterGapPreference({ masterGapDefaultFilter: opt.value });
       void renderInto(container, state);
     });
     wrap.appendChild(btn);
   }
   return wrap;
+}
+
+// PR 27 — load + persist helpers. Both are best-effort: a settings
+// store hiccup must NEVER break the master-gap view. The view falls
+// back to the existing in-memory defaults if loading fails, and a
+// failed persist surfaces in `data-region="master-gap-preferences-feedback"`
+// when present (the dashboard doesn't render that region; the master
+// gap report does).
+async function loadPersistedPreferences(state: ViewState): Promise<void> {
+  try {
+    const svc = createPersonalPreferencesService(
+      createSettingsRepo(getDb()),
+    );
+    const prefs = await svc.getPreferences();
+    state.density = prefs.masterGapDensity;
+    state.hideComplete = prefs.masterGapHideComplete;
+    state.onlyActionable = prefs.masterGapOnlyActionable;
+    state.filter = prefs.masterGapDefaultFilter;
+  } catch {
+    // Defaults stand.
+  } finally {
+    state.preferencesLoaded = true;
+  }
+}
+
+async function persistMasterGapPreference(
+  patch: Partial<{
+    masterGapDensity: ViewDensity;
+    masterGapHideComplete: boolean;
+    masterGapOnlyActionable: boolean;
+    masterGapDefaultFilter: RowFilter;
+  }>,
+): Promise<void> {
+  try {
+    const svc = createPersonalPreferencesService(
+      createSettingsRepo(getDb()),
+    );
+    await svc.updatePreferences(patch);
+  } catch {
+    // Surface in feedback if the master-gap view exposes one; never
+    // throw out of a click handler.
+    const feedback = document.querySelector<HTMLElement>(
+      '[data-region="master-gap-preferences-feedback"]',
+    );
+    if (feedback !== null) {
+      feedback.textContent = 'Kunne ikke lagre personlig valg.';
+      feedback.classList.add('master-gap-view__feedback--error');
+    }
+  }
 }
 
 // PR 26 — sticky table toolbar. Hosts the existing filter strip plus
@@ -440,6 +508,7 @@ function buildTableToolbar(
   density.textContent = `Tetthet: ${viewDensityLabel(state.density)}`;
   density.addEventListener('click', () => {
     state.density = nextViewDensity(state.density);
+    void persistMasterGapPreference({ masterGapDensity: state.density });
     void renderInto(container, state);
   });
   toggles.appendChild(density);
@@ -459,6 +528,9 @@ function buildTableToolbar(
   hideComplete.addEventListener('click', () => {
     state.hideComplete = !state.hideComplete;
     state.tablePage = 0;
+    void persistMasterGapPreference({
+      masterGapHideComplete: state.hideComplete,
+    });
     void renderInto(container, state);
   });
   toggles.appendChild(hideComplete);
@@ -478,11 +550,22 @@ function buildTableToolbar(
   onlyActionable.addEventListener('click', () => {
     state.onlyActionable = !state.onlyActionable;
     state.tablePage = 0;
+    void persistMasterGapPreference({
+      masterGapOnlyActionable: state.onlyActionable,
+    });
     void renderInto(container, state);
   });
   toggles.appendChild(onlyActionable);
 
   wrap.appendChild(toggles);
+
+  // Optional feedback line for failed prefs persists.
+  const feedback = document.createElement('p');
+  feedback.className = 'master-gap-view__feedback';
+  feedback.dataset['region'] = 'master-gap-preferences-feedback';
+  feedback.setAttribute('aria-live', 'polite');
+  wrap.appendChild(feedback);
+
   return wrap;
 }
 

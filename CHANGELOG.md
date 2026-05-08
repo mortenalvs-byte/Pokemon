@@ -8,6 +8,98 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR 27 — Morten personal command center + persistent workspace)
+The app is no longer "a Pokémon tracker" — it's Morten's personal Pokémon operating system. Personal preferences persist in the existing settings store; the dashboard gains a prioritised "Arbeidskø" command center; master-gap density / hide-complete / only-actionable / default filter survive page reloads; the topbar brand and default start route are configurable; and a `Snarveier` button surfaces every keyboard shortcut. Workflow polish only — **no schema migration**, **no new IndexedDB store**, **no desktop wrapper**, **no `package.json` desktop scripts**, **no external API**, **no pricing/value lookup**, **no CSV import**, **no scanner**. Existing PR 24 assignment rules and PR 25 master-gap classification semantics are unchanged. Backup format is unchanged.
+
+#### Settings keys added (existing key/value store)
+`appDisplayName`, `defaultStartRoute`, `dashboardFocusMode`, `masterGapDensity`, `masterGapHideComplete`, `masterGapOnlyActionable`, `masterGapDefaultFilter`, `commandCenterMaxItems`, `commandCenterShowAllClear`, `showShortcutHints`, `showPersonalWorkspaceSummary`. None of these add a column or index; they're rows in the existing `settings` store.
+
+#### `src/domain/personal-preferences.ts` (new)
+Canonical `PersonalPreferences` shape, `DEFAULT_PERSONAL_PREFERENCES`, and per-field normalisers — every field falls back to a safe default when a stored value is invalid. `normalisePersonalPreferences(raw)` turns any partial/untrusted record into a fully-validated preferences object so a single bad row never poisons the rest.
+
+#### `src/services/personal-preferences-service.ts` (new)
+Thin wrapper over `settingsRepo`. `getPreferences()` reads every PR 27 key with `Promise.allSettled` (one rejection doesn't break the whole load), normalises each value, and returns a fully-validated `PersonalPreferences`. `updatePreferences(patch)` writes only the keys present in the patch (each normalised before write) and re-reads to return the merged result. Audit row content is the existing `setting "<key>" changed` line — values are never logged.
+
+#### `src/services/command-center-service.ts` (new, pure)
+`buildCommandCenterItems({ masterGap, dashboard, preferences })` picks from 13 item kinds: `fix_invalid_slots | place_owned_cards | resolve_ambiguous_owned | follow_up_ordered | wishlist_missing | materialize_lots | collection_missing_condition | collection_missing_value | collection_not_in_binder | collection_duplicates | backup_needed | sync_needed | all_clear`. Sorting: critical first (never trimmed), then focus-mode boost lifts user-prioritised kinds within their severity, then a stable kind-order tiebreak. Output trimmed to `commandCenterMaxItems` (critical preserved). `all_clear` only emits when nothing else is actionable AND `commandCenterShowAllClear` is true.
+
+`MasterGapDashboardSummary` now exposes an aggregated `ambiguousOwned` count (per-binder counts existed already; this is just the sum). PR 25 classification logic is unchanged.
+
+#### Settings UI: "Personlig app" section
+New panel in `src/views/settings.ts` with 11 controls (app name, start route, dashboard focus, master-gap density / default filter / hide-complete / only-actionable, command-center max items + show-all-clear, shortcut hints, workspace summary). Save dispatches `SETTINGS_CHANGED_EVENT`. Successful save shows `Personlige valg lagret.`; failure renders an error chip and does NOT dispatch the event.
+
+#### App shell brand + default start route
+`src/app.ts` reads preferences on mount: brand text comes from `appDisplayName`, brand href from `#${defaultStartRoute}`. Empty hash navigates to the configured start route — but never overrides an existing hash, including deep links (`#card/`, `#binder/`, `#lot/`, `#master-gap/`). Listens for `SETTINGS_CHANGED_EVENT` to refresh the brand and the shortcut-help button without remounting the app.
+
+#### Master gap persisted preferences
+`src/views/master-gap.ts` seeds `density`, `hideComplete`, `onlyActionable`, and `filter` from `PersonalPreferences` on mount. User toggles persist asynchronously via `personalPreferencesService.updatePreferences` — visual changes happen immediately against the cached report; the master-set-gap service is NOT called again. A failed save surfaces in the new `data-region="master-gap-preferences-feedback"` line and never breaks the table.
+
+#### Dashboard command center + personal workspace summary
+`src/views/dashboard.ts` adds a `data-region="command-center"` panel under the action strip with a prioritised list of items, each with a severity chip + title + message + (optional) hash-targeted action button. Lazy-loaded alongside the existing Master Set Progress card so the main dashboard render stays fast. When `showPersonalWorkspaceSummary` is on, an additional `data-region="personal-workspace-summary"` block shows app name, holdings count, binder count, master-set %, command-center item count and the top-priority action.
+
+`src/components/personal-workspace-summary.ts` is a small pure-render helper used by the dashboard.
+
+#### Keyboard-shortcut help dialog
+`src/components/keyboard-shortcuts-help.ts` adds a `Snarveier` button to the topbar (gated on `showShortcutHints`) that opens the existing dialog component with the full shortcut list (`g d`, `g m`, …, `Ctrl/Cmd + K`, `Esc`). Idempotent mount — repeated calls leave only one button. PR 26's `keyboard-shortcuts.ts` already ignores events inside `[role="dialog"]`, so the dialog is safe.
+
+#### Touched / new files
+- `src/domain/types.ts` — extended `SETTINGS_KEYS`.
+- `src/domain/personal-preferences.ts` — new.
+- `src/domain/master-set-gap.ts` — added aggregated `ambiguousOwned`.
+- `src/services/personal-preferences-service.ts` — new.
+- `src/services/command-center-service.ts` — new.
+- `src/components/personal-workspace-summary.ts` — new.
+- `src/components/keyboard-shortcuts-help.ts` — new.
+- `src/views/settings.ts` — `SETTINGS_CHANGED_EVENT` + Personlig app section + hydrate/save.
+- `src/views/dashboard.ts` — command center, workspace summary, lazy populate.
+- `src/views/master-gap.ts` — seed prefs on mount + persist on toggle.
+- `src/app.ts` — brand from prefs + default start route + listener for settings change.
+- `src/styles.css` — PR 27 sections.
+- `tests/personal-preferences.test.ts` — new (25 cases).
+- `tests/personal-preferences-service.test.ts` — new (8 cases).
+- `tests/command-center-service.test.ts` — new (17 cases).
+- `tests/settings-personal-preferences.test.ts` — new (6 cases).
+- `tests/app-personal-brand.test.ts` — new (10 cases).
+- `tests/master-gap-personal-preferences.test.ts` — new (10 cases).
+- `tests/dashboard-command-center.test.ts` — new (12 cases).
+- `tests/keyboard-shortcuts-help.test.ts` — new (6 cases).
+
+#### Test totals
+- 100 test files, **~967 tests** (up from 873; +94 PR 27 cases). Typecheck green. Build green.
+
+#### Performance
+- Dashboard Master Set Progress remains lazy-loaded.
+- Command center reuses the same lazy summary; the dashboard does NOT add a second master-gap fetch.
+- Master-gap visual preference toggles re-render from the cached report only — verified by spy that `binderSlotsRepo.listLive` is not called on density toggle.
+- `mountKeyboardShortcuts` and `mountKeyboardShortcutsHelp` are both idempotent; one global keydown listener total from PR 26 + one DOM button from PR 27.
+- No DB write on render; preferences are written only when the user clicks Save, or toggles a master-gap control.
+- No new dependency.
+
+#### User-data impact
+**None.** Preferences live in the existing settings store. Existing holdings / binders / wishlist / lots / audit log are untouched.
+
+#### Backup/restore impact
+**None.** Backup format is unchanged. Settings rows already roundtrip in backups; PR 27 keys ride along automatically.
+
+#### Known limitations
+- "Dashboard focus mode" only affects command-center sort order, not which dashboard cards render. Reordering the entire dashboard grid based on focus mode is a future PR.
+- Personal workspace summary is a static read of the latest snapshot; it does not deep-link to any card or binder.
+- The shortcut help dialog lists shortcuts but does not let the user remap them.
+- Command-center max items applies only to non-critical items — critical items ALWAYS render even if they exceed the configured cap. Documented behavior.
+
+#### Out of scope (per the spec)
+- ❌ Electron / Tauri / installer / `.exe` / auto-update
+- ❌ `package.json` desktop packaging scripts
+- ❌ Schema migration / new IndexedDB stores
+- ❌ Backup format changes
+- ❌ External API calls
+- ❌ Pricing / value layer
+- ❌ CSV import
+- ❌ Scanner / barcode
+- ❌ Login / cloud / backend
+- ❌ Changes to PR 24 assignment rules
+- ❌ Changes to PR 25 master-gap classification rules
+
 ### Fixed (F-2 mini-PR — `unlimitedNormal` / `unlimitedHolofoil` variant mapping)
 The PR 14 QA report flagged `unlimitedNormal` and `unlimitedHolofoil` as live in pokemontcg.io's response payloads — 837 cards (4.3% of the 19 545-card priced cache), heavy on Base / Jungle / Fossil unlimited holos. PR 11's review had locked them out for safety; the QA fixtures now prove they're real, so they're accepted.
 

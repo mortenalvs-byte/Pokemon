@@ -49,6 +49,7 @@ function summary(
     complete: 0,
     missing: 0,
     ownedUnplaced: 0,
+    ambiguousOwned: 0,
     wishlistWanted: 0,
     wishlistOrdered: 0,
     inLotUnmaterialized: 0,
