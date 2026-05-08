@@ -479,4 +479,40 @@ describe('binder-assignment-service (PR 24)', () => {
     const result = await autoAssignBinder(deps, { binderId: binder.id });
     expect(result.assigned).toEqual([]);
   });
+
+  it('direct-add fails cleanly when holdingsRepo.create rejects (case 15)', async () => {
+    const deps = buildDeps(db);
+    const slot = await makeSlot();
+    // Quantity 0 violates `validateHoldingInput` ("must be an integer
+    // >= 1") so the holding-create throws before slot assignment.
+    await expect(
+      createHoldingForSlotAndAssign(deps, slot, SLOTS_PER_PAGE, {
+        conditionType: 'raw',
+        rawCondition: 'NM',
+        gradingCompany: null,
+        grade: null,
+        certNumber: null,
+        certUrl: null,
+        gradedDate: null,
+        finish: 'normal',
+        edition: 'unlimited',
+        language: 'en',
+        quantity: 0, // ← invalid
+        purchasePrice: null,
+        purchaseCurrency: null,
+        note: null,
+        specialVariant: false,
+        tags: [],
+      }),
+    ).rejects.toThrow();
+    // No holding row should exist (validator runs before db.add).
+    const live = (await deps.holdingsRepo.list()).filter(
+      (h) => h.deletedAt === null,
+    );
+    expect(live).toEqual([]);
+    // Slot is untouched.
+    const slotAfter = await deps.binderSlotsRepo.get(slot.id);
+    expect(slotAfter?.holdingId).toBeNull();
+    expect(slotAfter?.status).toBe('wanted');
+  });
 });

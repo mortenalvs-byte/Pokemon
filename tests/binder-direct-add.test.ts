@@ -364,6 +364,101 @@ describe('Binder direct-add + auto-assign (PR 24)', () => {
     });
   });
 
+  it('clicking Legg til her opens direct-add form, submitting creates holding + assigns slot', async () => {
+    const { binderId, slotId } = await makeBinderWithTargetSlot();
+    window.location.hash = `binder/${encodeURIComponent(binderId)}`;
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountBinderDetailView(root);
+    await settle();
+
+    const directAddBtn = root.querySelector<HTMLButtonElement>(
+      `.binder-slot[data-slot-id="${slotId}"] button[data-action="direct-add"]`,
+    );
+    expect(directAddBtn).not.toBeNull();
+    directAddBtn?.click();
+
+    // The dialog mounts on `document.body`, not inside `root`. Wait for
+    // the form to render, fill defaults, and submit.
+    const form = await vi.waitFor<HTMLFormElement>(() => {
+      const f = document.querySelector<HTMLFormElement>(
+        'form.slot-direct-add',
+      );
+      if (f === null) throw new Error('direct-add form did not open');
+      return f;
+    });
+    // Card summary should reflect the slot's targetCardId.
+    const cardSummary = form.querySelector<HTMLElement>(
+      '[data-region="card-summary"]',
+    );
+    expect(cardSummary?.textContent ?? '').toContain('base1-1');
+
+    // Submit. The form pre-populates with raw NM normal/unlimited
+    // defaults, which match the seeded card's verified variants.
+    form.dispatchEvent(
+      new Event('submit', { cancelable: true, bubbles: true }),
+    );
+
+    await vi.waitFor(async () => {
+      const slot = await createBinderSlotsRepo(db).get(slotId);
+      expect(slot?.status).toBe('owned');
+      expect(slot?.holdingId).not.toBeNull();
+    });
+    // Verify a holding was actually created and is now bound to the slot.
+    const slot = await createBinderSlotsRepo(db).get(slotId);
+    const holding =
+      slot?.holdingId !== null && slot?.holdingId !== undefined
+        ? await createHoldingsRepo(db).get(slot.holdingId)
+        : undefined;
+    expect(holding?.cardId).toBe('base1-1');
+    expect(holding?.conditionType).toBe('raw');
+    expect(holding?.finish).toBe('normal');
+    expect(holding?.deletedAt).toBeNull();
+  });
+
+  it('reverse-holo template direct-add locks finish to reverse_holo in the form', async () => {
+    const { binderId, slotId } = await makeBinderWithTargetSlot(
+      'base1-1',
+      REVERSE_HOLO_TEMPLATE_MARKER,
+    );
+    window.location.hash = `binder/${encodeURIComponent(binderId)}`;
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountBinderDetailView(root);
+    await settle();
+
+    const directAddBtn = root.querySelector<HTMLButtonElement>(
+      `.binder-slot[data-slot-id="${slotId}"] button[data-action="direct-add"]`,
+    );
+    directAddBtn?.click();
+    const form = await vi.waitFor<HTMLFormElement>(() => {
+      const f = document.querySelector<HTMLFormElement>(
+        'form.slot-direct-add',
+      );
+      if (f === null) throw new Error('direct-add form did not open');
+      return f;
+    });
+    const finishSelect = form.querySelector<HTMLSelectElement>(
+      'select[name="finish"]',
+    );
+    expect(finishSelect?.value).toBe('reverse_holo');
+    expect(finishSelect?.disabled).toBe(true);
+    // Submit and verify the holding has finish=reverse_holo.
+    form.dispatchEvent(
+      new Event('submit', { cancelable: true, bubbles: true }),
+    );
+    await vi.waitFor(async () => {
+      const slot = await createBinderSlotsRepo(db).get(slotId);
+      expect(slot?.status).toBe('owned');
+    });
+    const slot = await createBinderSlotsRepo(db).get(slotId);
+    const holding =
+      slot?.holdingId !== null && slot?.holdingId !== undefined
+        ? await createHoldingsRepo(db).get(slot.holdingId)
+        : undefined;
+    expect(holding?.finish).toBe('reverse_holo');
+  });
+
   it('one holding cannot be assigned to two slots in a single auto-assign run', async () => {
     await createHoldingsRepo(db).create(holdingInput());
     const created = await createBinderService(db).createManualBinder({
