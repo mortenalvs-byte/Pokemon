@@ -10,6 +10,7 @@ declare module 'node:fs' {
     encoding: 'utf-8' | 'utf8',
   ): string;
   export function existsSync(path: string): boolean;
+  export function readdirSync(path: string): string[];
 }
 
 declare module 'node:path' {

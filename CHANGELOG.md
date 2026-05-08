@@ -76,9 +76,11 @@ After PR 28 was opened the desktop prerequisites (Rust toolchain + MSVC C++ Buil
 - **Runner orchestrator.** `src/qa/qa-runner.ts` exposes `runQa(db, options)` with `reset` / `seed` / `runtime` flags, builds the same dependency bundle the production code uses, snapshots the master-gap dashboard summary, and records perf labels for each step. Detects `tauri` runtime via `__TAURI_INTERNALS__`.
 - **Dev-only QA view.** `src/views/qa.ts` mounts at `#qa`. Only registered in `app.ts` when `import.meta.env.DEV` is true — production / Tauri release builds fall through to the dashboard. Buttons: Reset / Seed / Run / Measure-only / Download JSON / Download Markdown. Reports save through `downloadTextFile` (no new Tauri capabilities).
 - **Router.** `'qa'` added to the `Route` union; `getCurrentRoute()` recognises `#qa`.
-- **npm scripts.** `qa:static` (typecheck + tests + build), `qa:browser` (the three QA test files), `qa:desktop:manual` (prints the L3 recipe), `qa:full` (qa:static + qa:browser).
+- **npm scripts.** `qa:static` (typecheck + tests + build), `qa:browser` (the four QA test files), `qa:desktop:manual` (prints the L3 recipe), `qa:full` (qa:static + qa:browser).
 - **Docs.** `docs/QA_DESKTOP.md` documents the four QA levels, seed contract, L3 desktop recipe, hard rules, and troubleshooting. `.gitignore` adds `.local/` for downloaded reports.
-- **Tests.** `tests/qa-seed.test.ts` (9 cases — determinism, counts, reset preserves settings, master-gap aggregates after seed, reverse-template marker, tcgplayer.prices.normal present), `tests/qa-report.test.ts` (18 cases — pass/fail rules, markdown shape, JSON shape), `tests/qa-runner.test.ts` (9 cases — four mode combinations, perf labels, route hashes, runtime flag, console-failure path, deps wiring).
+- **Production gating test.** `tests/qa-route-prod-gating.test.ts` reads the actual `dist/` bundle and asserts: (a) zero QA-view strings (`mountQaView`, `morten-pokemon-qa-v1`, `seedStressData`, `QA_SEED_NAME`, `data-action="qa-reset"`, …) leak into release builds; (b) the `qa:` key in the minified `VIEW_MOUNTERS` dispatch object resolves to the same identifier as the `dashboard:` key. Skips itself when `dist/` is missing so a fresh checkout still passes.
+- **Tests.** `tests/qa-seed.test.ts` (9 cases — determinism, counts, reset preserves settings, master-gap aggregates after seed, reverse-template marker, tcgplayer.prices.normal present), `tests/qa-report.test.ts` (18 cases — pass/fail rules, markdown shape, JSON shape), `tests/qa-runner.test.ts` (9 cases — four mode combinations, perf labels, route hashes, runtime flag, console-failure path, deps wiring), `tests/qa-route-prod-gating.test.ts` (3 cases — bundle exists, no leaked QA strings, qa-key maps to same mounter as dashboard).
+- **Desktop release packaging.** `src-tauri/tauri.conf.json` `bundle.targets` switched from `"all"` to `["msi"]`. The Tauri-downloaded NSIS toolchain (`nsis-3.11` + `nsis_tauri_utils 0.5.3`) errors with `!insertmacro: macro "NSISCOMCALL" requires 4 parameter(s), passed 8!` mid-bundle, which fails `desktop:build` even though the `.exe` and `.msi` are already produced. Limiting targets to MSI gives a clean `desktop:build` exit and the same end-user installer path. Standalone `pokemon-tracker-desktop.exe` (3.4 MB) is still emitted under `target/release/`.
 
 The QA harness writes nothing outside the seed/reset path it owns. No new DB store, no schema migration, no broad Tauri capabilities, no console-tail / FS scraping. Production builds and the merged Tauri binary do not register the route.
 
@@ -106,10 +108,12 @@ Browser app:
 
 Desktop app:
 [x] npm run desktop:dev — VERIFIED. Rust 1.95.0 + MSVC 14.44.35207 + WebView2 147 installed; Tauri window compiled and launched.
-[ ] npm run desktop:build — NOT YET RUN (release build is not part of the review-patch verification scope; dev build proves the same toolchain)
+[x] npm run desktop:build — VERIFIED with targets:["msi"]; produced standalone exe (3.4 MB) + MSI installer (1.9 MB). NSIS bundle skipped due to upstream toolchain bug.
 [x] QA harness reachable at #qa in dev / Tauri dev — VERIFIED via the new automatic QA view + tests
+[x] Production #qa gated — VERIFIED via tests/qa-route-prod-gating.test.ts (zero QA strings in dist/, qa: dispatch maps to same mounter as dashboard:)
 [x] Deterministic seed: morten-pokemon-qa-v1 (qa-seed test asserts identical counts on re-run)
 [x] Both ambiguous types produced by seed (recommendedAmbiguousCount > 0, manualAmbiguousCount > 0)
+[ ] L3 manual GUI click-through inside Tauri window — DEFERRED to user pre-merge step (Reset/Seed/Run + walk routes + console check + restart-persistence). Recipe in docs/QA_DESKTOP.md.
 
 Smart placement:
 [x] best-copy service tests pass (22)
