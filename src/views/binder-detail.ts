@@ -33,16 +33,19 @@ import { openWishlistReceivePrompt } from '../components/wishlist-receive-prompt
 import { getDb } from '../db/database';
 import { cardMatchesQuery, isEmptyQuery } from '../domain/card-search';
 import { isReverseHoloTemplateSlot } from '../domain/card-variants';
+import type { MasterGapBinderSummary } from '../domain/master-set-gap';
 import {
   getCurrentBinderId,
   getCurrentBinderSlotFocus,
   navigate,
   navigateToCard,
+  navigateToMasterGapBinder,
 } from '../router';
 import { createBindersRepo } from '../repositories/binders-repo';
 import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createHoldingsRepo } from '../repositories/holdings-repo';
+import { createLotItemsRepo } from '../repositories/lot-items-repo';
 import { createSetsRepo } from '../repositories/sets-repo';
 import { createWishlistRepo } from '../repositories/wishlist-repo';
 import { createBinderCsvExporter } from '../services/binder-csv-export';
@@ -55,6 +58,7 @@ import {
   createBinderSlotService,
   type BinderDetail,
 } from '../services/binder-slot-service';
+import { createMasterSetGapService } from '../services/master-set-gap-service';
 import { findWishlistReceiveCandidates } from '../services/wishlist-receive-service';
 import { createLazyImage } from '../utils/lazy-image';
 import { downloadTextFile } from '../utils/download';
@@ -324,6 +328,14 @@ async function renderInto(
   const assignableInfo = state.assignableInfo;
 
   root.appendChild(buildSummary(detail));
+  // PR 25 — gap summary banner. Lazy-loaded so the heavy
+  // master-set-gap service doesn't block the existing binder render.
+  // A `<USER_DATA_CHANGED_EVENT>` invalidation reaches us via the
+  // outer `refresh` handler which clears `cachedDetail`, so the next
+  // render will rebuild the banner too.
+  const gapBanner = buildGapBannerSkeleton(detail.binder.id);
+  root.appendChild(gapBanner);
+  void populateGapBanner(gapBanner, detail.binder.id);
   root.appendChild(buildToolbar(detail, state, container, assignableInfo));
   if (state.autoAssignSummary !== null) {
     root.appendChild(buildAutoAssignSummary(detail, state, container));
@@ -637,7 +649,92 @@ function buildToolbar(
   });
   wrap.appendChild(exportBtn);
 
+  // PR 25 — open the per-binder master gap report.
+  const gapBtn = document.createElement('button');
+  gapBtn.type = 'button';
+  gapBtn.className = 'binder-detail-view__gap-analysis';
+  gapBtn.dataset['action'] = 'open-gap-analysis';
+  gapBtn.textContent = 'Gap-analyse';
+  gapBtn.addEventListener('click', () => {
+    navigateToMasterGapBinder(detail.binder.id);
+  });
+  wrap.appendChild(gapBtn);
+
   return wrap;
+}
+
+// PR 25 — gap summary banner above the toolbar. Skeleton paints first;
+// the master-set-gap service then populates the chips. Errors render
+// inline rather than failing the binder render.
+function buildGapBannerSkeleton(binderId: string): HTMLElement {
+  const banner = document.createElement('section');
+  banner.className = 'binder-detail-view__gap-summary';
+  banner.dataset['region'] = 'gap-summary';
+  banner.dataset['binderId'] = binderId;
+  const loading = document.createElement('p');
+  loading.className = 'binder-detail-view__gap-summary-loading';
+  loading.dataset['region'] = 'gap-summary-loading';
+  loading.textContent = 'Laster gap-analyse …';
+  banner.appendChild(loading);
+  return banner;
+}
+
+async function populateGapBanner(
+  banner: HTMLElement,
+  binderId: string,
+): Promise<void> {
+  let summary: MasterGapBinderSummary | null;
+  try {
+    const db = getDb();
+    const report = await createMasterSetGapService({
+      bindersRepo: createBindersRepo(db),
+      binderSlotsRepo: createBinderSlotsRepo(db),
+      cardsRepo: createCardsRepo(db),
+      setsRepo: createSetsRepo(db),
+      holdingsRepo: createHoldingsRepo(db),
+      wishlistRepo: createWishlistRepo(db),
+      lotItemsRepo: createLotItemsRepo(db),
+    }).buildBinderReport(binderId);
+    summary = report?.binder ?? null;
+  } catch {
+    if (!banner.isConnected) return;
+    banner.replaceChildren();
+    const err = document.createElement('p');
+    err.className = 'binder-detail-view__gap-summary-error';
+    err.textContent = 'Kunne ikke laste gap-analyse.';
+    banner.appendChild(err);
+    return;
+  }
+  if (!banner.isConnected) return;
+  if (summary === null) {
+    banner.replaceChildren();
+    return;
+  }
+
+  banner.replaceChildren();
+  const fragment = `Master gap: ${summary.complete} / ${summary.totalTargetSlots} fullført · ${summary.missing} mangler · ${summary.ownedUnplaced} eies men ikke plassert · ${summary.wishlistWanted} ønsket · ${summary.wishlistOrdered} bestilt · ${summary.invalidAssignment + summary.invalidVariant} feil`;
+  const main = document.createElement('p');
+  main.className = 'binder-detail-view__gap-summary-line';
+  main.textContent = fragment;
+  banner.appendChild(main);
+
+  if (summary.canPlaceDirectlyCount > 0) {
+    const directly = document.createElement('p');
+    directly.className =
+      'binder-detail-view__gap-summary-line binder-detail-view__gap-summary-line--quickwin';
+    directly.textContent = `${summary.canPlaceDirectlyCount} kan plasseres direkte`;
+    banner.appendChild(directly);
+  }
+
+  const showBtn = document.createElement('button');
+  showBtn.type = 'button';
+  showBtn.className = 'binder-detail-view__gap-summary-action';
+  showBtn.dataset['action'] = 'show-gap';
+  showBtn.textContent = 'Vis gap';
+  showBtn.addEventListener('click', () => {
+    navigateToMasterGapBinder(binderId);
+  });
+  banner.appendChild(showBtn);
 }
 
 function buildAutoAssignSummary(
