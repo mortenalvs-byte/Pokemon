@@ -74,6 +74,12 @@ const NAV_LINKS: readonly NavLink[] = [
   { route: 'wishlist', label: 'Ønskeliste' },
   { route: 'backup', label: 'Backup' },
   { route: 'settings', label: 'Innstillinger' },
+  // PR 28 review patch — dev-only QA nav link. Vite tree-shakes this
+  // out of production / Tauri release builds because
+  // `import.meta.env.DEV` is statically replaced at build time.
+  ...(import.meta.env.DEV
+    ? ([{ route: 'qa', label: 'QA harness (dev)' }] as const)
+    : []),
 ];
 
 export function mountApp(root: HTMLElement): void {

@@ -33,7 +33,13 @@ describe('app shell', () => {
     const root = freshRoot();
     mountApp(root);
 
-    const links = root.querySelectorAll<HTMLAnchorElement>('[data-route]');
+    // PR 28 review patch — vitest runs with import.meta.env.DEV true
+    // so the dev-only `qa` link is also mounted. Filter it out so
+    // this test still guards the canonical sidebar contract; the
+    // production-side gating is covered by qa-route-prod-gating.
+    const links = root.querySelectorAll<HTMLAnchorElement>(
+      '[data-route]:not([data-route="qa"])',
+    );
     const routes = Array.from(links).map((link) => link.dataset['route']);
     expect(routes).toEqual([
       'dashboard',

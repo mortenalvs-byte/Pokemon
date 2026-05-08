@@ -85,7 +85,13 @@ describe('app shell desktop regions (PR 26)', () => {
   it('all eight nav links still exist in the canonical order', () => {
     const root = freshRoot();
     mountApp(root);
-    const links = root.querySelectorAll<HTMLAnchorElement>('[data-route]');
+    // Filter out the dev-only `qa` route (PR 28 review patch). Vitest
+    // runs with `import.meta.env.DEV === true`, so the QA harness link
+    // is mounted alongside the canonical eight; production builds drop
+    // it via Vite tree-shaking (asserted by qa-route-prod-gating.test).
+    const links = root.querySelectorAll<HTMLAnchorElement>(
+      '[data-route]:not([data-route="qa"])',
+    );
     const labels = Array.from(links).map((link) => link.textContent?.trim());
     expect(labels).toEqual([
       'Dashboard',
