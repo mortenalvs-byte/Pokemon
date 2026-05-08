@@ -361,13 +361,20 @@ export function classifySlot(
     .filter((w) => w.status === 'wanted')
     .map((w) => w.id);
 
-  // 5) Lot match (unmaterialised live lot item with same cardId).
+  // 5) Lot match (unmaterialised live lot item with same cardId AND
+  // matching finish). Without the finish gate a reverse-holo template
+  // slot would be reported as `in_lot_unmaterialized` even when the
+  // lot only contains the normal print of that card. Edition is
+  // intentionally NOT part of the gate in PR 25 — the wishlist + binder
+  // schemas don't carry edition, so adding it here would surface false
+  // negatives. (Review patch.)
   const unmaterializedLotItemIds = deps.lotItems
     .filter(
       (li) =>
         li.deletedAt === null &&
         li.cardId === slot.targetCardId &&
-        li.holdingId === null,
+        li.holdingId === null &&
+        (required.finish === null || li.finish === required.finish),
     )
     .map((li) => li.id);
 
@@ -598,7 +605,6 @@ export function buildDashboardSummary(
   let inLotUnmaterialized = 0;
   let invalidCount = 0;
   let canPlaceDirectlyCount = 0;
-  let percentSum = 0;
   for (const b of binders) {
     totalTargetSlots += b.totalTargetSlots;
     complete += b.complete;
@@ -609,7 +615,6 @@ export function buildDashboardSummary(
     inLotUnmaterialized += b.inLotUnmaterialized;
     invalidCount += b.invalidAssignment + b.invalidVariant;
     canPlaceDirectlyCount += b.canPlaceDirectlyCount;
-    percentSum += b.completionPercent;
   }
   // Closest = highest completion %, but only among binders that
   // actually have target slots and aren't yet at 100%. Weakest =
@@ -632,7 +637,15 @@ export function buildDashboardSummary(
           b.completionPercent < worst.completionPercent ? b : worst,
         )
       : null;
-  const averageCompletionPercent = Math.round(percentSum / binders.length);
+  // Weighted by total target slots, not the unweighted mean of
+  // per-binder %. A binder with 0 slots and one with 100 slots should
+  // not count equally — the global "Master Set Progress" represents
+  // the user's total completion, not the per-binder average. Review
+  // patch: prevents empty binders from dragging the average down.
+  const averageCompletionPercent =
+    totalTargetSlots === 0
+      ? 0
+      : Math.round((complete / totalTargetSlots) * 100);
   return {
     generatedAt,
     binderCount: binders.length,

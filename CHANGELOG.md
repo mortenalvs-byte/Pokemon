@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added (PR 25 — Master set gap analysis + dashboard intelligence)
 PR 25 adds a read-only analysis layer that answers — per binder slot — what is complete, what is missing, what is owned but unplaced, what is on the wishlist, what is in a lot, what can be placed directly, and what is invalidly assigned or has the wrong variant. PR 24 made binders practical to fill; PR 25 makes the app intelligent about it. Workflow only — no schema migration, no schema fields added, no pricing/value changes, no global search changes.
 
+#### Review patch (lot-finish gate + weighted dashboard average)
+The first revision left two correctness gaps that surfaced in code review:
+
+1. **Lot coverage matched cardId only**, ignoring `LotItemRecord.finish`. A reverse-holo template slot was reported as `in_lot_unmaterialized` even when the lot only contained the normal print of that card. Fixed in `classifySlot`: the lot filter now requires `li.finish === required.finish` when `required.finish !== null`. Edition is still informational only — `WishlistRecord` carries no edition, so adding edition as a hard gate would surface false negatives in the same row. Three new service tests cover the rule (reverse template + normal lot → missing; reverse template + reverse_holo lot → in_lot; normal slot + reverse_holo-only lot → missing).
+
+2. **`averageCompletionPercent` was an unweighted mean** of per-binder completion %, so an empty binder with `totalTargetSlots=0` dragged the global Dashboard average down by counting equally with a 100-slot binder. Switched to **weighted by total target slots**: `averageCompletionPercent = totalTargetSlots === 0 ? 0 : round(complete / totalTargetSlots * 100)`. New service test #23 verifies that a (1/1=100%) binder + (0/100=0%) binder yields a weighted 1%, not the unweighted 50%. Per-binder `completionPercent` is unchanged; this only affects the cross-binder rollup.
+
+Also: the multi-slot performance test was renamed from "1088-slot" to "multi-slot" to match the actual fixture (50 slots — call-count invariance proves the no-per-slot-Dexie contract; the QA-data smoke test confirms the same on 1088-slot Vault X 16-pocket binders).
+
 #### Locked rules (carried forward)
 - Read-only service. Writes only happen when the user clicks an existing safe action (`Plasser`, `Velg holding`, `Legg i ønskeliste`).
 - No schema migration. `BinderSlotRecord` still has no `finish` / `edition` field; reverse-holo encoding stays in `note` via `REVERSE_HOLO_TEMPLATE_MARKER`.
@@ -63,13 +72,13 @@ PR 25 adds a read-only analysis layer that answers — per binder slot — what 
 - `src/views/dashboard.ts` — Master Set Progress card builder + lazy populate.
 - `src/views/binder-detail.ts` — `Gap-analyse` toolbar button + lazy gap summary banner.
 - `src/styles.css` — `.master-gap-view*`, `.master-gap-table*`, `.master-gap-row*`, `.binder-detail-view__gap-summary*`, `.binder-detail-view__gap-analysis`, `.dashboard-card__loading`, `.dashboard-card__empty` (~280 LOC).
-- `tests/master-set-gap-service.test.ts` — new, 22 cases covering every status class + aggregations + the no-per-slot-Dexie performance contract.
+- `tests/master-set-gap-service.test.ts` — new, 26 cases covering every status class + aggregations + the no-per-slot-Dexie performance contract + 4 review-patch cases (lot-finish mismatch × 3, weighted dashboard average).
 - `tests/router-master-gap.test.ts` — new, 5 cases (route resolution, decode, malformed input, navigation helpers).
 - `tests/master-gap-view.test.ts` — new, 11 cases (loading / selector / report mode, filter, `Plasser` only on canPlaceDirectly, `Velg holding` for ambiguous, invalid_variant styling, soft-deleted binder, wishlist row).
 - `tests/dashboard-master-gap.test.ts` — new, 7 cases (card render, lazy populate, empty state, navigation, refresh on event, error survival).
 
 #### Test totals
-- 88 test files, **806 tests** (up from 761). Typecheck green. Build green.
+- 88 test files, **810 tests** (up from 761; +4 review-patch cases). Typecheck green. Build green.
 
 #### Known limitations
 - Edition is not part of the matching key in PR 25. A wishlist row for `first_edition` and a holding for `unlimited` of the same card+finish still match here because the wishlist/binder schemas don't carry edition. A future PR would need a schema migration to tighten this.

@@ -347,6 +347,107 @@ describe('master-set-gap-service (PR 25)', () => {
     expect(report?.rows[0]?.unmaterializedLotItemIds).toHaveLength(1);
   });
 
+  // -- 13a. reverse-holo template + normal lot item → missing -----
+  // Review patch: lot coverage must respect required finish.
+  it('reverse-holo template slot with normal-finish lot item classifies missing, not in_lot', async () => {
+    const service = createMasterSetGapService(buildDeps(db));
+    const lot = await createLotsRepo(db).create({
+      name: 'Test lot',
+      purchaseDate: '2026-05-01T00:00:00.000Z',
+      totalCost: 100,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+    await createLotItemsRepo(db).create({
+      lotId: lot.id,
+      cardId: 'base1-4',
+      finish: 'normal',
+      edition: 'unlimited',
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      quantity: 1,
+      manualPriceOverride: null,
+      marketEstimate: 100,
+      allocatedCost: null,
+      holdingId: null,
+      note: null,
+    });
+    await makeSlot({ note: REVERSE_HOLO_TEMPLATE_MARKER });
+    const report = await service.buildBinderReport(binder.id);
+    expect(report?.rows[0]?.status).toBe('missing');
+    expect(report?.rows[0]?.unmaterializedLotItemIds).toHaveLength(0);
+  });
+
+  // -- 13b. reverse-holo template + reverse_holo lot item → in_lot --
+  it('reverse-holo template slot with reverse_holo lot item classifies in_lot_unmaterialized', async () => {
+    const service = createMasterSetGapService(buildDeps(db));
+    const lot = await createLotsRepo(db).create({
+      name: 'Test lot',
+      purchaseDate: '2026-05-01T00:00:00.000Z',
+      totalCost: 100,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+    await createLotItemsRepo(db).create({
+      lotId: lot.id,
+      cardId: 'base1-4',
+      finish: 'reverse_holo',
+      edition: 'unlimited',
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      quantity: 1,
+      manualPriceOverride: null,
+      marketEstimate: 100,
+      allocatedCost: null,
+      holdingId: null,
+      note: null,
+    });
+    await makeSlot({ note: REVERSE_HOLO_TEMPLATE_MARKER });
+    const report = await service.buildBinderReport(binder.id);
+    expect(report?.rows[0]?.status).toBe('in_lot_unmaterialized');
+    expect(report?.rows[0]?.unmaterializedLotItemIds).toHaveLength(1);
+  });
+
+  // -- 13c. normal slot + reverse_holo-only lot item → missing -----
+  it('normal slot with reverse_holo-only lot item classifies missing', async () => {
+    const service = createMasterSetGapService(buildDeps(db));
+    const lot = await createLotsRepo(db).create({
+      name: 'Test lot',
+      purchaseDate: '2026-05-01T00:00:00.000Z',
+      totalCost: 100,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+    await createLotItemsRepo(db).create({
+      lotId: lot.id,
+      cardId: 'base1-4',
+      finish: 'reverse_holo',
+      edition: 'unlimited',
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      quantity: 1,
+      manualPriceOverride: null,
+      marketEstimate: 100,
+      allocatedCost: null,
+      holdingId: null,
+      note: null,
+    });
+    await makeSlot(); // normal target slot for base1-4 (required=normal)
+    const report = await service.buildBinderReport(binder.id);
+    expect(report?.rows[0]?.required.finish).toBe('normal');
+    expect(report?.rows[0]?.status).toBe('missing');
+    expect(report?.rows[0]?.unmaterializedLotItemIds).toHaveLength(0);
+  });
+
   // -- 14. assigned holding wrong cardId → invalid_assignment ------
   it('slot referencing a holding for the wrong cardId classifies invalid_assignment', async () => {
     const service = createMasterSetGapService(buildDeps(db));
@@ -561,8 +662,13 @@ describe('master-set-gap-service (PR 25)', () => {
     expect(report?.binder.canPlaceDirectlyCount).toBe(1);
   });
 
-  // -- 22. no per-slot Dexie reads (performance contract) ----------
-  it('1088-slot binder runs without per-slot Dexie reads', async () => {
+  // -- 22. multi-slot binder runs without per-slot Dexie reads -----
+  // Performance contract: a binder of N slots must cost exactly one
+  // listLive() per store, not N. We seed 50 slots here (production has
+  // up to 1088 in a Vault X 16-pocket); the call-count invariance
+  // proves it scales without per-slot work. The QA-data smoke test
+  // confirms the same on the 7-binder / 3284-slot stress dataset.
+  it('multi-slot binder runs without per-slot Dexie reads', async () => {
     // Spy on each repo's listLive / list to count calls. The service
     // should call each one at most once per buildBinderReport.
     const deps = buildDeps(db);
@@ -580,9 +686,6 @@ describe('master-set-gap-service (PR 25)', () => {
       'listByBinderId',
     );
 
-    // Build a 1088-slot binder synthetically — too slow to actually
-    // populate, so we just put 50 slots and verify the service issues
-    // exactly one read per store regardless of slot count.
     const slotsRepo = createBinderSlotsRepo(db);
     for (let i = 1; i <= 50; i += 1) {
       await slotsRepo.create(
@@ -618,5 +721,60 @@ describe('master-set-gap-service (PR 25)', () => {
     expect(wishlistByCardSpy).not.toHaveBeenCalled();
     expect(lotItemsByCardSpy).not.toHaveBeenCalled();
     expect(slotsByBinderIdSpy).not.toHaveBeenCalled();
+  });
+
+  // -- 23. averageCompletionPercent is weighted by total slots -----
+  // Review patch: empty / unbalanced binders must not drag the global
+  // dashboard average down. averageCompletionPercent = complete /
+  // totalTargetSlots, not the unweighted mean of per-binder %.
+  it('averageCompletionPercent is weighted by total target slots', async () => {
+    const service = createMasterSetGapService(buildDeps(db));
+    // Binder A: 1 target slot, complete (100%).
+    const h = await createHoldingsRepo(db).create(holdingInput());
+    await createBinderSlotsRepo(db).create(
+      {
+        binderId: binder.id,
+        pageNumber: 1,
+        slotNumber: 1,
+        targetCardId: 'base1-4',
+        holdingId: h.id,
+        status: 'owned',
+        note: null,
+      },
+      SLOTS_PER_PAGE,
+    );
+    // Binder B: 100 target slots, 0 complete (0%) — adding more weight
+    // to the 0% side. Unweighted mean would be 50%; weighted average
+    // is 1/(1+100) ≈ 1%.
+    const second = await createBindersRepo(db).create({
+      name: 'Big empty',
+      description: null,
+      binderType: null,
+      totalPages: 12,
+      slotsPerPage: SLOTS_PER_PAGE,
+      binderPreset: 'custom',
+      completionMode: 'master',
+      sourceSetId: null,
+    });
+    const slotsRepo = createBinderSlotsRepo(db);
+    for (let i = 1; i <= 100; i += 1) {
+      await slotsRepo.create(
+        {
+          binderId: second.id,
+          pageNumber: Math.ceil(i / SLOTS_PER_PAGE),
+          slotNumber: ((i - 1) % SLOTS_PER_PAGE) + 1,
+          targetCardId: 'base1-58',
+          holdingId: null,
+          status: 'wanted',
+          note: null,
+        },
+        SLOTS_PER_PAGE,
+      );
+    }
+    const summary = await service.buildDashboardSummary();
+    expect(summary.totalTargetSlots).toBe(101);
+    expect(summary.complete).toBe(1);
+    // 1 / 101 = 0.99% → rounds to 1%.
+    expect(summary.averageCompletionPercent).toBe(1);
   });
 });
