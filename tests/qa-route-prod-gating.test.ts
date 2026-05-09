@@ -77,6 +77,10 @@ describe('qa route — production gating', () => {
       'morten-pokemon-stress-v1',
       'QA_MAX_STRESS_SEED_NAME',
       'data-action="qa-max-stress"',
+      // PR 28 review patch — boot-time persistence auto-audit.
+      'pokemon.persistenceDiagBootHistory',
+      'runBootTimePersistenceAudit',
+      '[boot-audit]',
     ];
     for (const needle of banned) {
       expect(
