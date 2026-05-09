@@ -219,9 +219,151 @@ export interface AutoAssignOptions {
 }
 
 /**
+ * PR 29 review patch — single source of truth for "what would auto-place
+ * do?". Both the binder-detail UI (auto-button label, gap-banner
+ * `canPlaceDirectly` count, per-tile badges) AND the `autoAssignBinder`
+ * service consume this plan. There is no second classifier; if a future
+ * change drifts the two apart, `tests/binder-detail-action-audit.test.ts`
+ * fails immediately.
+ *
+ * Buckets correspond to the `AutoAssignResult.skipped*` counters one-to-one,
+ * so the post-click summary still reads clean.
+ *
+ * Cross-binder semantics (matches `master-set-gap-service`): a holding
+ * already assigned to a live slot in ANY binder is excluded from
+ * candidates here. The UI's auto-button label was previously off by 41
+ * because it only checked this binder's assignments; the plan fixes that.
+ */
+export interface AutoPlacementPlanEntrySafe {
+  readonly slot: BinderSlotRecord;
+  readonly holding: HoldingRecord;
+}
+export interface AutoPlacementPlanEntryAmbiguous {
+  readonly slot: BinderSlotRecord;
+  readonly candidates: ReadonlyArray<HoldingRecord>;
+}
+export interface AutoPlacementPlanEntryBlocked {
+  readonly slot: BinderSlotRecord;
+  /** Candidates that exist but failed a rule (finish, etc.). May be empty. */
+  readonly candidates: ReadonlyArray<HoldingRecord>;
+}
+export interface AutoPlacementPlan {
+  readonly binderId: string;
+  /** Slot has exactly one eligible candidate — safe to auto-place. */
+  readonly safe: ReadonlyArray<AutoPlacementPlanEntrySafe>;
+  /** Slot has 2+ eligible candidates — needs the user to pick. */
+  readonly ambiguous: ReadonlyArray<AutoPlacementPlanEntryAmbiguous>;
+  /** Slot has candidates by cardId but none match finish (reverse-holo template etc.). */
+  readonly wrongVariant: ReadonlyArray<AutoPlacementPlanEntryBlocked>;
+  /** Slot has no live unassigned holdings for the target card at all. */
+  readonly noHolding: ReadonlyArray<AutoPlacementPlanEntryBlocked>;
+  /** Slot is already filled (owned). */
+  readonly alreadyOwned: ReadonlyArray<{ readonly slot: BinderSlotRecord }>;
+  /** Slot has no target card (blank slot — use the assign modal). */
+  readonly noTarget: ReadonlyArray<{ readonly slot: BinderSlotRecord }>;
+}
+
+/**
+ * Build the placement plan for one binder. Read-only; never writes.
+ * Performs at most one Dexie call per store regardless of slot count.
+ */
+export async function buildAutoPlacementPlan(
+  deps: BinderAssignmentDeps,
+  binderId: string,
+): Promise<AutoPlacementPlan | null> {
+  const binder = await deps.bindersRepo.get(binderId);
+  if (binder === undefined || binder.deletedAt !== null) return null;
+
+  const allSlots = await deps.binderSlotsRepo.listByBinderId(binderId);
+  const liveSlots = allSlots.filter((s) => s.deletedAt === null);
+
+  const allHoldings = await deps.holdingsRepo.listLive();
+  const holdingsByCardId = new Map<string, HoldingRecord[]>();
+  for (const h of allHoldings) {
+    const arr = holdingsByCardId.get(h.cardId);
+    if (arr === undefined) holdingsByCardId.set(h.cardId, [h]);
+    else arr.push(h);
+  }
+
+  // Cross-binder: a holding already bound to a live slot in ANY binder
+  // is not a candidate here. Matches `master-set-gap-service` so the
+  // banner's `canPlaceDirectly` and the auto-button label agree.
+  const allLiveSlotsAcrossBinders = await deps.binderSlotsRepo.listLive();
+  const initialConsumed = new Set<string>();
+  for (const s of allLiveSlotsAcrossBinders) {
+    if (s.holdingId !== null) initialConsumed.add(s.holdingId);
+  }
+
+  const safe: AutoPlacementPlanEntrySafe[] = [];
+  const ambiguous: AutoPlacementPlanEntryAmbiguous[] = [];
+  const wrongVariant: AutoPlacementPlanEntryBlocked[] = [];
+  const noHolding: AutoPlacementPlanEntryBlocked[] = [];
+  const alreadyOwned: Array<{ slot: BinderSlotRecord }> = [];
+  const noTarget: Array<{ slot: BinderSlotRecord }> = [];
+
+  // Mid-walk reservation: when a slot is classified as `safe`, its
+  // holding is reserved against later slots so we never put the same
+  // physical holding into two safe entries in the same plan. This
+  // mirrors the old serialised auto-assign loop and means
+  // `plan.safe.length` is exactly the number of placements
+  // `autoAssignBinder` will perform.
+  const consumedInRun = new Set<string>(initialConsumed);
+
+  for (const slot of liveSlots) {
+    if (slot.holdingId !== null && slot.status === 'owned') {
+      alreadyOwned.push({ slot });
+      continue;
+    }
+    if (slot.targetCardId === null) {
+      noTarget.push({ slot });
+      continue;
+    }
+    const allCandidates = (holdingsByCardId.get(slot.targetCardId) ?? []).filter(
+      (h) => h.deletedAt === null && !consumedInRun.has(h.id),
+    );
+    const reverseTemplate = isReverseHoloTemplateSlot(slot.note);
+    const eligible = reverseTemplate
+      ? allCandidates.filter((h) => h.finish === 'reverse_holo')
+      : allCandidates;
+
+    if (eligible.length === 0) {
+      if (allCandidates.length > 0) {
+        wrongVariant.push({ slot, candidates: allCandidates });
+      } else {
+        noHolding.push({ slot, candidates: [] });
+      }
+      continue;
+    }
+    if (eligible.length === 1) {
+      const holding = eligible[0];
+      if (holding === undefined) continue;
+      safe.push({ slot, holding });
+      consumedInRun.add(holding.id);
+    } else {
+      ambiguous.push({ slot, candidates: eligible });
+    }
+  }
+
+  return {
+    binderId,
+    safe,
+    ambiguous,
+    wrongVariant,
+    noHolding,
+    alreadyOwned,
+    noTarget,
+  };
+}
+
+/**
  * Walks every live target slot in the binder and tries to assign one
  * eligible unassigned holding per slot. Conservative: ambiguous slots
  * (multiple eligible candidates) are skipped, NOT silently disambiguated.
+ *
+ * PR 29 review patch — now derived from `buildAutoPlacementPlan` so the
+ * UI auto-button count, the gap-banner `canPlaceDirectly`, and the
+ * actual placements performed by THIS function are guaranteed to be the
+ * same set.
  */
 export async function autoAssignBinder(
   deps: BinderAssignmentDeps,
@@ -231,95 +373,50 @@ export async function autoAssignBinder(
   if (binder === undefined || binder.deletedAt !== null) {
     return emptyResult();
   }
-  const allSlots = await deps.binderSlotsRepo.listByBinderId(options.binderId);
-  const liveSlots = allSlots.filter((s) => s.deletedAt === null);
+  const plan = await buildAutoPlacementPlan(deps, options.binderId);
+  if (plan === null) return emptyResult();
 
-  // Build O(1) lookups once. Avoids the 1088-Dexie-query trap on a
-  // Vault X 16-pocket binder.
-  const allHoldings = await deps.holdingsRepo.listLive();
-  const holdingsByCardId = new Map<string, HoldingRecord[]>();
-  for (const h of allHoldings) {
-    const arr = holdingsByCardId.get(h.cardId);
-    if (arr === undefined) holdingsByCardId.set(h.cardId, [h]);
-    else arr.push(h);
-  }
-
-  // Holdings already assigned to a live slot (ANY binder, ANY slot) so
-  // we never give the same physical holding to two slots in one run.
-  const allLiveSlotsAcrossBinders = await deps.binderSlotsRepo.listLive();
-  const alreadyAssignedHoldingIds = new Set<string>();
-  for (const s of allLiveSlotsAcrossBinders) {
-    if (s.holdingId !== null) alreadyAssignedHoldingIds.add(s.holdingId);
-  }
-
-  let skippedAlreadyOwned = 0;
-  let skippedNoTarget = 0;
-  let skippedNoHolding = 0;
-  let skippedAmbiguous = 0;
-  let skippedWrongVariant = 0;
   const assigned: Array<{
     slotId: string;
     holdingId: string;
     cardId: string;
   }> = [];
+  let skippedWrongVariant = plan.wrongVariant.length;
+  // Track holdings we just placed so a single physical holding we
+  // somehow encounter twice in a single run does not double-place.
+  const placedHoldingIds = new Set<string>();
 
-  for (const slot of liveSlots) {
-    if (slot.holdingId !== null && slot.status === 'owned') {
-      skippedAlreadyOwned += 1;
-      continue;
-    }
-    if (slot.targetCardId === null) {
-      skippedNoTarget += 1;
-      continue;
-    }
-    const candidates = (holdingsByCardId.get(slot.targetCardId) ?? []).filter(
-      (h) =>
-        h.deletedAt === null && !alreadyAssignedHoldingIds.has(h.id),
-    );
-    const reverseTemplate = isReverseHoloTemplateSlot(slot.note);
-    const eligible = reverseTemplate
-      ? candidates.filter((h) => h.finish === 'reverse_holo')
-      : candidates;
-
-    if (candidates.length > 0 && eligible.length === 0) {
-      // We had cards for this id but none matched the finish rule.
+  for (const entry of plan.safe) {
+    if (placedHoldingIds.has(entry.holding.id)) {
+      // Defensive: should not happen since the plan dedupes by
+      // cross-binder assignment, but keeps the contract stable.
       skippedWrongVariant += 1;
       continue;
     }
-    if (eligible.length === 0) {
-      skippedNoHolding += 1;
-      continue;
-    }
-    if (eligible.length > 1) {
-      skippedAmbiguous += 1;
-      continue;
-    }
-
-    const holding = eligible[0];
-    if (holding === undefined) continue;
-
     try {
-      await assignHoldingToSlot(deps, slot, holding, binder.slotsPerPage);
+      await assignHoldingToSlot(deps, entry.slot, entry.holding, binder.slotsPerPage);
     } catch {
       // The repo / our pre-checks rejected — record under the
       // closest-fit bucket so the UI summary stays informative.
       skippedWrongVariant += 1;
       continue;
     }
-    alreadyAssignedHoldingIds.add(holding.id);
-    assigned.push({
-      slotId: slot.id,
-      holdingId: holding.id,
-      cardId: slot.targetCardId,
-    });
+    placedHoldingIds.add(entry.holding.id);
+    if (entry.slot.targetCardId !== null) {
+      assigned.push({
+        slotId: entry.slot.id,
+        holdingId: entry.holding.id,
+        cardId: entry.slot.targetCardId,
+      });
+    }
   }
 
   return {
     assigned,
-    skippedAlreadyOwned,
-    skippedNoTarget,
-    skippedNoHolding,
-    skippedAmbiguous,
+    skippedAlreadyOwned: plan.alreadyOwned.length,
+    skippedNoTarget: plan.noTarget.length,
+    skippedNoHolding: plan.noHolding.length,
+    skippedAmbiguous: plan.ambiguous.length,
     skippedWrongVariant,
   };
 }

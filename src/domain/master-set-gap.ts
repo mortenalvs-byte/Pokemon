@@ -282,6 +282,66 @@ const REASONS: Record<MasterGapStatus, string> = {
   blank_slot: 'Slot uten målkort.',
 };
 
+// PR 29 review patch — contextual reasons. The operator's "Gap analysis
+// is poor/bad" review specifically mentioned that the row reasons were
+// generic. Each status now embeds the actionable detail (required
+// finish, candidate count, etc.) so the operator does not have to
+// cross-reference the row metadata to know what's blocking it.
+function finishLabel(f: CardFinish | null): string {
+  if (f === null) return 'ukjent variant';
+  if (f === 'reverse_holo') return 'reverse holo';
+  return f;
+}
+
+interface ReasonContext {
+  readonly required: MasterGapRequiredVariant;
+  readonly matchingHoldingsCount?: number;
+  readonly activeWishlistCount?: number;
+  readonly orderedWishlistCount?: number;
+  readonly unmaterializedLotItemCount?: number;
+  readonly assignedHoldingFinish?: string | null;
+}
+
+function buildReason(
+  status: MasterGapStatus,
+  ctx: ReasonContext,
+): string {
+  switch (status) {
+    case 'complete':
+      return REASONS.complete;
+    case 'missing':
+      return `Mangler. Trenger ${finishLabel(ctx.required.finish)}.`;
+    case 'owned_unplaced':
+      return `Du eier 1 ${finishLabel(ctx.required.finish)}-holding — kan plasseres direkte.`;
+    case 'ambiguous_owned': {
+      const n = ctx.matchingHoldingsCount ?? 0;
+      return `${n} holdings matcher (${finishLabel(ctx.required.finish)}). Velg manuelt.`;
+    }
+    case 'wishlist_ordered': {
+      const n = ctx.orderedWishlistCount ?? 0;
+      return `Bestilt fra ønskeliste (${n}).`;
+    }
+    case 'wishlist_wanted': {
+      const n = ctx.activeWishlistCount ?? 0;
+      return `Står på ønskeliste (${n}).`;
+    }
+    case 'in_lot_unmaterialized': {
+      const n = ctx.unmaterializedLotItemCount ?? 0;
+      return `Finnes i ${n} lot${n === 1 ? '' : 's'} — ikke materialisert.`;
+    }
+    case 'invalid_assignment':
+      return REASONS.invalid_assignment;
+    case 'invalid_variant':
+      return `Slotten krever ${finishLabel(ctx.required.finish)}, holding er ${ctx.assignedHoldingFinish ?? 'ukjent finish'}.`;
+    case 'unverified_variant_data':
+      return ctx.required.reason !== ''
+        ? `Mangler trygg variantdata: ${ctx.required.reason}`
+        : REASONS.unverified_variant_data;
+    case 'blank_slot':
+      return REASONS.blank_slot;
+  }
+}
+
 /**
  * Run the full classification for one slot. The service feeds in
  * pre-built lookups so a 1088-slot binder doesn't repeat the same
@@ -297,7 +357,7 @@ export function classifySlot(
     return {
       status: 'blank_slot',
       severity: 'info',
-      reason: REASONS.blank_slot,
+      reason: buildReason('blank_slot', { required: BLANK_REQUIRED }),
       required: BLANK_REQUIRED,
       matchingUnplacedHoldingIds: [],
       activeWishlistIds: [],
@@ -320,7 +380,7 @@ export function classifySlot(
       return {
         status: 'invalid_assignment',
         severity: 'critical',
-        reason: REASONS.invalid_assignment,
+        reason: buildReason('invalid_assignment', { required }),
         required,
         matchingUnplacedHoldingIds: [],
         activeWishlistIds: [],
@@ -336,7 +396,10 @@ export function classifySlot(
       return {
         status: 'invalid_variant',
         severity: 'critical',
-        reason: REASONS.invalid_variant,
+        reason: buildReason('invalid_variant', {
+          required,
+          assignedHoldingFinish: assigned.finish,
+        }),
         required,
         matchingUnplacedHoldingIds: [],
         activeWishlistIds: [],
@@ -348,7 +411,7 @@ export function classifySlot(
     return {
       status: 'complete',
       severity: 'ok',
-      reason: REASONS.complete,
+      reason: buildReason('complete', { required }),
       required,
       matchingUnplacedHoldingIds: [],
       activeWishlistIds: [],
@@ -363,7 +426,7 @@ export function classifySlot(
     return {
       status: 'unverified_variant_data',
       severity: 'warning',
-      reason: REASONS.unverified_variant_data,
+      reason: buildReason('unverified_variant_data', { required }),
       required,
       matchingUnplacedHoldingIds: [],
       activeWishlistIds: [],
@@ -418,7 +481,10 @@ export function classifySlot(
     return {
       status: 'owned_unplaced',
       severity: 'warning',
-      reason: REASONS.owned_unplaced,
+      reason: buildReason('owned_unplaced', {
+        required,
+        matchingHoldingsCount: 1,
+      }),
       required,
       matchingUnplacedHoldingIds,
       activeWishlistIds,
@@ -431,7 +497,10 @@ export function classifySlot(
     return {
       status: 'ambiguous_owned',
       severity: 'warning',
-      reason: REASONS.ambiguous_owned,
+      reason: buildReason('ambiguous_owned', {
+        required,
+        matchingHoldingsCount: matchingHoldings.length,
+      }),
       required,
       matchingUnplacedHoldingIds,
       activeWishlistIds,
@@ -444,7 +513,10 @@ export function classifySlot(
     return {
       status: 'wishlist_ordered',
       severity: 'info',
-      reason: REASONS.wishlist_ordered,
+      reason: buildReason('wishlist_ordered', {
+        required,
+        orderedWishlistCount: orderedWishlistIds.length,
+      }),
       required,
       matchingUnplacedHoldingIds,
       activeWishlistIds,
@@ -457,7 +529,10 @@ export function classifySlot(
     return {
       status: 'wishlist_wanted',
       severity: 'info',
-      reason: REASONS.wishlist_wanted,
+      reason: buildReason('wishlist_wanted', {
+        required,
+        activeWishlistCount: activeWishlistIds.length,
+      }),
       required,
       matchingUnplacedHoldingIds,
       activeWishlistIds,
@@ -470,7 +545,10 @@ export function classifySlot(
     return {
       status: 'in_lot_unmaterialized',
       severity: 'info',
-      reason: REASONS.in_lot_unmaterialized,
+      reason: buildReason('in_lot_unmaterialized', {
+        required,
+        unmaterializedLotItemCount: unmaterializedLotItemIds.length,
+      }),
       required,
       matchingUnplacedHoldingIds,
       activeWishlistIds,
@@ -482,7 +560,7 @@ export function classifySlot(
   return {
     status: 'missing',
     severity: 'warning',
-    reason: REASONS.missing,
+    reason: buildReason('missing', { required }),
     required,
     matchingUnplacedHoldingIds,
     activeWishlistIds,

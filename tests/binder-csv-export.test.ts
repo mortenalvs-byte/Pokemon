@@ -129,25 +129,31 @@ describe('binder-csv-export', () => {
     expect(result!.content.charCodeAt(0)).toBe(0xfeff);
     const lines = result!.content.replace(/^﻿/, '').split('\r\n');
     expect(lines[0]).toBe(
+      // PR 29 review patch — operator-approved column set (2026-05-09).
+      // The header is camelCase, includes binderName/physicalPosition/
+      // requiredFinish/holdingId/holdingFinish/holdingCondition/
+      // holdingStatus/language/issue, and drops the snake_case names.
       [
-        'page',
-        'slot',
-        'target_card_id',
-        'target_card_name',
-        'set_id',
-        'set_name',
-        'set_number',
-        'finish',
-        'status',
-        'holding_card_id',
-        'holding_card_name',
-        'condition_type',
-        'raw_condition',
-        'grading_company',
-        'grade',
-        'holding_note',
-        'slot_note',
-        'updated_at',
+        'binderName',
+        'pageNumber',
+        'slotNumber',
+        'physicalPosition',
+        'slotStatus',
+        'targetCardId',
+        'targetCardName',
+        'setId',
+        'setName',
+        'cardNumber',
+        'rarity',
+        'requiredFinish',
+        'holdingId',
+        'holdingCardName',
+        'holdingFinish',
+        'holdingCondition',
+        'holdingStatus',
+        'language',
+        'note',
+        'issue',
       ].join(','),
     );
     // header + 9 rows + trailing empty
@@ -217,10 +223,14 @@ describe('binder-csv-export', () => {
     const result = await buildExporter().build(created.binder.id);
     expect(result).not.toBeNull();
     const row = result!.content.replace(/^﻿/, '').split('\r\n')[1] ?? '';
-    expect(row).toContain('owned');
-    expect(row).toContain('raw');
-    expect(row).toContain('NM');
-    expect(row).toContain('normal'); // finish from holding
+    // PR 29 review patch — operator-approved column set: conditionType
+    // is no longer a direct column. `holdingCondition` renders the raw
+    // condition (or "PSA 10" for graded). `holdingFinish` carries the
+    // finish.
+    expect(row).toContain('owned'); // slotStatus + holdingStatus
+    expect(row).toContain('NM'); // holdingCondition
+    expect(row).toContain('normal'); // holdingFinish
+    expect(row).toContain(holding.id); // holdingId
   });
 
   it('filename uses binder name slug + date stamp', async () => {

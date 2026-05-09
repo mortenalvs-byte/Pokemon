@@ -52,7 +52,9 @@ import { createBinderCsvExporter } from '../services/binder-csv-export';
 import {
   assignHoldingToSlot,
   autoAssignBinder,
+  buildAutoPlacementPlan,
   type AutoAssignResult,
+  type AutoPlacementPlan,
 } from '../services/binder-assignment-service';
 import {
   createBinderSlotService,
@@ -153,6 +155,15 @@ interface ViewState {
    */
   autoAssignSummary: AutoAssignResult | null;
   /**
+   * PR 29 review patch — single source of truth for auto-placement.
+   * The plan classifies every slot into safe / ambiguous / wrongVariant /
+   * noHolding / alreadyOwned / noTarget. The auto-button label reads
+   * `plan.safe.length` directly so it matches the gap-banner
+   * `canPlaceDirectly` and the actual `autoAssignBinder` result.
+   * `null` means "needs (re)build on next render".
+   */
+  placementPlan: AutoPlacementPlan | null;
+  /**
    * PR 20 review patch — consume-once deep-link guard. The URL hash
    * `#binder/<id>/slot/<slotId>` is read on every render, but the
    * page-jump should fire ONLY the first time we see a given
@@ -193,6 +204,7 @@ export function mountBinderDetailView(
     cachedDetail: null,
     assignableInfo: null,
     autoAssignSummary: null,
+    placementPlan: null,
     consumedSlotFocusId: null,
   };
 
@@ -207,6 +219,7 @@ export function mountBinderDetailView(
     if (!container.isConnected) return;
     state.cachedDetail = null;
     state.assignableInfo = null;
+    state.placementPlan = null;
     void renderInto(container, state);
   };
   onUserDataChanged(refresh, signal);
@@ -318,6 +331,21 @@ async function renderInto(
     // have, no per-slot queries.
     const liveHoldings = await createHoldingsRepo(getDb()).listLive();
     state.assignableInfo = computeAssignableInfo(detail, liveHoldings);
+    // PR 29 review patch — placement plan is the single source of truth
+    // for the auto-button label (and matches gap-banner canPlaceDirectly
+    // and what `autoAssignBinder` actually places). Cross-binder aware
+    // unlike `computeAssignableInfo`, which is intentionally local to
+    // this binder (used only by per-tile badges).
+    const planDb = getDb();
+    state.placementPlan = await buildAutoPlacementPlan(
+      {
+        bindersRepo: createBindersRepo(planDb),
+        binderSlotsRepo: createBinderSlotsRepo(planDb),
+        holdingsRepo: createHoldingsRepo(planDb),
+        cardsRepo: createCardsRepo(planDb),
+      },
+      binderId,
+    );
   }
   // Always have a non-null assignableInfo at render time. This handles
   // the case where the detail was cached but assignableInfo was reset
@@ -326,6 +354,7 @@ async function renderInto(
     state.assignableInfo = new Map();
   }
   const assignableInfo = state.assignableInfo;
+  const placementPlan = state.placementPlan;
 
   root.appendChild(buildSummary(detail));
   // PR 25 — gap summary banner. Lazy-loaded so the heavy
@@ -336,7 +365,9 @@ async function renderInto(
   const gapBanner = buildGapBannerSkeleton(detail.binder.id);
   root.appendChild(gapBanner);
   void populateGapBanner(gapBanner, detail.binder.id);
-  root.appendChild(buildToolbar(detail, state, container, assignableInfo));
+  root.appendChild(
+    buildToolbar(detail, state, container, assignableInfo, placementPlan),
+  );
   if (state.autoAssignSummary !== null) {
     root.appendChild(buildAutoAssignSummary(detail, state, container));
   }
@@ -530,6 +561,7 @@ function buildToolbar(
   state: ViewState,
   container: HTMLElement,
   assignableInfo: Map<string, AssignableSlotInfo>,
+  placementPlan: AutoPlacementPlan | null,
 ): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'binder-detail-view__toolbar';
@@ -620,34 +652,58 @@ function buildToolbar(
   filterLabel.appendChild(filterSelect);
   viewGroup.appendChild(filterLabel);
 
-  // PR 24 — Auto-plasser matching holdings. Enabled whenever there is
-  // at least one missing target slot in the binder; the count shown in
-  // the label reflects the current 1:1 obvious matches but the action
-  // also surfaces "skippedWrongVariant" / "skippedAmbiguous" feedback
-  // for slots without a clean candidate.
+  // PR 24 — Auto-plasser matching holdings.
+  // PR 29 review patch — the count shown is `placementPlan.safe.length`,
+  // i.e. exactly the number of safe 1:1 placements that will run when
+  // the user clicks. It MUST equal the gap-banner's `canPlaceDirectly`
+  // count and `autoAssignBinder`'s assigned count by construction.
+  // Ambiguous slots are NOT folded into the main number — they appear
+  // in a secondary chip so the user knows they need a manual choice.
+  void assignableInfo;
   const autoBtn = document.createElement('button');
   autoBtn.type = 'button';
   autoBtn.className = 'binder-detail-view__auto-assign';
   autoBtn.dataset['action'] = 'auto-assign';
-  const totalAssignable = assignableInfo.size;
+  const safeCount = placementPlan?.safe.length ?? 0;
+  const ambiguousCount = placementPlan?.ambiguous.length ?? 0;
   const hasUnfilledTargetSlots = detail.slots.some(
     (s) =>
       s.deletedAt === null &&
       s.targetCardId !== null &&
       !(s.holdingId !== null && s.status === 'owned'),
   );
-  autoBtn.textContent = `Auto-plasser matching holdings${totalAssignable > 0 ? ` (${totalAssignable})` : ''}`;
+  autoBtn.textContent = `Auto-plasser matching holdings${safeCount > 0 ? ` (${safeCount})` : ''}`;
+  autoBtn.dataset['safeCount'] = String(safeCount);
+  autoBtn.dataset['ambiguousCount'] = String(ambiguousCount);
+  // Disabled only when there is literally nothing the action could do.
+  // We keep it enabled when only ambiguous candidates exist so clicking
+  // surfaces the "krever manuelt valg" feedback instead of being silently
+  // unreachable.
   autoBtn.disabled = !hasUnfilledTargetSlots;
   if (!hasUnfilledTargetSlots) {
     autoBtn.title = 'Permen har ingen tomme target-slots akkurat nå.';
-  } else if (totalAssignable === 0) {
+  } else if (safeCount === 0 && ambiguousCount > 0) {
+    autoBtn.title = `${ambiguousCount} slot(s) krever manuelt valg — ingen trygge 1:1 plasseringer.`;
+  } else if (safeCount === 0) {
     autoBtn.title =
-      'Ingen 1:1 matching holdings, men auto-plasser viser hvorfor (mangler holding, tvetydige, feil variant).';
+      'Ingen 1:1 matching holdings — auto-plasser viser hvorfor (mangler holding, feil variant).';
   }
   autoBtn.addEventListener('click', () => {
     void handleAutoAssign(detail.binder.id, state, container);
   });
   actionsGroup.appendChild(autoBtn);
+  // PR 29 review patch — secondary chip with the manual-required count.
+  // Renders only when the operator's "125 trygge · 41 krever manuelt valg"
+  // shape applies (both buckets non-empty). Keeps the auto-button label
+  // unambiguous while still surfacing the ambiguous bucket the gap view
+  // exists to resolve.
+  if (safeCount > 0 && ambiguousCount > 0) {
+    const breakdown = document.createElement('span');
+    breakdown.className = 'binder-detail-view__auto-assign-breakdown';
+    breakdown.dataset['region'] = 'auto-assign-breakdown';
+    breakdown.textContent = `${safeCount} trygge · ${ambiguousCount} krever manuelt valg`;
+    actionsGroup.appendChild(breakdown);
+  }
 
   // PR 25 — open the per-binder master gap report. Workflow action,
   // grouped with Auto-plasser per PR 26.
@@ -815,6 +871,7 @@ async function handleAutoAssign(
   if (result.assigned.length > 0) {
     state.cachedDetail = null;
     state.assignableInfo = null;
+    state.placementPlan = null;
     window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
   }
   // Re-render even if no assignments happened so the summary banner
