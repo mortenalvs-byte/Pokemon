@@ -107,7 +107,7 @@ class of payload, plus a Norwegian-character roundtrip and a
 - `src/utils/csv.ts` — `guardFormulaInjection` + serializeCsv body
   routes user-data cells through the guard. Headers untouched.
 - `tests/pr30-csv-formula-injection.test.ts` — new (14 cases).
-- `tests/pr30-backup-deep-validation.test.ts` — new (13 cases,
+- `tests/pr30-backup-deep-validation.test.ts` — new (14 cases,
   pin-then-flip baseline for PR 33).
 
 #### Verification (measured against HEAD before merge)

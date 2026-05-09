@@ -58,8 +58,8 @@ opportunistically when the surface area lines up.
 | Largest dev-only file | `src/qa/qa-max-stress.ts` (809 lines, tree-shaken) |
 | Production bundle | 460.15 KB JS / 120.51 KB gzip |
 | CSS bundle | 73.17 KB / 9.13 KB gzip (one file) |
-| Test files | 117 → 119 after PR 30 |
-| Test cases | 1174 → 1201 after PR 30 (+27) |
+| Test files | 117 → 119 after PR 30 (+2) |
+| Test cases | 1174 → 1202 after PR 30 (+28: 14 csv-injection + 14 backup-validation) |
 | Production runtime dependencies | 1 (`dexie ^4.4.2`) |
 | Open vulnerabilities | 0 (`npm audit` and `npm audit --omit=dev`) |
 | Tauri capabilities | `core:default` only |
@@ -306,7 +306,7 @@ Suggested PR: PR 37 (lower-risk a11y polish only when concrete
 ```text
 Area: Coverage
 Status: GREEN
-Evidence: 117 → 119 files / 1174 → 1201 cases; 0 flaky retries
+Evidence: 117 → 119 files / 1174 → 1202 cases; 0 flaky retries
           observed; 143 s full suite + 150 s qa:browser stable.
 Suggested PR: none.
 

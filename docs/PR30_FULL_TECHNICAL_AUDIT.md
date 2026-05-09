@@ -278,10 +278,13 @@ Why it matters: A malicious or careless backup import / API
                 that CSV in Excel/Sheets, the formula runs (HYPERLINK
                 exfiltration, DDE on legacy Office, etc.).
 Fixed in PR #30: YES — prefix-escape applied in escapeCell.
-Tests: tests/pr30-csv-formula-injection.test.ts (8 cases) covers:
+Tests: tests/pr30-csv-formula-injection.test.ts (14 cases) covers:
        =HYPERLINK, +cmd, -2+3, @SUM, leading tab, leading CR,
-       leading LF, æøå roundtrip, comma/quote/newline still
-       quoted (no regression of RFC 4180 path).
+       leading LF, mid-cell `=` not prefixed, headers never
+       prefixed, æøå roundtrip, safe-values pass-through, RFC 4180
+       quoting still composes, empty string passes through, and a
+       maximally-malicious cell (leading `=` + embedded comma +
+       quote + newline).
 Status: FIXED
 ```
 
@@ -349,9 +352,11 @@ If not fixed, why: A real fix requires per-record validators for
                   enums, version drift handling) and crosses into
                   the "no schema migration / no backup format
                   change" stop-condition. Belongs in PR 33.
-Tests: tests/pr30-backup-deep-validation.test.ts (4 cases) pin the
-       current shape so we can detect a drift-fix regression while
-       PR 33 designs the deep validator.
+Tests: tests/pr30-backup-deep-validation.test.ts (14 cases) pin
+       the current shape so we can detect a drift-fix regression
+       while PR 33 designs the deep validator. Three cases are
+       explicit "PIN: ACCEPTS …" assertions that PR 33 will flip to
+       "REJECTS …" once the deep validator lands.
 Status: DEFERRED → PR 33 (Backup/restore validation hardening)
 ```
 
@@ -1103,20 +1108,71 @@ RFC 4180 case to prove no regression.
 
 ## 20. Final verification
 
-After PR 30's CSV fix and new tests, measured at HEAD before commit:
+After PR 30's CSV fix and new tests, measured at HEAD before commit
+(re-confirmed once more after the test-count audit on the same
+HEAD; numbers identical):
 
 ```text
-npm run typecheck              → PASS
-npm test                       → 119 files / 1202 / 1202 PASS  (was 117 / 1174 / 1174)
+npm run typecheck              → PASS (exit 0, no output)
+npm test                       → 119 files / 1202 / 1202 PASS    (was 117 / 1174 / 1174)
+                                 +2 files / +28 cases — exact match for
+                                 14 (pr30-csv-formula-injection) + 14
+                                 (pr30-backup-deep-validation) new cases.
 npm run qa:browser             → 11 files / 92 / 92 PASS
-npm run build                  → 460.28 KB JS / 120.58 KB gzip  (was 460.15 / 120.51 — +130 / +70 bytes)
-                                 → CSS 73.17 KB / 9.13 KB gzip (unchanged)
+npm run build                  → 460.28 KB JS / 120.58 KB gzip   (was 460.15 / 120.51 — +130 / +70 bytes)
+                                 CSS 73.17 KB / 9.13 KB gzip (unchanged)
 npm run desktop:build          → PASS — pokemon-tracker-desktop.exe (3.4 MB) +
                                  Morten's Pokémon Tracker_0.1.0_x64_en-US.msi (1.9 MB)
-                                 (release compile 1m 21s)
+                                 (release compile 1m 21s the first run; ~30 s on warm rebuild)
 npm audit --omit=dev           → 0 vulnerabilities
 npm audit                      → 0 vulnerabilities
 ```
+
+### Manual smoke (status)
+
+The 23-step manual smoke checklist from the plan §6 is documented
+verbatim in the [PR plan](../.claude/plans/jeg-planlegger-pr-30-shimmering-trinket.md)
+§6 and reproduced for the operator below. PR 30 was completed as
+an **automated audit + targeted security fix**; the agent did NOT
+walk the 23-step manual list. The operator should perform the
+walk against this branch before merge:
+
+```text
+1.  Open app.                              [ ] operator-run
+2.  Confirm console clean.                 [ ] operator-run
+3.  Visit every sidebar route.             [ ] operator-run
+4.  Use global search.                     [ ] operator-run
+5.  Open card detail.                      [ ] operator-run
+6.  Add holding.                           [ ] operator-run
+7.  Edit or soft-delete holding.           [ ] operator-run
+8.  Add wishlist item.                     [ ] operator-run
+9.  Mark wishlist received.                [ ] operator-run
+10. Open binder detail.                    [ ] operator-run
+11. Run auto-place on safe fixture only.   [ ] operator-run
+12. Export binder CSV.                     [ ] operator-run
+13. Open master-gap.                       [ ] operator-run
+14. Use filters/toggles.                   [ ] operator-run
+15. Open lot detail.                       [ ] operator-run
+16. Materialise one safe lot item.         [ ] operator-run
+17. Export backup.                         [ ] operator-run
+18. Try invalid restore.                   [ ] operator-run
+19. Restore valid backup.                  [ ] operator-run
+20. Save settings preference.              [ ] operator-run
+21. Confirm topbar updates.                [ ] operator-run
+22. Build production and grep dist.        [x] AUTOMATED — qa-route-prod-gating
+23. Run desktop build.                     [x] AUTOMATED — npm run desktop:build PASS
+```
+
+Two of 23 steps (build+grep, desktop:build) ARE covered by the
+automated chain that ran for this PR. The remaining 21 are pure
+DOM workflows that no command-line tool can substitute for; the
+operator's click-through is the source of truth before merge.
+
+PR 29 itself shipped on the same contract: the operator's first
+manual click-through against `Stress Vault9 3 60` found four
+DOM-event-level contract violations in `binder-detail` that no
+automated QA had caught. PR 30's audit explicitly reads that as
+a continuing requirement (audit § 15, finding `F-PHASE-G-1`).
 
 Delta against PR #29's published baseline:
 
