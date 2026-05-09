@@ -189,6 +189,60 @@ export function validateBackup(parsed: unknown): ValidationResult {
     return { ok: false, errors, warnings };
   }
 
+  // PR 33 — per-record deep validation.
+  //
+  // Up to and including PR 30, validateBackup only checked top-level
+  // shape and the presence of a string `id` on user-data records.
+  // A poisoned backup with `quantity: "garbage"` or
+  // `finish: 12345` therefore landed in Dexie via `bulkPut` and
+  // corrupted downstream readers. F-BACKUP-VALID-1 in
+  // docs/PR30_FULL_TECHNICAL_AUDIT.md captured the gap; this pass
+  // closes it.
+  //
+  // Field-type / enum errors hard-fail. Cross-references stay
+  // warnings-only (kept downstream as before).
+  for (const r of root['holdings'] as Record<string, unknown>[]) {
+    const i = (root['holdings'] as unknown[]).indexOf(r);
+    errors.push(...validateHoldingRecord(r, `holdings[${i}]`));
+  }
+  for (const r of root['lots'] as Record<string, unknown>[]) {
+    const i = (root['lots'] as unknown[]).indexOf(r);
+    errors.push(...validateLotRecord(r, `lots[${i}]`));
+  }
+  for (const r of root['lotItems'] as Record<string, unknown>[]) {
+    const i = (root['lotItems'] as unknown[]).indexOf(r);
+    errors.push(...validateLotItemRecord(r, `lotItems[${i}]`));
+  }
+  for (const r of root['binders'] as Record<string, unknown>[]) {
+    const i = (root['binders'] as unknown[]).indexOf(r);
+    errors.push(...validateBinderRecord(r, `binders[${i}]`));
+  }
+  for (const r of root['binderSlots'] as Record<string, unknown>[]) {
+    const i = (root['binderSlots'] as unknown[]).indexOf(r);
+    errors.push(...validateBinderSlotRecord(r, `binderSlots[${i}]`));
+  }
+  for (const r of root['wishlist'] as Record<string, unknown>[]) {
+    const i = (root['wishlist'] as unknown[]).indexOf(r);
+    errors.push(...validateWishlistRecord(r, `wishlist[${i}]`));
+  }
+  // Light validation for KV-shaped + audit stores.
+  for (let i = 0; i < (root['settings'] as unknown[]).length; i += 1) {
+    const r = (root['settings'] as unknown[])[i];
+    errors.push(...validateKeyValueRecord(r, `settings[${i}]`));
+  }
+  for (let i = 0; i < (root['appMeta'] as unknown[]).length; i += 1) {
+    const r = (root['appMeta'] as unknown[])[i];
+    errors.push(...validateKeyValueRecord(r, `appMeta[${i}]`));
+  }
+  for (let i = 0; i < (root['auditLog'] as unknown[]).length; i += 1) {
+    const r = (root['auditLog'] as unknown[])[i];
+    errors.push(...validateAuditLogRecord(r, `auditLog[${i}]`));
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors, warnings };
+  }
+
   // Cross-reference checks produce warnings only — bad references do
   // not abort the restore, but the user sees them in the preview.
   collectCrossReferenceWarnings(root, warnings);
@@ -267,6 +321,423 @@ function collectCrossReferenceWarnings(
       );
     }
   });
+}
+
+// ---------------------------------------------------------------------
+// PR 33 — per-record deep validators.
+//
+// Each validator mirrors the corresponding `XRecord` shape in
+// `src/domain/types.ts`. Required fields must be present with the
+// correct primitive type or be a member of the documented enum.
+// Nullable fields must be `null` when no value is supplied (JSON has
+// no `undefined`, so a missing key behaves as `undefined` and is
+// treated as a hard error for required-non-null fields).
+//
+// Validators return an array of human-readable error messages,
+// scoped to the record's path label (e.g. `holdings[3]`). The
+// caller in `validateBackup` flattens those into the existing
+// `errors` array; if anything is reported, `ok: false` is returned
+// before the cross-reference walk runs.
+//
+// Stop-condition compliance: validators reject malformed data, but
+// they do NOT extend the on-disk JSON shape, change schemaVersion,
+// alter the warnings-vs-errors policy for cross-references, or
+// touch the API key preservation rule. (See PR_30 audit doc §
+// F-BACKUP-VALID-1 → Successor PR: PR 33.)
+
+// -- Type guards for enum values --------------------------------------
+
+function isOneOf<T extends string>(values: readonly T[]): (v: unknown) => boolean {
+  return (v: unknown) => typeof v === 'string' && (values as readonly string[]).includes(v);
+}
+
+const isRawCondition = isOneOf(['NM', 'LP', 'MP', 'HP', 'DMG', 'UNKNOWN']);
+const isConditionType = isOneOf(['raw', 'graded']);
+const isGradingCompany = isOneOf([
+  'PSA',
+  'BGS',
+  'CGC',
+  'TAG',
+  'ACE',
+  'OTHER',
+]);
+const isCardFinish = isOneOf([
+  'normal',
+  'holo',
+  'reverse_holo',
+  'non_holo',
+  'stamped',
+  'unknown',
+]);
+const isEdition = isOneOf([
+  'unlimited',
+  'first_edition',
+  'shadowless',
+  'unknown',
+]);
+const isBinderSlotStatus = isOneOf([
+  'empty',
+  'wanted',
+  'owned',
+  'missing',
+  'ordered',
+  'duplicate',
+  'upgrade_needed',
+]);
+const isValueSource = isOneOf([
+  'manual',
+  'tcgplayer',
+  'cardmarket',
+  'estimated',
+  'unknown',
+]);
+const isCurrencyCode = isOneOf(['NOK', 'USD', 'EUR', 'PHP']);
+const isAllocationMethod = isOneOf([
+  'equal',
+  'weighted_by_market_price',
+  'manual',
+]);
+const isCompletionMode = isOneOf(['standard', 'master', 'grand_master']);
+const isHoldingStatus = isOneOf([
+  'owned',
+  'duplicate',
+  'for_sale',
+  'for_trade',
+  'upgrade_needed',
+  'ordered',
+  'wanted',
+]);
+const isWishlistStatus = isOneOf([
+  'wanted',
+  'ordered',
+  'received',
+  'cancelled',
+]);
+const isWishlistPriority = isOneOf(['low', 'medium', 'high', 'grail']);
+const isHoldingSource = isOneOf(['manual', 'lot', 'imported']);
+const isAuditEntityType = isOneOf([
+  'holding',
+  'binder',
+  'binderSlot',
+  'lot',
+  'lotItem',
+  'wishlist',
+  'settings',
+  'system',
+]);
+const isBinderPreset = isOneOf([
+  'vaultx_9_360',
+  'vaultx_12_480',
+  'vaultx_12xl_624',
+  'vaultx_16xxl_1088',
+  'custom',
+  'legacy_18',
+]);
+
+function isSlotsPerPage(v: unknown): boolean {
+  return v === 4 || v === 9 || v === 12 || v === 16 || v === 18;
+}
+
+// -- Field-level helpers ----------------------------------------------
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+function isNonNegativeInteger(v: unknown): boolean {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0;
+}
+
+function isNonNegativeFiniteNumber(v: unknown): boolean {
+  return isFiniteNumber(v) && (v as number) >= 0;
+}
+
+function isStringArray(v: unknown): boolean {
+  return Array.isArray(v) && v.every((s) => typeof s === 'string');
+}
+
+function isNullableIsoTimestamp(v: unknown): boolean {
+  return v === null || (typeof v === 'string' && isIsoTimestamp(v));
+}
+
+// -- Per-record validators --------------------------------------------
+
+function validateHoldingRecord(
+  r: unknown,
+  label: string,
+): string[] {
+  if (!isPlainObject(r)) return [`${label}: must be an object`];
+  const e: string[] = [];
+  if (typeof r['cardId'] !== 'string' || (r['cardId'] as string).length === 0)
+    e.push(`${label}.cardId: must be a non-empty string`);
+  if (!isNonNegativeInteger(r['quantity']))
+    e.push(`${label}.quantity: must be a non-negative integer`);
+  if (!isConditionType(r['conditionType']))
+    e.push(`${label}.conditionType: must be 'raw' | 'graded'`);
+  if (r['rawCondition'] !== null && !isRawCondition(r['rawCondition']))
+    e.push(`${label}.rawCondition: must be RawCondition or null`);
+  if (r['gradingCompany'] !== null && !isGradingCompany(r['gradingCompany']))
+    e.push(`${label}.gradingCompany: must be GradingCompany or null`);
+  if (r['grade'] !== null && !isFiniteNumber(r['grade']))
+    e.push(`${label}.grade: must be a finite number or null`);
+  if (r['certNumber'] !== null && typeof r['certNumber'] !== 'string')
+    e.push(`${label}.certNumber: must be string or null`);
+  if (r['certUrl'] !== null && typeof r['certUrl'] !== 'string')
+    e.push(`${label}.certUrl: must be string or null`);
+  if (!isNullableIsoTimestamp(r['gradedDate']))
+    e.push(`${label}.gradedDate: must be ISO timestamp or null`);
+  if (!isCardFinish(r['finish']))
+    e.push(`${label}.finish: must be a CardFinish`);
+  if (!isEdition(r['edition']))
+    e.push(`${label}.edition: must be an Edition`);
+  if (typeof r['language'] !== 'string')
+    e.push(`${label}.language: must be a string`);
+  if (r['purchasePrice'] !== null && !isNonNegativeFiniteNumber(r['purchasePrice']))
+    e.push(`${label}.purchasePrice: must be non-negative number or null`);
+  if (r['purchaseCurrency'] !== null && !isCurrencyCode(r['purchaseCurrency']))
+    e.push(`${label}.purchaseCurrency: must be CurrencyCode or null`);
+  if (r['estimatedValue'] !== null && !isNonNegativeFiniteNumber(r['estimatedValue']))
+    e.push(`${label}.estimatedValue: must be non-negative number or null`);
+  if (r['valueCurrency'] !== null && !isCurrencyCode(r['valueCurrency']))
+    e.push(`${label}.valueCurrency: must be CurrencyCode or null`);
+  if (!isValueSource(r['valueSource']))
+    e.push(`${label}.valueSource: must be a ValueSource`);
+  if (r['valueNote'] !== null && typeof r['valueNote'] !== 'string')
+    e.push(`${label}.valueNote: must be string or null`);
+  if (!isNullableIsoTimestamp(r['valueUpdatedAt']))
+    e.push(`${label}.valueUpdatedAt: must be ISO timestamp or null`);
+  if (!isHoldingSource(r['source']))
+    e.push(`${label}.source: must be 'manual' | 'lot' | 'imported'`);
+  if (r['note'] !== null && typeof r['note'] !== 'string')
+    e.push(`${label}.note: must be string or null`);
+  if (typeof r['specialVariant'] !== 'boolean')
+    e.push(`${label}.specialVariant: must be boolean`);
+  if (!isStringArray(r['tags']))
+    e.push(`${label}.tags: must be an array of strings`);
+  if (r['lotId'] !== null && typeof r['lotId'] !== 'string')
+    e.push(`${label}.lotId: must be string or null`);
+  if (!isHoldingStatus(r['status']))
+    e.push(`${label}.status: must be a HoldingStatus`);
+  if (typeof r['createdAt'] !== 'string' || !isIsoTimestamp(r['createdAt']))
+    e.push(`${label}.createdAt: must be an ISO timestamp`);
+  if (typeof r['updatedAt'] !== 'string' || !isIsoTimestamp(r['updatedAt']))
+    e.push(`${label}.updatedAt: must be an ISO timestamp`);
+  if (!isNullableIsoTimestamp(r['deletedAt']))
+    e.push(`${label}.deletedAt: must be ISO timestamp or null`);
+  return e;
+}
+
+function validateBinderRecord(
+  r: unknown,
+  label: string,
+): string[] {
+  if (!isPlainObject(r)) return [`${label}: must be an object`];
+  const e: string[] = [];
+  if (typeof r['name'] !== 'string' || (r['name'] as string).length === 0)
+    e.push(`${label}.name: must be a non-empty string`);
+  if (r['description'] !== null && typeof r['description'] !== 'string')
+    e.push(`${label}.description: must be string or null`);
+  if (r['binderType'] !== null && typeof r['binderType'] !== 'string')
+    e.push(`${label}.binderType: must be string or null`);
+  if (!isNonNegativeInteger(r['totalPages']))
+    e.push(`${label}.totalPages: must be a non-negative integer`);
+  if (!isSlotsPerPage(r['slotsPerPage']))
+    e.push(`${label}.slotsPerPage: must be 4|9|12|16|18`);
+  // binderPreset is normalised post-validate (legacy back-fill in
+  // `normaliseBackupBinder`). Accept null/undefined OR a documented
+  // BinderPreset; reject any other value.
+  if (
+    r['binderPreset'] !== null &&
+    r['binderPreset'] !== undefined &&
+    !isBinderPreset(r['binderPreset'])
+  ) {
+    e.push(`${label}.binderPreset: must be BinderPreset, null, or absent`);
+  }
+  if (!isCompletionMode(r['completionMode']))
+    e.push(`${label}.completionMode: must be a CompletionMode`);
+  if (r['sourceSetId'] !== null && typeof r['sourceSetId'] !== 'string')
+    e.push(`${label}.sourceSetId: must be string or null`);
+  if (typeof r['createdAt'] !== 'string' || !isIsoTimestamp(r['createdAt']))
+    e.push(`${label}.createdAt: must be an ISO timestamp`);
+  if (typeof r['updatedAt'] !== 'string' || !isIsoTimestamp(r['updatedAt']))
+    e.push(`${label}.updatedAt: must be an ISO timestamp`);
+  if (!isNullableIsoTimestamp(r['deletedAt']))
+    e.push(`${label}.deletedAt: must be ISO timestamp or null`);
+  return e;
+}
+
+function validateBinderSlotRecord(
+  r: unknown,
+  label: string,
+): string[] {
+  if (!isPlainObject(r)) return [`${label}: must be an object`];
+  const e: string[] = [];
+  if (typeof r['binderId'] !== 'string' || (r['binderId'] as string).length === 0)
+    e.push(`${label}.binderId: must be a non-empty string`);
+  if (!isNonNegativeInteger(r['pageNumber']))
+    e.push(`${label}.pageNumber: must be a non-negative integer`);
+  if (!isNonNegativeInteger(r['slotNumber']))
+    e.push(`${label}.slotNumber: must be a non-negative integer`);
+  if (r['targetCardId'] !== null && typeof r['targetCardId'] !== 'string')
+    e.push(`${label}.targetCardId: must be string or null`);
+  if (r['holdingId'] !== null && typeof r['holdingId'] !== 'string')
+    e.push(`${label}.holdingId: must be string or null`);
+  if (!isBinderSlotStatus(r['status']))
+    e.push(`${label}.status: must be a BinderSlotStatus`);
+  if (r['note'] !== null && typeof r['note'] !== 'string')
+    e.push(`${label}.note: must be string or null`);
+  if (typeof r['createdAt'] !== 'string' || !isIsoTimestamp(r['createdAt']))
+    e.push(`${label}.createdAt: must be an ISO timestamp`);
+  if (typeof r['updatedAt'] !== 'string' || !isIsoTimestamp(r['updatedAt']))
+    e.push(`${label}.updatedAt: must be an ISO timestamp`);
+  if (!isNullableIsoTimestamp(r['deletedAt']))
+    e.push(`${label}.deletedAt: must be ISO timestamp or null`);
+  return e;
+}
+
+function validateLotRecord(
+  r: unknown,
+  label: string,
+): string[] {
+  if (!isPlainObject(r)) return [`${label}: must be an object`];
+  const e: string[] = [];
+  if (typeof r['name'] !== 'string' || (r['name'] as string).length === 0)
+    e.push(`${label}.name: must be a non-empty string`);
+  if (typeof r['purchaseDate'] !== 'string' || !isIsoTimestamp(r['purchaseDate']))
+    e.push(`${label}.purchaseDate: must be an ISO timestamp`);
+  if (!isNonNegativeFiniteNumber(r['totalCost']))
+    e.push(`${label}.totalCost: must be a non-negative number`);
+  if (!isCurrencyCode(r['currency']))
+    e.push(`${label}.currency: must be a CurrencyCode`);
+  if (!isAllocationMethod(r['allocationMethod']))
+    e.push(`${label}.allocationMethod: must be an AllocationMethod`);
+  if (r['notes'] !== null && typeof r['notes'] !== 'string')
+    e.push(`${label}.notes: must be string or null`);
+  if (typeof r['createdAt'] !== 'string' || !isIsoTimestamp(r['createdAt']))
+    e.push(`${label}.createdAt: must be an ISO timestamp`);
+  if (typeof r['updatedAt'] !== 'string' || !isIsoTimestamp(r['updatedAt']))
+    e.push(`${label}.updatedAt: must be an ISO timestamp`);
+  if (!isNullableIsoTimestamp(r['deletedAt']))
+    e.push(`${label}.deletedAt: must be ISO timestamp or null`);
+  return e;
+}
+
+function validateLotItemRecord(
+  r: unknown,
+  label: string,
+): string[] {
+  if (!isPlainObject(r)) return [`${label}: must be an object`];
+  const e: string[] = [];
+  if (typeof r['lotId'] !== 'string' || (r['lotId'] as string).length === 0)
+    e.push(`${label}.lotId: must be a non-empty string`);
+  if (typeof r['cardId'] !== 'string' || (r['cardId'] as string).length === 0)
+    e.push(`${label}.cardId: must be a non-empty string`);
+  if (!isCardFinish(r['finish']))
+    e.push(`${label}.finish: must be a CardFinish`);
+  if (!isEdition(r['edition']))
+    e.push(`${label}.edition: must be an Edition`);
+  if (!isConditionType(r['conditionType']))
+    e.push(`${label}.conditionType: must be 'raw' | 'graded'`);
+  if (r['rawCondition'] !== null && !isRawCondition(r['rawCondition']))
+    e.push(`${label}.rawCondition: must be RawCondition or null`);
+  if (r['gradingCompany'] !== null && !isGradingCompany(r['gradingCompany']))
+    e.push(`${label}.gradingCompany: must be GradingCompany or null`);
+  if (r['grade'] !== null && !isFiniteNumber(r['grade']))
+    e.push(`${label}.grade: must be a finite number or null`);
+  if (!isNonNegativeInteger(r['quantity']))
+    e.push(`${label}.quantity: must be a non-negative integer`);
+  if (r['manualPriceOverride'] !== null && !isNonNegativeFiniteNumber(r['manualPriceOverride']))
+    e.push(`${label}.manualPriceOverride: must be non-negative number or null`);
+  if (r['marketEstimate'] !== null && !isNonNegativeFiniteNumber(r['marketEstimate']))
+    e.push(`${label}.marketEstimate: must be non-negative number or null`);
+  if (r['allocatedCost'] !== null && !isNonNegativeFiniteNumber(r['allocatedCost']))
+    e.push(`${label}.allocatedCost: must be non-negative number or null`);
+  if (r['holdingId'] !== null && typeof r['holdingId'] !== 'string')
+    e.push(`${label}.holdingId: must be string or null`);
+  if (r['note'] !== null && typeof r['note'] !== 'string')
+    e.push(`${label}.note: must be string or null`);
+  if (typeof r['createdAt'] !== 'string' || !isIsoTimestamp(r['createdAt']))
+    e.push(`${label}.createdAt: must be an ISO timestamp`);
+  if (typeof r['updatedAt'] !== 'string' || !isIsoTimestamp(r['updatedAt']))
+    e.push(`${label}.updatedAt: must be an ISO timestamp`);
+  if (!isNullableIsoTimestamp(r['deletedAt']))
+    e.push(`${label}.deletedAt: must be ISO timestamp or null`);
+  return e;
+}
+
+function validateWishlistRecord(
+  r: unknown,
+  label: string,
+): string[] {
+  if (!isPlainObject(r)) return [`${label}: must be an object`];
+  const e: string[] = [];
+  if (typeof r['cardId'] !== 'string' || (r['cardId'] as string).length === 0)
+    e.push(`${label}.cardId: must be a non-empty string`);
+  if (!isCardFinish(r['finish']))
+    e.push(`${label}.finish: must be a CardFinish`);
+  if (!isWishlistPriority(r['priority']))
+    e.push(`${label}.priority: must be a WishlistPriority`);
+  if (r['targetCondition'] !== null && !isRawCondition(r['targetCondition']))
+    e.push(`${label}.targetCondition: must be RawCondition or null`);
+  if (r['targetPrice'] !== null && !isNonNegativeFiniteNumber(r['targetPrice']))
+    e.push(`${label}.targetPrice: must be non-negative number or null`);
+  if (r['targetCurrency'] !== null && !isCurrencyCode(r['targetCurrency']))
+    e.push(`${label}.targetCurrency: must be CurrencyCode or null`);
+  if (!isWishlistStatus(r['status']))
+    e.push(`${label}.status: must be a WishlistStatus`);
+  if (r['note'] !== null && typeof r['note'] !== 'string')
+    e.push(`${label}.note: must be string or null`);
+  if (typeof r['createdAt'] !== 'string' || !isIsoTimestamp(r['createdAt']))
+    e.push(`${label}.createdAt: must be an ISO timestamp`);
+  if (typeof r['updatedAt'] !== 'string' || !isIsoTimestamp(r['updatedAt']))
+    e.push(`${label}.updatedAt: must be an ISO timestamp`);
+  if (!isNullableIsoTimestamp(r['deletedAt']))
+    e.push(`${label}.deletedAt: must be ISO timestamp or null`);
+  return e;
+}
+
+function validateAuditLogRecord(
+  r: unknown,
+  label: string,
+): string[] {
+  if (!isPlainObject(r)) return [`${label}: must be an object`];
+  const e: string[] = [];
+  if (typeof r['id'] !== 'string')
+    e.push(`${label}.id: must be a string`);
+  if (typeof r['action'] !== 'string')
+    e.push(`${label}.action: must be a string`);
+  if (!isAuditEntityType(r['entityType']))
+    e.push(`${label}.entityType: must be an AuditEntityType`);
+  if (r['entityId'] !== null && typeof r['entityId'] !== 'string')
+    e.push(`${label}.entityId: must be string or null`);
+  if (typeof r['message'] !== 'string')
+    e.push(`${label}.message: must be a string`);
+  if (typeof r['createdAt'] !== 'string' || !isIsoTimestamp(r['createdAt']))
+    e.push(`${label}.createdAt: must be an ISO timestamp`);
+  return e;
+}
+
+function validateKeyValueRecord(
+  r: unknown,
+  label: string,
+): string[] {
+  // Both `settings` and `appMeta` rows have the same shape:
+  //   { key: string, value: unknown, updatedAt: IsoTimestamp }.
+  // `value` is intentionally open — settings store free-form JSON
+  // payloads (preferences, sentinels, sync metadata).
+  if (!isPlainObject(r)) return [`${label}: must be an object`];
+  const e: string[] = [];
+  if (typeof r['key'] !== 'string' || (r['key'] as string).length === 0)
+    e.push(`${label}.key: must be a non-empty string`);
+  if (!('value' in r))
+    e.push(`${label}.value: must be present (any JSON value, including null)`);
+  if (typeof r['updatedAt'] !== 'string' || !isIsoTimestamp(r['updatedAt']))
+    e.push(`${label}.updatedAt: must be an ISO timestamp`);
+  return e;
 }
 
 // ---------------------------------------------------------------------

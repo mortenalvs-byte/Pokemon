@@ -1,24 +1,21 @@
-// PR 30 finding F-BACKUP-VALID-1 — pin the current `validateBackup`
-// contract so PR 33 (Backup/restore validation hardening) has a
-// fail-then-fix baseline.
+// PR 30 finding F-BACKUP-VALID-1 — originally pinned the
+// pre-PR-33 `validateBackup` contract as a fail-then-fix baseline.
 //
-// Today, `validateBackup` checks:
-//   - root is an object (not array, not null)
-//   - app === 'Pokemon TCG Tracker'
-//   - schemaVersion is integer ≥ 1 and ≤ SCHEMA_VERSION
-//   - exportedAt is an ISO 8601 timestamp
-//   - every TOP_LEVEL_ARRAY_KEYS key is present and is an array
-//   - every record in user-data stores has a string `id`
-//   - cross-references → warnings only
+// PR 33 landed the deep validation. The three "PIN: ACCEPTS …"
+// cases below have been flipped to "PIN: REJECTS …" and now serve
+// as positive contract tests:
+//   - per-record field types are checked (quantity, finish,
+//     condition, …)
+//   - enum values are checked (status, priority, allocationMethod,
+//     …)
+//   - cross-references stay warnings-only WHEN records are
+//     otherwise valid; if a record is malformed, deep validation
+//     hard-fails before the warning walk runs.
 //
-// What it does NOT check:
-//   - per-record field types (quantity, finish, condition, …)
-//   - enum values (status, priority, allocationMethod, …)
-//   - referential integrity (treated as warnings, not errors)
-//
-// This file pins both halves so a regression of the existing checks
-// fails loud, and any new strictness from PR 33 will mark these
-// `accepts-today` tests as red — the intended hand-off signal.
+// The pre-existing rejection tests (root shape, app literal,
+// schemaVersion, exportedAt, missing top-level array,
+// non-string id) are unchanged — they still describe the
+// outermost contract.
 
 import { describe, expect, it } from 'vitest';
 
@@ -132,20 +129,20 @@ describe('validateBackup — current contract (PR 30 — F-BACKUP-VALID-1)', () 
     }
   });
 
-  // ─── PINS THAT REPRESENT THE GAP F-BACKUP-VALID-1 ──────────────
-  // Each of the following currently RETURNS OK. PR 33 should flip
-  // them to fail; when that happens, these tests become the
-  // fail-then-fix signal for the hardening work.
+  // ─── PR 33 — flipped from "PIN: ACCEPTS …" to "PIN: REJECTS …".
+  // The originals lived here as fail-then-fix baselines for
+  // F-BACKUP-VALID-1; once PR 33 landed deep validation they
+  // describe the new contract instead of the gap. The third pin
+  // (cross-references warnings-only) gets a paired positive test
+  // below: with a fully-valid record, a dangling foreign key still
+  // surfaces as a warning, never an error.
 
-  it('PIN: ACCEPTS a holding row whose `quantity` is a string today', () => {
+  it('PIN: REJECTS a holding row whose `quantity` is a string', () => {
     const root = {
       ...freshBackupShell(),
       holdings: [
         {
           id: 'h1',
-          // every other field is intentionally garbage, only `id` is
-          // checked. PR 33 should reject this; today the validator
-          // returns ok.
           quantity: 'NOT_A_NUMBER',
           finish: 12345,
           condition: { not: 'a condition' },
@@ -154,10 +151,21 @@ describe('validateBackup — current contract (PR 30 — F-BACKUP-VALID-1)', () 
       ],
     };
     const result = validateBackup(root);
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(
+        result.errors.some((e) => /holdings\[0\]\.quantity/.test(e)),
+      ).toBe(true);
+      expect(
+        result.errors.some((e) => /holdings\[0\]\.finish/.test(e)),
+      ).toBe(true);
+      expect(
+        result.errors.some((e) => /holdings\[0\]\.cardId/.test(e)),
+      ).toBe(true);
+    }
   });
 
-  it('PIN: ACCEPTS a binderSlot row whose pageNumber is a boolean today', () => {
+  it('PIN: REJECTS a binderSlot row whose pageNumber is a boolean', () => {
     const root = {
       ...freshBackupShell(),
       binderSlots: [
@@ -171,29 +179,63 @@ describe('validateBackup — current contract (PR 30 — F-BACKUP-VALID-1)', () 
       ],
     };
     const result = validateBackup(root);
-    // Currently returns ok — only `id` is checked per record. The
-    // cross-reference walk emits warnings (binderId not found) but
-    // does not fail validation.
-    expect(result.ok).toBe(true);
-    if (result.ok) {
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
       expect(
-        result.warnings.some((w) =>
-          /binderSlots\[0\]: references missing binderId/.test(w),
-        ),
+        result.errors.some((e) => /binderSlots\[0\]\.pageNumber/.test(e)),
+      ).toBe(true);
+      expect(
+        result.errors.some((e) => /binderSlots\[0\]\.slotNumber/.test(e)),
       ).toBe(true);
     }
   });
 
-  it('PIN: cross-references produce warnings only, never errors', () => {
-    const root = {
-      ...freshBackupShell(),
-      holdings: [{ id: 'h1', lotId: 'no-such-lot' }],
+  it('PIN: cross-references stay WARNINGS-ONLY when records are otherwise valid', () => {
+    // Paired with the rejection above. A holding that passes deep
+    // validation but points at a non-existent lot still produces a
+    // warning, never an error — the warnings-vs-errors policy from
+    // PR 30 is preserved.
+    const validHolding = {
+      id: 'h1',
+      cardId: 'base1-4',
+      quantity: 1,
+      conditionType: 'raw',
+      rawCondition: 'NM',
+      gradingCompany: null,
+      grade: null,
+      certNumber: null,
+      certUrl: null,
+      gradedDate: null,
+      finish: 'normal',
+      edition: 'unlimited',
+      language: 'en',
+      purchasePrice: null,
+      purchaseCurrency: null,
+      estimatedValue: null,
+      valueCurrency: null,
+      valueSource: 'unknown',
+      valueNote: null,
+      valueUpdatedAt: null,
+      source: 'manual',
+      note: null,
+      specialVariant: false,
+      tags: [],
+      lotId: 'no-such-lot',
+      status: 'owned',
+      createdAt: '2026-05-09T00:00:00.000Z',
+      updatedAt: '2026-05-09T00:00:00.000Z',
+      deletedAt: null,
     };
-    const result = validateBackup(root);
+    const result = validateBackup({
+      ...freshBackupShell(),
+      holdings: [validHolding],
+    });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(
-        result.warnings.some((w) => /holdings\[0\]/.test(w)),
+        result.warnings.some((w) =>
+          /holdings\[0\]: references missing lotId "no-such-lot"/.test(w),
+        ),
       ).toBe(true);
     }
   });
