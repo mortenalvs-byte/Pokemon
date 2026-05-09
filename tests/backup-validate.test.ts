@@ -23,6 +23,124 @@ function emptyBackup(): Record<string, unknown> {
   };
 }
 
+// PR 33 — full record factories. Cross-reference warning tests need
+// per-record fields to be otherwise valid; the deep validator now
+// rejects malformed records before warnings are even computed. The
+// factories below produce records that pass deep validation, so the
+// warning-walk is the only thing the tests exercise.
+
+const VALID_TS = '2026-05-06T00:00:00.000Z';
+
+function fullHolding(over: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    id: 'h-1',
+    cardId: 'base1-4',
+    quantity: 1,
+    conditionType: 'raw',
+    rawCondition: 'NM',
+    gradingCompany: null,
+    grade: null,
+    certNumber: null,
+    certUrl: null,
+    gradedDate: null,
+    finish: 'normal',
+    edition: 'unlimited',
+    language: 'en',
+    purchasePrice: null,
+    purchaseCurrency: null,
+    estimatedValue: null,
+    valueCurrency: null,
+    valueSource: 'unknown',
+    valueNote: null,
+    valueUpdatedAt: null,
+    source: 'manual',
+    note: null,
+    specialVariant: false,
+    tags: [],
+    lotId: null,
+    status: 'owned',
+    createdAt: VALID_TS,
+    updatedAt: VALID_TS,
+    deletedAt: null,
+    ...over,
+  };
+}
+
+function fullBinder(over: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    id: 'binder-1',
+    name: 'Test',
+    description: null,
+    binderType: null,
+    totalPages: 1,
+    slotsPerPage: 9,
+    binderPreset: 'custom',
+    completionMode: 'master',
+    sourceSetId: null,
+    createdAt: VALID_TS,
+    updatedAt: VALID_TS,
+    deletedAt: null,
+    ...over,
+  };
+}
+
+function fullBinderSlot(over: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    id: 'slot-1',
+    binderId: 'binder-1',
+    pageNumber: 1,
+    slotNumber: 1,
+    targetCardId: null,
+    holdingId: null,
+    status: 'empty',
+    note: null,
+    createdAt: VALID_TS,
+    updatedAt: VALID_TS,
+    deletedAt: null,
+    ...over,
+  };
+}
+
+function fullLot(over: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    id: 'lot-1',
+    name: 'Test Lot',
+    purchaseDate: VALID_TS,
+    totalCost: 0,
+    currency: 'NOK',
+    allocationMethod: 'manual',
+    notes: null,
+    createdAt: VALID_TS,
+    updatedAt: VALID_TS,
+    deletedAt: null,
+    ...over,
+  };
+}
+
+function fullLotItem(over: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    id: 'item-1',
+    lotId: 'lot-1',
+    cardId: 'base1-4',
+    finish: 'normal',
+    edition: 'unlimited',
+    conditionType: 'raw',
+    rawCondition: 'NM',
+    gradingCompany: null,
+    grade: null,
+    quantity: 1,
+    manualPriceOverride: null,
+    marketEstimate: null,
+    allocatedCost: null,
+    holdingId: null,
+    note: null,
+    createdAt: VALID_TS,
+    updatedAt: VALID_TS,
+    deletedAt: null,
+    ...over,
+  };
+}
+
 describe('parseBackupJson', () => {
   it('parses valid JSON', () => {
     const value = parseBackupJson('{"a": 1}');
@@ -114,15 +232,12 @@ describe('validateBackup', () => {
   });
 
   it('produces warnings for dangling foreign keys without failing', () => {
+    // PR 33: records must be otherwise valid for the cross-reference
+    // warning walk to fire — deep validation rejects malformed
+    // records before warnings are computed.
     const result = validateBackup({
       ...emptyBackup(),
-      holdings: [
-        {
-          id: 'h-1',
-          cardId: 'base1-4',
-          lotId: 'missing-lot',
-        },
-      ],
+      holdings: [fullHolding({ lotId: 'missing-lot' })],
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -133,10 +248,13 @@ describe('validateBackup', () => {
   it('warns about a binderSlot pointing at an unknown binder or holding', () => {
     const result = validateBackup({
       ...emptyBackup(),
-      binders: [{ id: 'binder-1' }],
-      holdings: [{ id: 'h-1', cardId: 'x', lotId: null }],
+      binders: [fullBinder()],
+      holdings: [fullHolding()],
       binderSlots: [
-        { id: 'slot-1', binderId: 'unknown-binder', holdingId: 'unknown-holding' },
+        fullBinderSlot({
+          binderId: 'unknown-binder',
+          holdingId: 'unknown-holding',
+        }),
       ],
     });
     expect(result.ok).toBe(true);
@@ -149,10 +267,13 @@ describe('validateBackup', () => {
   it('warns about lotItems pointing at unknown lots/holdings', () => {
     const result = validateBackup({
       ...emptyBackup(),
-      lots: [{ id: 'lot-1' }],
-      holdings: [{ id: 'h-1', cardId: 'x', lotId: null }],
+      lots: [fullLot()],
+      holdings: [fullHolding()],
       lotItems: [
-        { id: 'item-1', lotId: 'unknown-lot', holdingId: 'unknown-holding' },
+        fullLotItem({
+          lotId: 'unknown-lot',
+          holdingId: 'unknown-holding',
+        }),
       ],
     });
     expect(result.ok).toBe(true);
