@@ -94,6 +94,13 @@ describe('qa route — production gating', () => {
       'pokemon.devAutoMaxStress',
       'pokemon.devAutoMaxStressResult',
       '[dev-auto-stress]',
+      // PR 28 review patch — dev-only auto fixture import + image audit.
+      'pokemon.devAutoFixtureImport',
+      'pokemon.devAutoFixtureImportResult',
+      '[dev-auto-fixture]',
+      'pokemon.devAutoImageAudit',
+      'pokemon.devAutoImageAuditResult',
+      '[dev-auto-image-audit]',
       // PR 28 review patch (Phase 2 cleanup) — Developer QA Settings panel.
       'Developer QA',
       'developer-qa',

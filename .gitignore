@@ -37,6 +37,12 @@ coverage/
 pokemon-tracker-backup-*.json
 pre-restore-backup-*.json
 
+# PR 28 review patch — local fixture(s) the dev-only auto-import path
+# fetches via Vite's `public/` static serving. Always gitignored so a
+# 30 MB local backup never accidentally lands in the repo.
+public/local-fixture.json
+public/*.fixture.json
+
 # PR 28 review patch — local QA reports written by the in-app QA harness
 .local/
 

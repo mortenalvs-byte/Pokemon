@@ -39,6 +39,133 @@ mountApp(root);
 
 initializeDataLayer()
   .then(async () => {
+    // PR 28 review patch — dev-only opt-in auto local-fixture import.
+    // When `localStorage[pokemon.devAutoFixtureImport]` holds a path
+    // (relative URL served by Vite, e.g. `/local-fixture.json`), we
+    // fetch + parse + import it through the same atomic-rewrite path
+    // a real sync uses. Result is persisted to
+    // `pokemon.devAutoFixtureImportResult` so a Node-side reader can
+    // pick up the counts without UI driving. Tree-shaken from
+    // production via the surrounding `import.meta.env.DEV` guard.
+    if (
+      import.meta.env.DEV &&
+      typeof localStorage !== 'undefined' &&
+      typeof localStorage.getItem('pokemon.devAutoFixtureImport') === 'string'
+    ) {
+      const fixturePath = localStorage.getItem(
+        'pokemon.devAutoFixtureImport',
+      );
+      try {
+        localStorage.removeItem('pokemon.devAutoFixtureImport');
+      } catch {
+        // best-effort
+      }
+      // eslint-disable-next-line no-console -- dev-only diagnostic
+      console.log(
+        '[dev-auto-fixture] importing fixture from',
+        fixturePath,
+      );
+      const fxStart = Date.now();
+      try {
+        const response = await fetch(String(fixturePath));
+        if (!response.ok) {
+          throw new Error(`fetch ${fixturePath} → HTTP ${response.status}`);
+        }
+        const json = (await response.json()) as unknown;
+        const { parseLocalSyncFixture, importLocalSyncFixture } = await import(
+          './qa/local-sync-fixture'
+        );
+        const { getDb } = await import('./db/database');
+        const source = parseLocalSyncFixture(json, String(fixturePath));
+        const result = await importLocalSyncFixture(getDb(), source);
+        const payload = {
+          ts: new Date().toISOString(),
+          durationMs: Date.now() - fxStart,
+          path: String(fixturePath),
+          result,
+        };
+        try {
+          localStorage.setItem(
+            'pokemon.devAutoFixtureImportResult',
+            JSON.stringify(payload),
+          );
+        } catch {
+          // best-effort
+        }
+        // eslint-disable-next-line no-console -- dev-only diagnostic
+        console.log('[dev-auto-fixture] done', payload);
+        // The fixture import bypasses `handleSyncNow`, so the
+        // dashboard / topbar listeners that fire on
+        // `SYNC_STATUS_CHANGED_EVENT` need a manual nudge to refresh
+        // their cached snapshot.
+        const { SYNC_STATUS_CHANGED_EVENT } = await import('./views/settings');
+        window.dispatchEvent(new CustomEvent(SYNC_STATUS_CHANGED_EVENT));
+      } catch (caught) {
+        const failure = {
+          ts: new Date().toISOString(),
+          durationMs: Date.now() - fxStart,
+          path: String(fixturePath),
+          ok: false,
+          error: caught instanceof Error ? caught.message : String(caught),
+        };
+        try {
+          localStorage.setItem(
+            'pokemon.devAutoFixtureImportResult',
+            JSON.stringify(failure),
+          );
+        } catch {
+          // best-effort
+        }
+        // eslint-disable-next-line no-console -- dev-only diagnostic
+        console.error('[dev-auto-fixture] failed', failure);
+      }
+    }
+
+    // PR 28 review patch — dev-only opt-in auto image audit. Walks
+    // the cards store + collects any captured runtime image-load
+    // failures and persists the coverage report to
+    // `pokemon.devAutoImageAuditResult`.
+    if (
+      import.meta.env.DEV &&
+      typeof localStorage !== 'undefined' &&
+      localStorage.getItem('pokemon.devAutoImageAudit') === '1'
+    ) {
+      try {
+        localStorage.removeItem('pokemon.devAutoImageAudit');
+      } catch {
+        // best-effort
+      }
+      // eslint-disable-next-line no-console -- dev-only diagnostic
+      console.log('[dev-auto-image-audit] running …');
+      const iaStart = Date.now();
+      try {
+        const { auditCardImageCoverage, installImageAudit } = await import(
+          './qa/image-audit'
+        );
+        installImageAudit();
+        const { getDb } = await import('./db/database');
+        const audit = await auditCardImageCoverage(getDb());
+        const payload = {
+          ts: new Date().toISOString(),
+          durationMs: Date.now() - iaStart,
+          audit,
+        };
+        try {
+          localStorage.setItem(
+            'pokemon.devAutoImageAuditResult',
+            JSON.stringify(payload),
+          );
+        } catch {
+          // best-effort
+        }
+        // eslint-disable-next-line no-console -- dev-only diagnostic
+        console.log('[dev-auto-image-audit] done', payload);
+      } catch (caught) {
+        // eslint-disable-next-line no-console -- dev-only diagnostic
+        console.error('[dev-auto-image-audit] failed', caught);
+      }
+    }
+
     // PR 28 review patch — dev-only opt-in auto public sync. Reading
     // the flag in `localStorage[pokemon.devAutoPublicSync]` lets the
     // Node-side helper trigger a real pokemontcg.io sync (no key,
