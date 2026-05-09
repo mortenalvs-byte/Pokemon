@@ -81,6 +81,11 @@ describe('qa route — production gating', () => {
       'pokemon.persistenceDiagBootHistory',
       'runBootTimePersistenceAudit',
       '[boot-audit]',
+      // PR 28 review patch — console + route-walk auto-audit.
+      'pokemon.consoleAuditHistory',
+      'pokemon.routeWalkHistory',
+      'installConsoleAudit',
+      'kickOffAutoRouteWalk',
     ];
     for (const needle of banned) {
       expect(
