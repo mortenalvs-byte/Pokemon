@@ -21,7 +21,7 @@
     "desktop:build": "tauri build",
     "desktop:check": "npm run typecheck && npm test && npm run build",
     "qa:static": "npm run typecheck && npm test && npm run build",
-    "qa:browser": "vitest run tests/qa-seed.test.ts tests/qa-report.test.ts tests/qa-runner.test.ts tests/qa-route-prod-gating.test.ts tests/desktop-persistence-diagnostic.test.ts tests/desktop-persistence-diagnostic-live.test.ts tests/qa-max-stress.test.ts",
+    "qa:browser": "vitest run tests/qa-seed.test.ts tests/qa-report.test.ts tests/qa-runner.test.ts tests/qa-route-prod-gating.test.ts tests/desktop-persistence-diagnostic.test.ts tests/desktop-persistence-diagnostic-live.test.ts tests/qa-max-stress.test.ts tests/local-sync-fixture.test.ts tests/image-audit.test.ts tests/settings-developer-qa.test.ts tests/dashboard-sync-refresh.test.ts",
     "qa:desktop:manual": "echo \"See docs/QA_DESKTOP.md — run 'npm run desktop:dev', open #qa, click Reset+Seed+Run, save reports to .local/qa/\"",
     "qa:full": "npm run qa:static && npm run qa:browser"
   },

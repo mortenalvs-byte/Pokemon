@@ -37,11 +37,101 @@ if (!root) {
 // usable either way. PR 4+ wires the result into a UI status chip.
 mountApp(root);
 
-initializeDataLayer().catch((error: unknown) => {
-  // eslint-disable-next-line no-console -- intentional: surface init
-  // failures during development. UI escalation comes in a later PR.
-  console.error('[data-layer] initialization failed', error);
-});
+initializeDataLayer()
+  .then(async () => {
+    // PR 28 review patch — dev-only opt-in auto public sync. Reading
+    // the flag in `localStorage[pokemon.devAutoPublicSync]` lets the
+    // Node-side helper trigger a real pokemontcg.io sync (no key,
+    // public-tier rate limits) without driving the UI. Result is
+    // persisted to `pokemon.devAutoPublicSyncResult` so the same
+    // helper can read it back and the QA report can pick up the
+    // count.
+    if (
+      import.meta.env.DEV &&
+      typeof localStorage !== 'undefined' &&
+      localStorage.getItem('pokemon.devAutoPublicSync') === '1'
+    ) {
+      // Clear the flag immediately so a second boot doesn't re-run
+      // the sync before the operator inspects the result.
+      try {
+        localStorage.removeItem('pokemon.devAutoPublicSync');
+      } catch {
+        // best-effort
+      }
+      // eslint-disable-next-line no-console -- dev-only diagnostic
+      console.log('[dev-auto-sync] starting public-tier sync …');
+      const startedAt = Date.now();
+      const { syncCardDatabase } = await import('./db/sync');
+      const { getDb } = await import('./db/database');
+      const result = await syncCardDatabase({
+        db: getDb(),
+        apiKey: null,
+        onProgress: () => {
+          // intentionally ignored — the boot-audit captures the
+          // post-run cache snapshot, that's enough.
+        },
+      });
+      const summary = {
+        ts: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        result,
+      };
+      try {
+        localStorage.setItem(
+          'pokemon.devAutoPublicSyncResult',
+          JSON.stringify(summary),
+        );
+      } catch {
+        // best-effort
+      }
+      // eslint-disable-next-line no-console -- dev-only diagnostic
+      console.log('[dev-auto-sync] done', summary);
+    }
+
+    // PR 28 review patch — dev-only opt-in auto max-stress. Same
+    // pattern as auto-sync: a `localStorage` flag triggers
+    // `seedMaxStressData` on the next boot, the result is persisted
+    // back to `pokemon.devAutoMaxStressResult` so the Node helper
+    // can read it without any UI driving.
+    if (
+      import.meta.env.DEV &&
+      typeof localStorage !== 'undefined' &&
+      localStorage.getItem('pokemon.devAutoMaxStress') === '1'
+    ) {
+      try {
+        localStorage.removeItem('pokemon.devAutoMaxStress');
+      } catch {
+        // best-effort
+      }
+      // eslint-disable-next-line no-console -- dev-only diagnostic
+      console.log('[dev-auto-stress] starting max-stress …');
+      const stressStart = Date.now();
+      const { seedMaxStressData } = await import('./qa/qa-max-stress');
+      const { buildQaDeps } = await import('./qa/qa-runner');
+      const { getDb } = await import('./db/database');
+      const stressSummary = await seedMaxStressData(buildQaDeps(getDb()));
+      const stressPayload = {
+        ts: new Date().toISOString(),
+        durationMs: Date.now() - stressStart,
+        summary: stressSummary,
+      };
+      try {
+        localStorage.setItem(
+          'pokemon.devAutoMaxStressResult',
+          JSON.stringify(stressPayload),
+        );
+      } catch {
+        // best-effort
+      }
+      // eslint-disable-next-line no-console -- dev-only diagnostic
+      console.log('[dev-auto-stress] done', stressPayload);
+    }
+  })
+  .catch((error: unknown) => {
+    // eslint-disable-next-line no-console -- intentional: surface init
+    // failures during development. UI escalation comes in a later PR.
+    console.error('[data-layer] initialization failed', error);
+  });
 
 // PR 28 review patch — console audit + auto route walk.
 //

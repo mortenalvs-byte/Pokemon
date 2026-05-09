@@ -86,6 +86,37 @@ describe('qa route — production gating', () => {
       'pokemon.routeWalkHistory',
       'installConsoleAudit',
       'kickOffAutoRouteWalk',
+      // PR 28 review patch — dev-only auto public sync.
+      'pokemon.devAutoPublicSync',
+      'pokemon.devAutoPublicSyncResult',
+      '[dev-auto-sync]',
+      // PR 28 review patch — dev-only auto max-stress.
+      'pokemon.devAutoMaxStress',
+      'pokemon.devAutoMaxStressResult',
+      '[dev-auto-stress]',
+      // PR 28 review patch (Phase 2 cleanup) — Developer QA Settings panel.
+      'Developer QA',
+      'developer-qa',
+      'developer-qa-link',
+      'open-qa-harness',
+      // PR 28 review patch (Phase 4) — local sync fixture importer.
+      'importLocalSyncFixture',
+      'parseLocalSyncFixture',
+      'LOCAL_FIXTURE_AUDIT_ACTION',
+      'LOCAL_FIXTURE_SOURCE_VALUE',
+      'local_fixture_import',
+      'data-action="qa-fixture-pick"',
+      'data-action="qa-fixture-download"',
+      // PR 28 review patch (Phase 5) — image audit module.
+      // The audit MODULE is dev-only, but `createLazyImage` (a
+      // production utility) deliberately dispatches the
+      // `pokemon:image-load-error` event so the dev audit can
+      // count failures. The event name therefore stays in the
+      // production bundle by design — it is not banned here.
+      'auditCardImageCoverage',
+      'installImageAudit',
+      'data-action="qa-image-audit"',
+      'data-action="qa-image-download"',
     ];
     for (const needle of banned) {
       expect(

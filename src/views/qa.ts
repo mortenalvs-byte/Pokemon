@@ -28,6 +28,16 @@ import {
   type PersistenceDiagnostic,
 } from '../qa/desktop-persistence-diagnostic';
 import {
+  auditCardImageCoverage,
+  installImageAudit,
+  type ImageAuditCoverage,
+} from '../qa/image-audit';
+import {
+  importLocalSyncFixture,
+  parseLocalSyncFixture,
+  type LocalSyncFixtureImportOutcome,
+} from '../qa/local-sync-fixture';
+import {
   seedMaxStressData,
   type QaMaxStressSummary,
 } from '../qa/qa-max-stress';
@@ -67,6 +77,38 @@ export function mountQaView(
           <button type="button" class="qa-view__button" data-action="qa-measure">Measure only (read-only)</button>
         </div>
         <p class="qa-view__feedback" data-region="qa-feedback" aria-live="polite"></p>
+      </section>
+
+      <section class="qa-view__panel">
+        <h2>Image audit</h2>
+        <p class="qa-view__hint">
+          Teller bilde-dekning i kort-cachen og logger
+          <code>pokemon:image-load-error</code>-events fra route-walken.
+          Fallback rendereres som synlig "No image"-placeholder.
+        </p>
+        <div class="qa-view__actions">
+          <button type="button" class="qa-view__button" data-action="qa-image-audit">Run image audit</button>
+          <button type="button" class="qa-view__button" data-action="qa-image-download">Last ned image audit JSON</button>
+        </div>
+        <p class="qa-view__feedback" data-region="qa-image-feedback" aria-live="polite"></p>
+      </section>
+
+      <section class="qa-view__panel">
+        <h2>Local sync fixture</h2>
+        <p class="qa-view__hint">
+          Importerer en lokal JSON-fixture (samme atomiske
+          cache-rewrite-løypa som ekte sync) slik at dashboard +
+          Browse + bilde-test kan kjøres uten å treffe
+          pokemontcg.io. Aksepterer app-shape
+          (<code>{ sets, cards }</code>) eller backup-shape
+          (<code>{ schemaVersion, sets, cards, … }</code>).
+        </p>
+        <div class="qa-view__actions">
+          <input type="file" accept="application/json" data-region="qa-fixture-input" hidden />
+          <button type="button" class="qa-view__button qa-view__button--primary" data-action="qa-fixture-pick">Velg fixture-fil …</button>
+          <button type="button" class="qa-view__button" data-action="qa-fixture-download">Last ned import-resultat JSON</button>
+        </div>
+        <p class="qa-view__feedback" data-region="qa-fixture-feedback" aria-live="polite"></p>
       </section>
 
       <section class="qa-view__panel">
@@ -127,6 +169,10 @@ export function mountQaView(
   let lastReport: QaReport | null = null;
   let lastDiagnostic: PersistenceDiagnostic | null = null;
   let lastStressSummary: QaMaxStressSummary | null = null;
+  let lastFixtureResult: LocalSyncFixtureImportOutcome | null = null;
+  let lastImageAudit: ImageAuditCoverage | null = null;
+  // Install the image-load-error capture once. Cheap, idempotent.
+  installImageAudit();
 
   const feedback = container.querySelector<HTMLElement>(
     '[data-region="qa-feedback"]',
@@ -140,11 +186,23 @@ export function mountQaView(
   const stressFeedback = container.querySelector<HTMLElement>(
     '[data-region="qa-stress-feedback"]',
   );
+  const fixtureFeedback = container.querySelector<HTMLElement>(
+    '[data-region="qa-fixture-feedback"]',
+  );
+  const fixtureInput = container.querySelector<HTMLInputElement>(
+    '[data-region="qa-fixture-input"]',
+  );
+  const imageFeedback = container.querySelector<HTMLElement>(
+    '[data-region="qa-image-feedback"]',
+  );
   if (
     feedback === null ||
     reportRegion === null ||
     persistFeedback === null ||
-    stressFeedback === null
+    stressFeedback === null ||
+    fixtureFeedback === null ||
+    fixtureInput === null ||
+    imageFeedback === null
   ) {
     return;
   }
@@ -162,6 +220,63 @@ export function mountQaView(
   function setStressFeedback(text: string, isError = false): void {
     stressFeedback!.textContent = text;
     stressFeedback!.classList.toggle('qa-view__feedback--error', isError);
+  }
+
+  function setFixtureFeedback(text: string, isError = false): void {
+    fixtureFeedback!.textContent = text;
+    fixtureFeedback!.classList.toggle('qa-view__feedback--error', isError);
+  }
+
+  function setImageFeedback(text: string, isError = false): void {
+    imageFeedback!.textContent = text;
+    imageFeedback!.classList.toggle('qa-view__feedback--error', isError);
+  }
+
+  async function runImageAudit(): Promise<void> {
+    setImageFeedback('Teller bilde-dekning fra `cards`-store …');
+    try {
+      const audit = await auditCardImageCoverage(getDb());
+      lastImageAudit = audit;
+      const pct = (n: number): string =>
+        audit.totalCards === 0
+          ? '0%'
+          : `${Math.round((n / audit.totalCards) * 100)}%`;
+      setImageFeedback(
+        `${audit.totalCards} kort · imageSmall ${audit.cardsWithImageSmall} (${pct(audit.cardsWithImageSmall)}) · imageLarge ${audit.cardsWithImageLarge} (${pct(audit.cardsWithImageLarge)}) · missing both ${audit.cardsMissingBoth} · runtime load failures ${audit.loadFailuresTotal}`,
+        audit.cardsMissingBoth > 0 || audit.loadFailuresTotal > 0,
+      );
+    } catch (caught) {
+      setImageFeedback(
+        `Feil: ${caught instanceof Error ? caught.message : 'ukjent feil'}`,
+        true,
+      );
+    }
+  }
+
+  async function handleFixtureFile(file: File): Promise<void> {
+    setFixtureFeedback(`Leser ${file.name} (${(file.size / 1024).toFixed(0)} KB) …`);
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      const source = parseLocalSyncFixture(json, file.name);
+      setFixtureFeedback(
+        `Importerer ${source.sets.length} sett · ${source.cards.length} kort fra ${file.name} …`,
+      );
+      const result = await importLocalSyncFixture(getDb(), source);
+      lastFixtureResult = result;
+      if (result.ok) {
+        setFixtureFeedback(
+          `OK · ${result.setsCount} sett · ${result.cardsCount} kort · imageSmall=${result.cardsWithImageSmall}/${result.cardsCount} · imageLarge=${result.cardsWithImageLarge}/${result.cardsCount} · missing both=${result.cardsMissingBoth} · ${result.elapsedMs} ms`,
+        );
+      } else {
+        setFixtureFeedback(`Feil: ${result.error}`, true);
+      }
+    } catch (caught) {
+      setFixtureFeedback(
+        `Feil: ${caught instanceof Error ? caught.message : 'ukjent feil'}`,
+        true,
+      );
+    }
   }
 
   function renderReport(report: QaReport): void {
@@ -289,6 +404,56 @@ export function mountQaView(
         runtime: 'unknown',
         includePersistenceDiagnostic: true,
       });
+    });
+
+  container
+    .querySelector<HTMLButtonElement>('[data-action="qa-image-audit"]')
+    ?.addEventListener('click', () => {
+      void runImageAudit();
+    });
+  container
+    .querySelector<HTMLButtonElement>('[data-action="qa-image-download"]')
+    ?.addEventListener('click', () => {
+      if (lastImageAudit === null) {
+        setImageFeedback(
+          'Ingen audit ennå — kjør Run image audit først.',
+          true,
+        );
+        return;
+      }
+      downloadTextFile(
+        'desktop-qa-image-audit.json',
+        JSON.stringify(lastImageAudit, null, 2),
+        { mimeType: 'application/json' },
+      );
+    });
+
+  container
+    .querySelector<HTMLButtonElement>('[data-action="qa-fixture-pick"]')
+    ?.addEventListener('click', () => {
+      fixtureInput.click();
+    });
+  fixtureInput.addEventListener('change', () => {
+    const file = fixtureInput.files?.[0];
+    if (file !== undefined && file !== null) {
+      void handleFixtureFile(file);
+    }
+  });
+  container
+    .querySelector<HTMLButtonElement>('[data-action="qa-fixture-download"]')
+    ?.addEventListener('click', () => {
+      if (lastFixtureResult === null) {
+        setFixtureFeedback(
+          'Ingen import-resultat ennå — velg fixture først.',
+          true,
+        );
+        return;
+      }
+      downloadTextFile(
+        'desktop-qa-fixture-import.json',
+        JSON.stringify(lastFixtureResult, null, 2),
+        { mimeType: 'application/json' },
+      );
     });
 
   container

@@ -33,12 +33,14 @@ describe('app shell', () => {
     const root = freshRoot();
     mountApp(root);
 
-    // PR 28 review patch — vitest runs with import.meta.env.DEV true
-    // so the dev-only `qa` link is also mounted. Filter it out so
-    // this test still guards the canonical sidebar contract; the
-    // production-side gating is covered by qa-route-prod-gating.
-    const links = root.querySelectorAll<HTMLAnchorElement>(
-      '[data-route]:not([data-route="qa"])',
+    // PR 28 review patch (Phase 2 cleanup) — the canonical sidebar
+    // is exactly eight items. The dev-only QA harness used to live
+    // here behind `import.meta.env.DEV`; it now lives in a "Developer
+    // QA" section inside `#settings` and via the `g q` keyboard
+    // shortcut, so the sidebar shape is the same in dev as in prod.
+    const sidebar = root.querySelector('.sidebar');
+    const links = (sidebar ?? root).querySelectorAll<HTMLAnchorElement>(
+      '[data-route]',
     );
     const routes = Array.from(links).map((link) => link.dataset['route']);
     expect(routes).toEqual([

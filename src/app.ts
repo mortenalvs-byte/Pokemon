@@ -74,13 +74,15 @@ const NAV_LINKS: readonly NavLink[] = [
   { route: 'wishlist', label: 'Ønskeliste' },
   { route: 'backup', label: 'Backup' },
   { route: 'settings', label: 'Innstillinger' },
-  // PR 28 review patch — dev-only QA nav link. Vite tree-shakes this
-  // out of production / Tauri release builds because
-  // `import.meta.env.DEV` is statically replaced at build time.
-  ...(import.meta.env.DEV
-    ? ([{ route: 'qa', label: 'QA harness (dev)' }] as const)
-    : []),
 ];
+// PR 28 review patch (Phase 2) — the QA harness used to be a full
+// sidebar entry under `import.meta.env.DEV`, which made the dev/desktop
+// app feel like a test sandbox. Discoverability now goes through:
+//   - the "Developer QA" section inside `#settings` (dev-only)
+//   - the `g q` keyboard shortcut (dev-only)
+// `#qa` is still a documented route in `Route` and is still mounted
+// only when `import.meta.env.DEV` is true; production builds map it
+// to the dashboard mounter (verified by qa-route-prod-gating).
 
 export function mountApp(root: HTMLElement): void {
   root.innerHTML = renderShell();

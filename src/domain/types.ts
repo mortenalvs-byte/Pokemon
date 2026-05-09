@@ -302,6 +302,14 @@ export const APP_META_KEYS = {
   lastBackupHoldingCount: 'lastBackupHoldingCount',
   persistentStorageGranted: 'persistentStorageGranted',
   lastMigrationAt: 'lastMigrationAt',
+  // PR 28 review patch (Phase 4) — lets QA distinguish a real
+  // pokemontcg.io sync from a local-fixture import that exercised
+  // the same atomic cache-rewrite path. Values:
+  //   'pokemon_tcg_api'     real sync via syncCardDatabase
+  //   'local_fixture'       imported via local-sync-fixture
+  // Not a schema migration: adding a documented reserved key does
+  // not change the IndexedDB index spec for the appMeta store.
+  lastSyncSource: 'lastSyncSource',
 } as const;
 
 export type AppMetaKey = (typeof APP_META_KEYS)[keyof typeof APP_META_KEYS];
