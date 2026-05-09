@@ -86,6 +86,14 @@ describe('qa route — production gating', () => {
       'pokemon.routeWalkHistory',
       'installConsoleAudit',
       'kickOffAutoRouteWalk',
+      // PR 31 — dev/QA runtime separation entry point.
+      // The four `pokemon.devAuto*` triggers + console audit + auto
+      // route walk now live in `src/qa/dev-runtime.ts`, behind a
+      // dynamic-import inside an `if (import.meta.env.DEV)` branch
+      // in `src/main.ts`. Vite's dead-code elimination drops the
+      // entire chunk + transitive imports from the production
+      // bundle. Re-pinned here.
+      'runDevAutoTriggersAfterInit',
       // PR 28 review patch — dev-only auto public sync.
       'pokemon.devAutoPublicSync',
       'pokemon.devAutoPublicSyncResult',
