@@ -43,6 +43,36 @@ Master-gap signals the seed is engineered to produce:
 - `invalidCount > 0` — at least one `invalid_assignment` (assigned holding for a different card) and one `invalid_variant` (normal holding parked on a `template:reverse_holo` slot).
 - `reverseTemplateSlots > 0` — every other slot in the reverse-test binder gets `note=template:reverse_holo` and a set-4 (reverse-holo-priced) target card.
 
+## L5 — max stress (sync + all-states populate)
+
+This is the broadest coverage test the harness supports. It assumes the user has already run a real pokemontcg.io sync (Innstillinger → Synk nå) so the local card cache holds the full ~20 000-card dataset, then drives a single seed pass that exercises every domain-state axis the app can render.
+
+### What it populates
+
+- **Holdings** — one row per `(condition × finish × edition × status)` combo for every finish the cache supports, plus a graded layer per `(grading company × grade)` pair (PSA / BGS / CGC / TAG / ACE / OTHER × 10/9/8/7/6).
+- **Binders** — six binders covering every Vault X preset (`vaultx_9_360`, `vaultx_12_480`, `vaultx_12xl_624`, `vaultx_16xxl_1088`) plus a custom master binder with a reverse-holo template mix and a custom grand_master binder. Each binder gets ≤ 50 slot assignments through PR 24's `assignHoldingToSlot`, so the placement contract is exercised.
+- **Wishlist** — one entry per `(status × priority × {normal, holo})` combo. Covers `wanted` / `ordered` / `received` / `cancelled` × `low` / `medium` / `high` / `grail`.
+- **Lots** — three lots covering unallocated (`allocatedCost = null`), allocated (`allocatedCost = 200`, no holding) and materialised (allocated + linked to a fresh `holdingId`). Five items per lot.
+
+The function is implemented in [src/qa/qa-max-stress.ts](../src/qa/qa-max-stress.ts) and seeds under the name `morten-pokemon-stress-v1`. It returns a `QaMaxStressSummary` with per-axis counts so the operator can see exact coverage.
+
+### Recipe
+
+```
+1. npm run desktop:dev   (or npm run dev for browser preview)
+2. Innstillinger → API-nøkkel → Lagre → Synk nå.
+   Wait until Sett-i-cache and Kort-i-cache settle (~150 sets / 20k cards).
+3. Open #qa (sidebar dev link or `g q`).
+4. Click "Max stress (all-states populate)".
+5. Click "Last ned stress-summary JSON" → save to `.local/qa/`.
+6. Walk every route — Min samling, Permer, Lotter, Ønskeliste, Master gap.
+   Confirm seeded data renders correctly across all states.
+```
+
+If the cache is empty when "Max stress" runs, the function falls back to an 8-card fixture (logged in `summary.notes`). That keeps the seed always-runnable, but the matrix is much smaller.
+
+The entire surface is dev-only and tree-shaken from production builds — `tests/qa-route-prod-gating.test.ts` greps `dist/` for `seedMaxStressData`, `morten-pokemon-stress-v1`, `data-action="qa-max-stress"` and fails if any leak through.
+
 ## L4 — desktop persistence audit (Launch A → B → C)
 
 This is the dedicated recipe for the desktop persistence regression that the 2026-05-09 manual run hit (data on disk but `db.holdings.count() === 0` after restart). It exercises the persistence diagnostic the QA harness ships in `src/qa/desktop-persistence-diagnostic.ts`.

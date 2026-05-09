@@ -28,11 +28,15 @@ import {
   type PersistenceDiagnostic,
 } from '../qa/desktop-persistence-diagnostic';
 import {
+  seedMaxStressData,
+  type QaMaxStressSummary,
+} from '../qa/qa-max-stress';
+import {
   renderQaReportJson,
   renderQaReportMarkdown,
   type QaReport,
 } from '../qa/qa-report';
-import { runQa, type QaRunOptions } from '../qa/qa-runner';
+import { buildQaDeps, runQa, type QaRunOptions } from '../qa/qa-runner';
 import { downloadTextFile } from '../utils/download';
 
 const REPORT_BASENAME = 'desktop-qa-report';
@@ -63,6 +67,23 @@ export function mountQaView(
           <button type="button" class="qa-view__button" data-action="qa-measure">Measure only (read-only)</button>
         </div>
         <p class="qa-view__feedback" data-region="qa-feedback" aria-live="polite"></p>
+      </section>
+
+      <section class="qa-view__panel">
+        <h2>Max stress (full state matrix)</h2>
+        <p class="qa-view__hint">
+          Eksercerer alle holdings-tilstander (raw × condition ×
+          finish × edition × status + graded × company × grade),
+          alle binder-presets og completion-modi, alle wishlist
+          (status × priority), og lots i ulike allokerings-tilstander.
+          Kjør først Innstillinger → Synk for å fylle kort-cachen
+          (~20 000 kort), så blir matrisen ekte.
+        </p>
+        <div class="qa-view__actions">
+          <button type="button" class="qa-view__button qa-view__button--primary" data-action="qa-max-stress">Max stress (all-states populate)</button>
+          <button type="button" class="qa-view__button" data-action="qa-max-stress-download">Last ned stress-summary JSON</button>
+        </div>
+        <p class="qa-view__feedback" data-region="qa-stress-feedback" aria-live="polite"></p>
       </section>
 
       <section class="qa-view__panel">
@@ -105,6 +126,7 @@ export function mountQaView(
 
   let lastReport: QaReport | null = null;
   let lastDiagnostic: PersistenceDiagnostic | null = null;
+  let lastStressSummary: QaMaxStressSummary | null = null;
 
   const feedback = container.querySelector<HTMLElement>(
     '[data-region="qa-feedback"]',
@@ -115,7 +137,15 @@ export function mountQaView(
   const persistFeedback = container.querySelector<HTMLElement>(
     '[data-region="qa-persist-feedback"]',
   );
-  if (feedback === null || reportRegion === null || persistFeedback === null) {
+  const stressFeedback = container.querySelector<HTMLElement>(
+    '[data-region="qa-stress-feedback"]',
+  );
+  if (
+    feedback === null ||
+    reportRegion === null ||
+    persistFeedback === null ||
+    stressFeedback === null
+  ) {
     return;
   }
 
@@ -127,6 +157,11 @@ export function mountQaView(
   function setPersistFeedback(text: string, isError = false): void {
     persistFeedback!.textContent = text;
     persistFeedback!.classList.toggle('qa-view__feedback--error', isError);
+  }
+
+  function setStressFeedback(text: string, isError = false): void {
+    stressFeedback!.textContent = text;
+    stressFeedback!.classList.toggle('qa-view__feedback--error', isError);
   }
 
   function renderReport(report: QaReport): void {
@@ -186,6 +221,25 @@ export function mountQaView(
     }
   }
 
+  async function runMaxStress(): Promise<void> {
+    setStressFeedback('Kjører max-stress (kan ta noen minutter på 20 000 kort) …');
+    try {
+      const db = getDb();
+      const summary = await seedMaxStressData(buildQaDeps(db));
+      lastStressSummary = summary;
+      setStressFeedback(
+        `Ferdig — ${summary.holdings.total} holdings (${summary.holdings.raw} raw + ${summary.holdings.graded} graded), ${summary.binders.total} binders / ${summary.binders.slots} slots / ${summary.binders.assignedSlots} assigned, ${summary.wishlist.total} wishlist, ${summary.lots.items} lot items (${summary.lots.materialised} materialised). Brukte ${summary.cardsUsedForHoldings}/${summary.cards} kort. ${summary.elapsedMs} ms.${summary.notes.length > 0 ? ` Notes: ${summary.notes.length}` : ''}`,
+      );
+    } catch (caught) {
+      setStressFeedback(
+        `Feil: ${
+          caught instanceof Error ? caught.message : 'ukjent feil'
+        }`,
+        true,
+      );
+    }
+  }
+
   async function writeSentinel(): Promise<void> {
     setPersistFeedback('Skriver sentinel …');
     try {
@@ -235,6 +289,28 @@ export function mountQaView(
         runtime: 'unknown',
         includePersistenceDiagnostic: true,
       });
+    });
+
+  container
+    .querySelector<HTMLButtonElement>('[data-action="qa-max-stress"]')
+    ?.addEventListener('click', () => {
+      void runMaxStress();
+    });
+  container
+    .querySelector<HTMLButtonElement>('[data-action="qa-max-stress-download"]')
+    ?.addEventListener('click', () => {
+      if (lastStressSummary === null) {
+        setStressFeedback(
+          'Ingen stress-summary ennå — kjør Max stress først.',
+          true,
+        );
+        return;
+      }
+      downloadTextFile(
+        'desktop-qa-max-stress.json',
+        JSON.stringify(lastStressSummary, null, 2),
+        { mimeType: 'application/json' },
+      );
     });
 
   container

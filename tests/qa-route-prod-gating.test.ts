@@ -72,6 +72,11 @@ describe('qa route — production gating', () => {
       'pokemon.desktopPersistenceBootCounter',
       'data-action="qa-persist-run"',
       'data-action="qa-persist-sentinel"',
+      // PR 28 review patch — max stress harness.
+      'seedMaxStressData',
+      'morten-pokemon-stress-v1',
+      'QA_MAX_STRESS_SEED_NAME',
+      'data-action="qa-max-stress"',
     ];
     for (const needle of banned) {
       expect(
