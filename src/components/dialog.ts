@@ -20,7 +20,11 @@ export interface DialogContent {
   mount(host: HTMLElement, close: () => void): void;
 }
 
-export const DIALOG_SUBMITTED_EVENT = 'dialog:submitted';
+// PR 32 — canonical event-name string lives in
+// `src/domain/events.ts`; re-exported here so existing import paths
+// (`import { DIALOG_SUBMITTED_EVENT } from './dialog'`) keep working.
+export { DIALOG_SUBMITTED_EVENT } from '../domain/events';
+import { DIALOG_SUBMITTED_EVENT } from '../domain/events';
 
 export async function openDialog(content: DialogContent): Promise<DialogResult> {
   return new Promise<DialogResult>((resolve) => {

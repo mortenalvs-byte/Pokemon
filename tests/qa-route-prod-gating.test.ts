@@ -19,6 +19,13 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+// PR 32 — pull every dev-only localStorage key from the registry.
+// Adding a new key to `src/domain/storage-keys.ts` automatically
+// extends the banned-string list here; there is no second place to
+// update. The non-key strings (mountQaView, etc.) stay literal —
+// they are dev-only identifiers, not production-readable keys.
+import { ALL_DEV_ONLY_STORAGE_KEYS } from '../src/domain/storage-keys';
+
 const distAssetsDir = join(process.cwd(), 'dist', 'assets');
 
 function findBundlePath(): string | null {
@@ -78,36 +85,17 @@ describe('qa route — production gating', () => {
       'QA_MAX_STRESS_SEED_NAME',
       'data-action="qa-max-stress"',
       // PR 28 review patch — boot-time persistence auto-audit.
-      'pokemon.persistenceDiagBootHistory',
       'runBootTimePersistenceAudit',
       '[boot-audit]',
       // PR 28 review patch — console + route-walk auto-audit.
-      'pokemon.consoleAuditHistory',
-      'pokemon.routeWalkHistory',
       'installConsoleAudit',
       'kickOffAutoRouteWalk',
       // PR 31 — dev/QA runtime separation entry point.
-      // The four `pokemon.devAuto*` triggers + console audit + auto
-      // route walk now live in `src/qa/dev-runtime.ts`, behind a
-      // dynamic-import inside an `if (import.meta.env.DEV)` branch
-      // in `src/main.ts`. Vite's dead-code elimination drops the
-      // entire chunk + transitive imports from the production
-      // bundle. Re-pinned here.
       'runDevAutoTriggersAfterInit',
-      // PR 28 review patch — dev-only auto public sync.
-      'pokemon.devAutoPublicSync',
-      'pokemon.devAutoPublicSyncResult',
+      // PR 28 review patch — dev-only auto-trigger console prefixes.
       '[dev-auto-sync]',
-      // PR 28 review patch — dev-only auto max-stress.
-      'pokemon.devAutoMaxStress',
-      'pokemon.devAutoMaxStressResult',
       '[dev-auto-stress]',
-      // PR 28 review patch — dev-only auto fixture import + image audit.
-      'pokemon.devAutoFixtureImport',
-      'pokemon.devAutoFixtureImportResult',
       '[dev-auto-fixture]',
-      'pokemon.devAutoImageAudit',
-      'pokemon.devAutoImageAuditResult',
       '[dev-auto-image-audit]',
       // PR 28 review patch (Phase 2 cleanup) — Developer QA Settings panel.
       'Developer QA',
@@ -132,6 +120,21 @@ describe('qa route — production gating', () => {
       'installImageAudit',
       'data-action="qa-image-audit"',
       'data-action="qa-image-download"',
+      // PR 32 — every dev-only `pokemon.*` localStorage key, pulled
+      // from the central registry. New keys added there automatically
+      // extend this gate. Includes:
+      //   - persistenceDiagBootHistory
+      //   - consoleAuditHistory, routeWalkHistory
+      //   - devAutoFixtureImport / Result
+      //   - devAutoImageAudit / Result
+      //   - devAutoPublicSync / Result
+      //   - devAutoMaxStress / Result
+      //   - desktopPersistenceSentinel, desktopPersistenceBootCounter
+      ...ALL_DEV_ONLY_STORAGE_KEYS,
+      // The Dexie appMeta sentinel key is intentionally NOT in
+      // ALL_DEV_ONLY_STORAGE_KEYS (it's a Dexie key, not a
+      // pokemon.*-prefixed localStorage key); pin it here.
+      'desktopPersistenceSentinel',
     ];
     for (const needle of banned) {
       expect(

@@ -3,8 +3,14 @@
 // section, the Collection view itself) can refresh without a global
 // store. Same pattern as `pokemon:sync-status-changed` in the Settings
 // view — small, native, no dependencies.
+//
+// PR 32 — the canonical event-name string lives in
+// `src/domain/events.ts`; this file re-exports it so existing
+// import paths (e.g. `import { USER_DATA_CHANGED_EVENT } from
+// '../components/events'`) keep working.
 
-export const USER_DATA_CHANGED_EVENT = 'pokemon:user-data-changed';
+export { USER_DATA_CHANGED_EVENT } from '../domain/events';
+import { USER_DATA_CHANGED_EVENT } from '../domain/events';
 
 /**
  * Register a handler for `USER_DATA_CHANGED_EVENT` that the router can

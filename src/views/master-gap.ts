@@ -12,7 +12,7 @@
 // those user-clicked actions.
 
 import { buildAssignHoldingModal } from '../components/assign-holding-modal';
-import { openDialog } from '../components/dialog';
+import { DIALOG_SUBMITTED_EVENT, openDialog } from '../components/dialog';
 import {
   USER_DATA_CHANGED_EVENT,
   onUserDataChanged,
@@ -1022,8 +1022,10 @@ async function handleBulkPlaceRecommended(
       confirm.dataset['action'] = 'bulk-confirm';
       confirm.textContent = 'Plasser anbefalte';
       confirm.addEventListener('click', () => {
+        // PR 32 — was the inline string `'dialog:submitted'`, now uses
+        // the registry constant. Same dispatched event, same listeners.
         wrap.dispatchEvent(
-          new CustomEvent('dialog:submitted', { bubbles: true }),
+          new CustomEvent(DIALOG_SUBMITTED_EVENT, { bubbles: true }),
         );
       });
       actions.appendChild(cancel);
