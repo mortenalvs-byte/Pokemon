@@ -62,6 +62,16 @@ describe('qa route — production gating', () => {
       'data-action="qa-reset"',
       'data-action="qa-seed"',
       'data-action="qa-run"',
+      // PR 28 review patch — persistence diagnostic strings.
+      // Diagnostic module is only imported by the dev-only QA view,
+      // so these must also be tree-shaken in production builds.
+      'buildPersistenceDiagnostic',
+      'writePersistenceSentinel',
+      'evaluatePersistenceDiagnostic',
+      'desktopPersistenceSentinel',
+      'pokemon.desktopPersistenceBootCounter',
+      'data-action="qa-persist-run"',
+      'data-action="qa-persist-sentinel"',
     ];
     for (const needle of banned) {
       expect(

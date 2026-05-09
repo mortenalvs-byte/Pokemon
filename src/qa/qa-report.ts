@@ -8,6 +8,11 @@
 // the runner observed, never extrapolations.
 
 import type { QaSeedSummary } from './qa-seed';
+import type {
+  PersistenceDiagnostic,
+  PersistenceDiagnosticVerdict,
+} from './desktop-persistence-diagnostic';
+import { evaluatePersistenceDiagnostic } from './desktop-persistence-diagnostic';
 
 export interface QaReportRouteCheck {
   readonly route: string;
@@ -50,6 +55,20 @@ export interface QaReportInput {
   readonly console: QaReportConsoleCounts;
   readonly desktopBadgeVisible: boolean | null;
   readonly backupRoundtrip: 'ok' | 'failed' | 'not_run';
+  /**
+   * Optional desktop persistence diagnostic (PR 28 review patch).
+   * Captured by `buildPersistenceDiagnostic` and embedded in the
+   * report so the operator can see store counts + sentinel state
+   * inline without opening a separate JSON.
+   */
+  readonly persistenceDiagnostic: PersistenceDiagnostic | null;
+  /**
+   * Whether the operator expects this run to read back seeded
+   * desktop data. The persistence verdict only fires when this is
+   * `true` AND the sentinel is present AND holdings drop to zero —
+   * otherwise the diagnostic is `inconclusive`.
+   */
+  readonly persistenceExpectSeededDesktopData: boolean;
   readonly notes: readonly string[];
 }
 
@@ -79,7 +98,38 @@ export function evaluateQaPassFail(input: QaReportInput): QaReportPassFail {
     // master-gap classifier or the seed regressed.
     return 'fail';
   }
+  if (
+    input.persistenceDiagnostic !== null &&
+    evaluatePersistenceDiagnostic(input.persistenceDiagnostic, {
+      expectSeededDesktopData: input.persistenceExpectSeededDesktopData,
+    }) === 'fail_seeded_holdings_zero_with_sentinel'
+  ) {
+    // PR 28 review patch — desktop persistence regression.
+    // localStorage sentinel survived but Dexie reads holdings=0.
+    // The user explicitly asked for this to fail the run.
+    return 'fail';
+  }
+  if (
+    input.persistenceDiagnostic !== null &&
+    evaluatePersistenceDiagnostic(input.persistenceDiagnostic) === 'fail_db_open'
+  ) {
+    return 'fail';
+  }
   return 'pass';
+}
+
+/**
+ * Re-export the persistence verdict from a complete QA report. Pure;
+ * used by the QA view to render the right chip without re-running
+ * the diagnostic.
+ */
+export function persistenceVerdict(
+  report: QaReport,
+): PersistenceDiagnosticVerdict | null {
+  if (report.persistenceDiagnostic === null) return null;
+  return evaluatePersistenceDiagnostic(report.persistenceDiagnostic, {
+    expectSeededDesktopData: report.persistenceExpectSeededDesktopData,
+  });
 }
 
 export function buildQaReport(input: QaReportInput): QaReport {
@@ -184,6 +234,54 @@ export function renderQaReportMarkdown(report: QaReport): string {
   lines.push('');
   lines.push(`Status: \`${report.backupRoundtrip}\``);
   lines.push('');
+
+  if (report.persistenceDiagnostic !== null) {
+    const verdict = evaluatePersistenceDiagnostic(
+      report.persistenceDiagnostic,
+      { expectSeededDesktopData: report.persistenceExpectSeededDesktopData },
+    );
+    const d = report.persistenceDiagnostic;
+    lines.push('## Desktop persistence diagnostic');
+    lines.push('');
+    lines.push(`- **Verdict:** \`${verdict}\``);
+    lines.push(`- **Expected seeded desktop data:** ${report.persistenceExpectSeededDesktopData ? 'yes' : 'no'}`);
+    lines.push(`- **Captured at:** ${d.capturedAt}`);
+    lines.push(`- **Runtime:** ${d.runtime}`);
+    lines.push(`- **Origin:** \`${d.location.origin}\``);
+    lines.push(`- **Dexie DB:** \`${d.dexie.name}\` v${d.dexie.verno} (${d.dexie.tables.length} tables)`);
+    lines.push(`- **navigator.storage.persisted:** ${d.storage.persisted === null ? '(n/a)' : String(d.storage.persisted)}`);
+    if (d.storage.estimate !== null) {
+      lines.push(
+        `- **storage.estimate:** quota=${d.storage.estimate.quota} usage=${d.storage.estimate.usage}`,
+      );
+    }
+    if (d.indexedDbDatabases !== null) {
+      lines.push(`- **indexedDB.databases() count:** ${d.indexedDbDatabases.length}`);
+    }
+    lines.push(`- **localStorage sentinel:** ${d.localStorageSentinel === null ? '(missing)' : `bootCounter=${d.localStorageSentinel.bootCounter} timestamp=${d.localStorageSentinel.timestamp}`}`);
+    lines.push(`- **appMeta sentinel:** ${d.appMetaSentinel === null ? '(missing)' : `bootCounter=${d.appMetaSentinel.bootCounter} timestamp=${d.appMetaSentinel.timestamp}`}`);
+    lines.push('');
+    lines.push('| Store | Count |');
+    lines.push('|---|---:|');
+    for (const [k, v] of Object.entries(d.storeCounts).sort()) {
+      lines.push(`| ${k} | ${v} |`);
+    }
+    lines.push('');
+    if (d.firstHoldingIds.length > 0) {
+      lines.push(`First 5 holding IDs: \`${d.firstHoldingIds.join(', ')}\``);
+      lines.push('');
+    }
+    if (d.firstAppMetaKeys.length > 0) {
+      lines.push(`First 5 appMeta keys: \`${d.firstAppMetaKeys.join(', ')}\``);
+      lines.push('');
+    }
+    if (d.notes.length > 0) {
+      lines.push('### Diagnostic notes');
+      lines.push('');
+      for (const note of d.notes) lines.push(`- ${note}`);
+      lines.push('');
+    }
+  }
 
   if (report.notes.length > 0) {
     lines.push('## Notes');

@@ -33,6 +33,10 @@ import {
   type QaSeedDeps,
   type QaSeedSummary,
 } from './qa-seed';
+import {
+  buildPersistenceDiagnostic,
+  type PersistenceDiagnostic,
+} from './desktop-persistence-diagnostic';
 
 export interface QaRunOptions {
   readonly seed: boolean;
@@ -44,6 +48,20 @@ export interface QaRunOptions {
   readonly cargoVersion?: string | null;
   readonly desktopBadgeVisible?: boolean | null;
   readonly consoleCounts?: QaReportConsoleCounts;
+  /**
+   * When `true`, run `buildPersistenceDiagnostic` and embed the
+   * result in the report. The persistence verdict only fails the
+   * run if `expectSeededDesktopData === true` AND the localStorage
+   * sentinel is present AND `holdings === 0`.
+   */
+  readonly includePersistenceDiagnostic?: boolean;
+  /**
+   * When `true`, the QA view believes seeded desktop data should be
+   * present at this point in the test (e.g. Launch B / Launch C of
+   * the persistence recipe). Together with `includePersistenceDiagnostic`,
+   * this wires the failure rule.
+   */
+  readonly expectSeededDesktopData?: boolean;
 }
 
 const QA_ROUTES: ReadonlyArray<{ route: string; hash: string }> = [
@@ -171,6 +189,27 @@ export async function runQa(
     runtime = '__TAURI_INTERNALS__' in window ? 'tauri' : 'browser';
   }
 
+  // PR 28 review patch — desktop persistence diagnostic. Opt-in,
+  // gated by `includePersistenceDiagnostic`. Failure to capture is
+  // recorded as a note rather than aborting the run.
+  let persistenceDiagnostic: PersistenceDiagnostic | null = null;
+  if (options.includePersistenceDiagnostic === true) {
+    try {
+      const t0 = Date.now();
+      persistenceDiagnostic = await buildPersistenceDiagnostic(db);
+      performance.push({
+        label: 'persistence_diagnostic',
+        ms: Date.now() - t0,
+      });
+    } catch (caught) {
+      notes.push(
+        `persistence diagnostic failed: ${
+          caught instanceof Error ? caught.message : 'unknown error'
+        }`,
+      );
+    }
+  }
+
   const input: QaReportInput = {
     commitSha: null,
     timestamp: new Date().toISOString(),
@@ -187,6 +226,9 @@ export async function runQa(
     console: consoleCounts,
     desktopBadgeVisible: options.desktopBadgeVisible ?? null,
     backupRoundtrip: 'not_run',
+    persistenceDiagnostic,
+    persistenceExpectSeededDesktopData:
+      options.expectSeededDesktopData === true,
     notes,
   };
   return buildQaReport(input);

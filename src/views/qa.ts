@@ -11,12 +11,22 @@
 //   - Reset QA data       (drops every store except settings)
 //   - Seed stress data    (deterministic — `morten-pokemon-qa-v1`)
 //   - Run + download QA report (JSON + Markdown)
-//   - Live counts panel
+//   - Persistence diagnostic + sentinel (PR 28 review patch — desktop
+//     persistence regression debug, Launch A/B/C recipe in
+//     docs/QA_DESKTOP.md)
 //
 // All actions go through repos / services already covered by the
-// rest of the test suite. No DB writes outside reset/seed.
+// rest of the test suite. No DB writes outside reset/seed and the
+// explicit "Write persistence sentinel" button.
 
 import { getDb } from '../db/database';
+import {
+  buildPersistenceDiagnostic,
+  evaluatePersistenceDiagnostic,
+  renderPersistenceDiagnosticJson,
+  writePersistenceSentinel,
+  type PersistenceDiagnostic,
+} from '../qa/desktop-persistence-diagnostic';
 import {
   renderQaReportJson,
   renderQaReportMarkdown,
@@ -26,6 +36,7 @@ import { runQa, type QaRunOptions } from '../qa/qa-runner';
 import { downloadTextFile } from '../utils/download';
 
 const REPORT_BASENAME = 'desktop-qa-report';
+const PERSISTENCE_BASENAME = 'desktop-persistence-diagnostic';
 
 export function mountQaView(
   container: HTMLElement,
@@ -55,6 +66,23 @@ export function mountQaView(
       </section>
 
       <section class="qa-view__panel">
+        <h2>Desktop persistence diagnostic</h2>
+        <p class="qa-view__hint">
+          Launch A → seed + <em>Write persistence sentinel</em>.
+          Launch B/C → <em>Run persistence diagnostic</em> og
+          bekreft holdings = 1000 og samme bootCounter. PASS bare
+          hvis IndexedDB-tellingene følger sentinelen.
+        </p>
+        <div class="qa-view__actions">
+          <button type="button" class="qa-view__button" data-action="qa-persist-run">Run persistence diagnostic</button>
+          <button type="button" class="qa-view__button" data-action="qa-persist-run-expect">Run + expect seeded data</button>
+          <button type="button" class="qa-view__button qa-view__button--primary" data-action="qa-persist-sentinel">Write persistence sentinel</button>
+          <button type="button" class="qa-view__button" data-action="qa-persist-download">Last ned diagnostic JSON</button>
+        </div>
+        <p class="qa-view__feedback" data-region="qa-persist-feedback" aria-live="polite"></p>
+      </section>
+
+      <section class="qa-view__panel">
         <h2>Last ned rapport</h2>
         <div class="qa-view__actions">
           <button type="button" class="qa-view__button" data-action="qa-download-json">Last ned JSON</button>
@@ -76,6 +104,7 @@ export function mountQaView(
   `;
 
   let lastReport: QaReport | null = null;
+  let lastDiagnostic: PersistenceDiagnostic | null = null;
 
   const feedback = container.querySelector<HTMLElement>(
     '[data-region="qa-feedback"]',
@@ -83,11 +112,21 @@ export function mountQaView(
   const reportRegion = container.querySelector<HTMLElement>(
     '[data-region="qa-report"]',
   );
-  if (feedback === null || reportRegion === null) return;
+  const persistFeedback = container.querySelector<HTMLElement>(
+    '[data-region="qa-persist-feedback"]',
+  );
+  if (feedback === null || reportRegion === null || persistFeedback === null) {
+    return;
+  }
 
   function setFeedback(text: string, isError = false): void {
     feedback!.textContent = text;
     feedback!.classList.toggle('qa-view__feedback--error', isError);
+  }
+
+  function setPersistFeedback(text: string, isError = false): void {
+    persistFeedback!.textContent = text;
+    persistFeedback!.classList.toggle('qa-view__feedback--error', isError);
   }
 
   function renderReport(report: QaReport): void {
@@ -117,6 +156,56 @@ export function mountQaView(
     }
   }
 
+  async function runPersistenceDiagnostic(
+    expectSeededDesktopData: boolean,
+  ): Promise<void> {
+    setPersistFeedback('Henter persistence-diagnostikk …');
+    try {
+      const db = getDb();
+      const diagnostic = await buildPersistenceDiagnostic(db);
+      lastDiagnostic = diagnostic;
+      const verdict = evaluatePersistenceDiagnostic(diagnostic, {
+        expectSeededDesktopData,
+      });
+      const holdings = diagnostic.storeCounts['holdings'] ?? -1;
+      const sentinelLine =
+        diagnostic.localStorageSentinel === null
+          ? 'sentinel: missing'
+          : `sentinel#${diagnostic.localStorageSentinel.bootCounter} (${diagnostic.localStorageSentinel.timestamp})`;
+      setPersistFeedback(
+        `Verdict: ${verdict} · holdings=${holdings} · ${sentinelLine}`,
+        verdict.startsWith('fail_'),
+      );
+    } catch (caught) {
+      setPersistFeedback(
+        `Feil: ${
+          caught instanceof Error ? caught.message : 'ukjent feil'
+        }`,
+        true,
+      );
+    }
+  }
+
+  async function writeSentinel(): Promise<void> {
+    setPersistFeedback('Skriver sentinel …');
+    try {
+      const db = getDb();
+      const payload = await writePersistenceSentinel(db, {
+        note: 'Manual L3 launch from QA view',
+      });
+      setPersistFeedback(
+        `Sentinel skrevet: bootCounter=${payload.bootCounter} timestamp=${payload.timestamp} origin=${payload.origin} runtime=${payload.runtime}`,
+      );
+    } catch (caught) {
+      setPersistFeedback(
+        `Feil: ${
+          caught instanceof Error ? caught.message : 'ukjent feil'
+        }`,
+        true,
+      );
+    }
+  }
+
   container
     .querySelector<HTMLButtonElement>('[data-action="qa-reset"]')
     ?.addEventListener('click', () => {
@@ -130,12 +219,54 @@ export function mountQaView(
   container
     .querySelector<HTMLButtonElement>('[data-action="qa-run"]')
     ?.addEventListener('click', () => {
-      void handle({ reset: true, seed: true, runtime: 'unknown' });
+      void handle({
+        reset: true,
+        seed: true,
+        runtime: 'unknown',
+        includePersistenceDiagnostic: true,
+      });
     });
   container
     .querySelector<HTMLButtonElement>('[data-action="qa-measure"]')
     ?.addEventListener('click', () => {
-      void handle({ reset: false, seed: false, runtime: 'unknown' });
+      void handle({
+        reset: false,
+        seed: false,
+        runtime: 'unknown',
+        includePersistenceDiagnostic: true,
+      });
+    });
+
+  container
+    .querySelector<HTMLButtonElement>('[data-action="qa-persist-run"]')
+    ?.addEventListener('click', () => {
+      void runPersistenceDiagnostic(false);
+    });
+  container
+    .querySelector<HTMLButtonElement>('[data-action="qa-persist-run-expect"]')
+    ?.addEventListener('click', () => {
+      void runPersistenceDiagnostic(true);
+    });
+  container
+    .querySelector<HTMLButtonElement>('[data-action="qa-persist-sentinel"]')
+    ?.addEventListener('click', () => {
+      void writeSentinel();
+    });
+  container
+    .querySelector<HTMLButtonElement>('[data-action="qa-persist-download"]')
+    ?.addEventListener('click', () => {
+      if (lastDiagnostic === null) {
+        setPersistFeedback(
+          'Ingen diagnostic ennå — kjør Run først.',
+          true,
+        );
+        return;
+      }
+      downloadTextFile(
+        `${PERSISTENCE_BASENAME}.json`,
+        renderPersistenceDiagnosticJson(lastDiagnostic),
+        { mimeType: 'application/json' },
+      );
     });
 
   container

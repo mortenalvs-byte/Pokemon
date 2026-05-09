@@ -32,7 +32,7 @@ import {
 
 const PENDING_TIMEOUT_MS = 1200;
 
-type SecondKey = 'd' | 'b' | 'c' | 'p' | 'l' | 'w' | 'm';
+type SecondKey = 'd' | 'b' | 'c' | 'p' | 'l' | 'w' | 'm' | 'q';
 
 type SecondKeyHandler = () => void;
 
@@ -44,6 +44,17 @@ const SECOND_KEY_HANDLERS: Record<SecondKey, SecondKeyHandler> = {
   l: () => navigate('lots' satisfies SidebarRoute),
   w: () => navigate('wishlist' satisfies SidebarRoute),
   m: () => navigateToMasterGap(),
+  // PR 28 review patch — dev-only QA harness shortcut. The route
+  // exists in the type union; in production it falls through to the
+  // dashboard mounter (verified by `tests/qa-route-prod-gating`),
+  // so this shortcut is a no-op outside dev. We bypass `navigate()`
+  // because that helper expects `SidebarRoute` and `qa` deliberately
+  // is not a sidebar route.
+  q: () => {
+    if (typeof window !== 'undefined') {
+      window.location.hash = 'qa';
+    }
+  },
 };
 
 let listener: ((event: KeyboardEvent) => void) | null = null;

@@ -43,6 +43,8 @@ function baseInput(overrides: Partial<QaReportInput> = {}): QaReportInput {
     console: { errors: 0, warnings: 0 },
     desktopBadgeVisible: null,
     backupRoundtrip: 'not_run',
+    persistenceDiagnostic: null,
+    persistenceExpectSeededDesktopData: false,
     notes: [],
     ...overrides,
   };

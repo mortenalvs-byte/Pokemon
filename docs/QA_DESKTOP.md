@@ -43,6 +43,38 @@ Master-gap signals the seed is engineered to produce:
 - `invalidCount > 0` — at least one `invalid_assignment` (assigned holding for a different card) and one `invalid_variant` (normal holding parked on a `template:reverse_holo` slot).
 - `reverseTemplateSlots > 0` — every other slot in the reverse-test binder gets `note=template:reverse_holo` and a set-4 (reverse-holo-priced) target card.
 
+## L4 — desktop persistence audit (Launch A → B → C)
+
+This is the dedicated recipe for the desktop persistence regression that the 2026-05-09 manual run hit (data on disk but `db.holdings.count() === 0` after restart). It exercises the persistence diagnostic the QA harness ships in `src/qa/desktop-persistence-diagnostic.ts`.
+
+The recipe writes two sentinels:
+
+1. `localStorage` key `pokemon.desktopPersistenceSentinel` (and `pokemon.desktopPersistenceBootCounter` for the boot counter).
+2. `appMeta` row keyed by `desktopPersistenceSentinel`.
+
+Both encode `bootCounter`, `timestamp`, `origin`, `runtime`. If the IndexedDB store empties out across a restart while the localStorage sentinel survives, the diagnostic returns `fail_seeded_holdings_zero_with_sentinel` and `runQa` flips the report to `overall: FAIL`.
+
+### Recipe
+
+| # | Step | Expectation |
+|---|---|---|
+| **Launch A** | `npm run desktop:dev`, open `#qa`. Click **Reset + Seed + Run report** (this also runs the persistence diagnostic). Click **Write persistence sentinel**. Click **Last ned diagnostic JSON** → save to `.local/qa/`. | Overall: PASS · holdings = 1000 · sentinel bootCounter = 1. |
+| **Close A** | Click the window's X button. | Tauri dev exits cleanly. |
+| **Launch B** | `npm run desktop:dev` again, open `#qa`. Click **Run + expect seeded data**. Click **Last ned diagnostic JSON** → save to `.local/qa/`. | Verdict: pass · holdings = 1000 · same Dexie name + verno · same origin · localStorageSentinel.bootCounter = 1 (unchanged from A). |
+| **Close B** | Click X. | Tauri dev exits cleanly. |
+| **Launch C** | `npm run desktop:dev` again, open `#qa`. Click **Run + expect seeded data**. Click **Last ned diagnostic JSON** → save to `.local/qa/`. | Same expectations as Launch B. |
+
+PASS = Launch B and Launch C both return verdict `pass` AND identical Dexie name/verno AND identical origin AND `holdings = 1000`. FAIL = the localStorage sentinel survives but `holdings === 0`, which is the exact regression we're auditing.
+
+If FAIL: do NOT merge. Inspect the diagnostic JSON for clues:
+
+- **origin changed** → Tauri dev/release origin strategy needs to change.
+- **Dexie verno or db.name changed** → schema migration ate the rows.
+- **`storeCounts.appMeta` dropped while localStorageSentinel survived** → IndexedDB-specific eviction in the WebView2 profile.
+- **All counts dropped including localStorageSentinel** → the WebView2 user profile is not stable.
+
+The pure verdict logic lives in `evaluatePersistenceDiagnostic` (covered by `tests/desktop-persistence-diagnostic.test.ts`) and the live diagnostic builder is covered by `tests/desktop-persistence-diagnostic-live.test.ts`. Production builds must NOT contain any of `buildPersistenceDiagnostic` / `writePersistenceSentinel` / `desktopPersistenceSentinel` — `tests/qa-route-prod-gating.test.ts` greps the `dist/` bundle and fails if any leak through.
+
 ## L3 — desktop QA recipe
 
 Prerequisites: see [docs/DESKTOP_APP.md](DESKTOP_APP.md). On Windows you need Node + Rust + MSVC C++ Build Tools + WebView2 installed.
