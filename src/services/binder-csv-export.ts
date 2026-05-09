@@ -1,25 +1,40 @@
-// Binder checklist CSV export. Joins binder + live slots + cards +
-// sets + (live) holdings, runs them through the generic CSV writer in
-// `src/utils/csv.ts`, and surfaces a `{ filename, content, rowCount }`
-// triple the view can hand straight to `downloadTextFile()`.
+// Binder checklist CSV export.
+//
+// PR 29 review patch — operator-approved column set (2026-05-09). The
+// CSV must be usable as a real-world physical-binder checklist:
+//
+//   binderName, pageNumber, slotNumber, physicalPosition, slotStatus,
+//   targetCardId, targetCardName, setId, setName, cardNumber, rarity,
+//   requiredFinish, holdingId, holdingCardName, holdingFinish,
+//   holdingCondition, holdingStatus, language, note, issue
+//
+// `requiredFinish` is derived from `availableVariants(card)` plus the
+// reverse-holo template marker. `holdingCondition` is one human-readable
+// string ("NM" for raw, "PSA 10" for graded). `issue` is a contextual
+// reason — "Mangler", "Feil holding", "Feil variant", "" for complete —
+// so the printed checklist tells the user what to do per row.
 //
 // `recordBinderCsvExported` is a separate small write — the view calls
-// it AFTER the CSV has been generated and handed to the download
-// helper, so the audit row reflects "content was generated and a
-// download was started", not "the user definitely saved the file"
-// (browsers can't reliably observe the latter). Keeping the audit
-// write in its own narrow rw-transaction over `auditLog` only means a
-// failed download attempt does not corrupt the audit log either way.
+// it AFTER the CSV has been generated and handed to the download helper,
+// so the audit row reflects "content was generated and a download was
+// started", not "the user definitely saved the file" (browsers can't
+// reliably observe the latter). Keeping the audit write in its own
+// narrow rw-transaction over `auditLog` only means a failed download
+// attempt does not corrupt the audit log either way.
 //
 // The exporter never mutates user-owned stores. Even reading slots /
 // holdings / cards is read-only.
 
 import { appendAudit } from '../db/audit';
 import type { PokemonTrackerDB } from '../db/database';
-import { isReverseHoloTemplateSlot } from '../domain/card-variants';
+import {
+  availableVariants,
+  isReverseHoloTemplateSlot,
+} from '../domain/card-variants';
 import type {
   BinderRecord,
   BinderSlotRecord,
+  CardFinish,
   CardRecord,
   HoldingRecord,
   SetRecord,
@@ -38,13 +53,17 @@ export interface BinderCsvExportResult {
 }
 
 interface ChecklistRow {
+  readonly binder: BinderRecord;
   readonly slot: BinderSlotRecord;
   readonly targetCard: CardRecord | null;
   readonly targetSet: SetRecord | null;
   readonly holding: HoldingRecord | null;
   readonly holdingCard: CardRecord | null;
-  readonly displayFinish: string;
+  readonly requiredFinish: string;
+  readonly holdingFinish: string;
+  readonly holdingCondition: string;
   readonly displaySlotNote: string;
+  readonly issue: string;
 }
 
 export interface BinderCsvExporter {
@@ -103,44 +122,66 @@ export function createBinderCsvExporter(
             : null;
         const holdingCard =
           holding !== null ? (cardsById.get(holding.cardId) ?? null) : null;
+
         const isReverseTemplate = isReverseHoloTemplateSlot(slot.note);
-        const displayFinish = isReverseTemplate
-          ? 'reverse_holo'
-          : (holding?.finish ?? '');
-        // Hide the internal reverse-holo marker from the
-        // user-facing slot_note column — it is template metadata,
-        // not an authored note.
+        const requiredFinish = deriveRequiredFinish(slot, targetCard);
+        const holdingFinish = holding?.finish ?? '';
+        const holdingCondition = formatHoldingCondition(holding);
+        // Hide the internal reverse-holo marker from the user-facing
+        // slot_note column — it is template metadata, not an authored
+        // note.
         const displaySlotNote = isReverseTemplate ? '' : (slot.note ?? '');
+        const issue = deriveIssue({
+          slot,
+          targetCard,
+          holding,
+          requiredFinish,
+        });
         return {
+          binder,
           slot,
           targetCard,
           targetSet,
           holding,
           holdingCard,
-          displayFinish,
+          requiredFinish,
+          holdingFinish,
+          holdingCondition,
           displaySlotNote,
+          issue,
         };
       });
 
       const columns: CsvColumn<ChecklistRow>[] = [
-        { header: 'page', value: (r) => r.slot.pageNumber },
-        { header: 'slot', value: (r) => r.slot.slotNumber },
-        { header: 'target_card_id', value: (r) => r.targetCard?.id ?? r.slot.targetCardId ?? '' },
-        { header: 'target_card_name', value: (r) => r.targetCard?.name ?? '' },
-        { header: 'set_id', value: (r) => r.targetSet?.id ?? r.targetCard?.setId ?? '' },
-        { header: 'set_name', value: (r) => r.targetSet?.name ?? '' },
-        { header: 'set_number', value: (r) => r.targetCard?.number ?? '' },
-        { header: 'finish', value: (r) => r.displayFinish },
-        { header: 'status', value: (r) => r.slot.status },
-        { header: 'holding_card_id', value: (r) => r.holding?.cardId ?? '' },
-        { header: 'holding_card_name', value: (r) => r.holdingCard?.name ?? '' },
-        { header: 'condition_type', value: (r) => r.holding?.conditionType ?? '' },
-        { header: 'raw_condition', value: (r) => r.holding?.rawCondition ?? '' },
-        { header: 'grading_company', value: (r) => r.holding?.gradingCompany ?? '' },
-        { header: 'grade', value: (r) => r.holding?.grade ?? '' },
-        { header: 'holding_note', value: (r) => r.holding?.note ?? '' },
-        { header: 'slot_note', value: (r) => r.displaySlotNote },
-        { header: 'updated_at', value: (r) => r.slot.updatedAt },
+        { header: 'binderName', value: (r) => r.binder.name },
+        { header: 'pageNumber', value: (r) => r.slot.pageNumber },
+        { header: 'slotNumber', value: (r) => r.slot.slotNumber },
+        {
+          header: 'physicalPosition',
+          value: (r) => `${r.slot.pageNumber}.${r.slot.slotNumber}`,
+        },
+        { header: 'slotStatus', value: (r) => r.slot.status },
+        {
+          header: 'targetCardId',
+          value: (r) => r.targetCard?.id ?? r.slot.targetCardId ?? '',
+        },
+        { header: 'targetCardName', value: (r) => r.targetCard?.name ?? '' },
+        {
+          header: 'setId',
+          value: (r) => r.targetSet?.id ?? r.targetCard?.setId ?? '',
+        },
+        { header: 'setName', value: (r) => r.targetSet?.name ?? '' },
+        { header: 'cardNumber', value: (r) => r.targetCard?.number ?? '' },
+        { header: 'rarity', value: (r) => r.targetCard?.rarity ?? '' },
+        { header: 'requiredFinish', value: (r) => r.requiredFinish },
+        { header: 'holdingId', value: (r) => r.holding?.id ?? '' },
+        { header: 'holdingCardName', value: (r) => r.holdingCard?.name ?? '' },
+        { header: 'holdingFinish', value: (r) => r.holdingFinish },
+        { header: 'holdingCondition', value: (r) => r.holdingCondition },
+        { header: 'holdingStatus', value: (r) => r.holding?.status ?? '' },
+        { header: 'language', value: (r) => r.holding?.language ?? '' },
+        { header: 'note', value: (r) => r.displaySlotNote },
+        { header: 'issue', value: (r) => r.issue },
       ];
 
       const content = serializeCsv(rows, columns, { withBom: true });
@@ -178,4 +219,76 @@ function todayStamp(): string {
   const mm = (now.getUTCMonth() + 1).toString().padStart(2, '0');
   const dd = now.getUTCDate().toString().padStart(2, '0');
   return `${yyyy}${mm}${dd}`;
+}
+
+/**
+ * PR 29 review patch — derive the required variant finish for a slot
+ * the same way the master-set-gap classifier does. Reverse-holo
+ * template slots always require `reverse_holo`; other target slots use
+ * `availableVariants(card)` and prefer normal → holo → reverse_holo.
+ * Returns '' when the slot is blank (no `targetCardId`) or the card
+ * has no verified variant data.
+ */
+function deriveRequiredFinish(
+  slot: BinderSlotRecord,
+  card: CardRecord | null,
+): string {
+  if (slot.targetCardId === null) return '';
+  if (isReverseHoloTemplateSlot(slot.note)) return 'reverse_holo';
+  if (card === null) return '';
+  const variants = availableVariants(card);
+  if (!variants.verified) return '';
+  if (variants.finishes.has('normal')) return 'normal';
+  if (variants.finishes.has('holo')) return 'holo';
+  if (variants.finishes.has('reverse_holo')) return 'reverse_holo';
+  return '';
+}
+
+/**
+ * PR 29 review patch — render a holding's condition as a single
+ * human-readable string. Raw NM holdings render as `NM`; graded
+ * holdings render as `PSA 10` (gradingCompany + grade). Empty when
+ * there is no holding bound to the slot.
+ */
+function formatHoldingCondition(holding: HoldingRecord | null): string {
+  if (holding === null) return '';
+  if (holding.conditionType === 'graded') {
+    const company = holding.gradingCompany ?? '';
+    const grade = holding.grade !== null ? String(holding.grade) : '';
+    return [company, grade].filter((p) => p.length > 0).join(' ');
+  }
+  return holding.rawCondition ?? '';
+}
+
+/**
+ * PR 29 review patch — contextual issue/reason per row. Operator
+ * approved 2026-05-09: the printed checklist must say what's blocking
+ * each row at a glance.
+ */
+function deriveIssue(input: {
+  readonly slot: BinderSlotRecord;
+  readonly targetCard: CardRecord | null;
+  readonly holding: HoldingRecord | null;
+  readonly requiredFinish: string;
+}): string {
+  const { slot, holding, requiredFinish } = input;
+  void input.targetCard;
+  if (slot.targetCardId === null) return '';
+  if (holding === null) {
+    if (slot.status === 'owned') {
+      // Slot says owned but holding link is broken — surface as critical.
+      return 'Mangler holding (slot markert som owned)';
+    }
+    return `Mangler — trenger ${requiredFinish.length > 0 ? requiredFinish : 'ukjent variant'}`;
+  }
+  if (holding.cardId !== slot.targetCardId) {
+    return `Feil holding — slot venter ${slot.targetCardId}, holding er ${holding.cardId}`;
+  }
+  if (
+    requiredFinish.length > 0 &&
+    (holding.finish as CardFinish) !== requiredFinish
+  ) {
+    return `Feil variant — krever ${requiredFinish}, holding er ${holding.finish}`;
+  }
+  return '';
 }

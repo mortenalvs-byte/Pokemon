@@ -11,6 +11,7 @@
 //     headers cannot leak it.
 
 import {
+  defaultSleep as defaultSleepImpl,
   fetchWithRetry,
   type FetchLike,
   type FetchWithRetryOptions,
@@ -29,6 +30,14 @@ import type { CardRecord, SetRecord } from '../domain/types';
 export const POKEMON_TCG_API_BASE = 'https://api.pokemontcg.io/v2';
 export const DEFAULT_PAGE_SIZE = 250;
 
+// pokemontcg.io public-API ceiling per docs: 30 requests/minute when
+// no API key is sent. We pace ourselves at 28 req/min to leave a tiny
+// margin so a clock skew between clients doesn't trip 429s. The
+// authenticated tier (20 000 req/day) does not need pacing — we send
+// requests as fast as the retry layer allows.
+const PUBLIC_API_REQUESTS_PER_MINUTE = 28;
+const MIN_DELAY_MS_PUBLIC = Math.ceil(60_000 / PUBLIC_API_REQUESTS_PER_MINUTE);
+
 export interface ApiClientOptions {
   readonly apiKey?: string | null;
   readonly fetchImpl?: FetchLike;
@@ -36,6 +45,13 @@ export interface ApiClientOptions {
   readonly baseUrl?: string;
   readonly pageSize?: number;
   readonly retry?: Pick<FetchWithRetryOptions, 'maxAttempts' | 'backoffMs'>;
+  /**
+   * Override the minimum delay between requests in milliseconds. When
+   * unset, no-key mode uses ~2.1 s (28 req/min) and authenticated mode
+   * sends as fast as the retry layer allows. Tests pass `0` here to
+   * skip pacing entirely.
+   */
+  readonly minDelayMs?: number;
 }
 
 export interface SetsProgress {
@@ -80,12 +96,37 @@ export function createApiClient(options: ApiClientOptions = {}): PokemonTcgApi {
   };
 
   const headers: Record<string, string> = { Accept: 'application/json' };
-  if (apiKey !== null && apiKey.length > 0) {
-    headers['X-Api-Key'] = apiKey;
+  const isPublicMode = apiKey === null || apiKey.length === 0;
+  if (!isPublicMode) {
+    // apiKey is non-null and non-empty here.
+    headers['X-Api-Key'] = apiKey as string;
+  }
+
+  // Client-side pacing for the public (no-key) tier. pokemontcg.io
+  // documents 30 req/min for unauthenticated requests; we run at 28
+  // to leave headroom against clock skew. With an API key we don't
+  // pace — the retry layer's 429 backoff is sufficient.
+  const sleep = options.sleep ?? defaultSleepImpl;
+  const minDelayMs =
+    options.minDelayMs !== undefined
+      ? options.minDelayMs
+      : isPublicMode
+        ? MIN_DELAY_MS_PUBLIC
+        : 0;
+  let lastRequestAt = 0;
+  async function paceIfNeeded(): Promise<void> {
+    if (minDelayMs <= 0) return;
+    const now = Date.now();
+    const since = now - lastRequestAt;
+    if (since < minDelayMs) {
+      await sleep(minDelayMs - since);
+    }
+    lastRequestAt = Date.now();
   }
 
   async function getJson<T>(path: string): Promise<T> {
     const url = `${baseUrl}${path}`;
+    await paceIfNeeded();
     try {
       const response = await fetchWithRetry(url, { headers }, retryOptions);
       return (await response.json()) as T;

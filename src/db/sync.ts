@@ -127,13 +127,32 @@ export async function syncCardDatabase(
           committedAt,
         );
         await putAppMeta(db, APP_META_KEYS.lastSyncError, null, committedAt);
+        // PR 28 review patch (Phase 4) — record that this run came
+        // from the real pokemontcg.io endpoint, not a local fixture
+        // import. The local-fixture importer writes the same key
+        // with `'local_fixture'`.
+        await putAppMeta(
+          db,
+          APP_META_KEYS.lastSyncSource,
+          'pokemon_tcg_api',
+          committedAt,
+        );
 
+        // PR 28 review patch — record the API mode in the audit
+        // message so QA can confirm a public-tier sync without
+        // having to read app state. Authenticated runs say
+        // "(authenticated)"; unauthenticated say "(public API,
+        // no key)".
+        const modeNote =
+          apiKey !== null && apiKey.length > 0
+            ? '(authenticated)'
+            : '(public API, no key)';
         await db.auditLog.add({
           id: newId(),
           action: 'sync_run',
           entityType: 'system',
           entityId: null,
-          message: `synced ${allSets.length} sets, ${allCards.length} cards`,
+          message: `synced ${allSets.length} sets, ${allCards.length} cards ${modeNote}`,
           createdAt: committedAt,
         });
       },

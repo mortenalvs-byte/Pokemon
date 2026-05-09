@@ -85,7 +85,14 @@ describe('app shell desktop regions (PR 26)', () => {
   it('all eight nav links still exist in the canonical order', () => {
     const root = freshRoot();
     mountApp(root);
-    const links = root.querySelectorAll<HTMLAnchorElement>('[data-route]');
+    // PR 28 review patch (Phase 2 cleanup) — the dev-only QA harness
+    // is no longer in the sidebar at all. It lives in a "Developer
+    // QA" section inside `#settings` (DEV only) and via `g q`. The
+    // sidebar shape is identical in dev and production.
+    const sidebar = root.querySelector('.sidebar');
+    const links = (sidebar ?? root).querySelectorAll<HTMLAnchorElement>(
+      '[data-route]',
+    );
     const labels = Array.from(links).map((link) => link.textContent?.trim());
     expect(labels).toEqual([
       'Dashboard',
@@ -143,5 +150,66 @@ describe('app shell desktop regions (PR 26)', () => {
       '[data-route="binders"]',
     );
     expect(masterLink?.getAttribute('aria-keyshortcuts')).toBe('g p');
+  });
+
+  // -- PR 28 — runtime desktop badge ---------------------------------
+
+  it('does NOT render runtime-badge in browser mode', () => {
+    const root = freshRoot();
+    mountApp(root);
+    expect(root.querySelector('[data-region="runtime-badge"]')).toBeNull();
+  });
+
+  it('renders runtime-badge with text "Desktop" when Tauri internals are present', () => {
+    const w = window as unknown as Record<string, unknown>;
+    const hadKey = '__TAURI_INTERNALS__' in w;
+    const previous = w['__TAURI_INTERNALS__'];
+    Object.defineProperty(w, '__TAURI_INTERNALS__', {
+      value: {},
+      configurable: true,
+      writable: true,
+    });
+    try {
+      const root = freshRoot();
+      mountApp(root);
+      const badge = root.querySelector('[data-region="runtime-badge"]');
+      expect(badge).not.toBeNull();
+      expect(badge?.textContent).toBe('Desktop');
+    } finally {
+      if (hadKey) {
+        w['__TAURI_INTERNALS__'] = previous;
+      } else {
+        delete w['__TAURI_INTERNALS__'];
+      }
+    }
+  });
+
+  it('runtime-badge does not break brand or default-route behavior', () => {
+    const w = window as unknown as Record<string, unknown>;
+    const hadKey = '__TAURI_INTERNALS__' in w;
+    const previous = w['__TAURI_INTERNALS__'];
+    Object.defineProperty(w, '__TAURI_INTERNALS__', {
+      value: {},
+      configurable: true,
+      writable: true,
+    });
+    try {
+      const root = freshRoot();
+      mountApp(root);
+      // Brand still renders as an anchor with a href, regardless of
+      // the badge's presence.
+      const brand = root.querySelector<HTMLAnchorElement>(
+        '[data-region="topbar-brand"]',
+      );
+      expect(brand?.getAttribute('href')).toBe('#dashboard');
+      // Search slot still mounts so global search keeps working.
+      expect(root.querySelector('[data-region="topbar-search"]')).not.toBeNull();
+    } finally {
+      if (hadKey) {
+        w['__TAURI_INTERNALS__'] = previous;
+      } else {
+        delete w['__TAURI_INTERNALS__'];
+      }
+    }
   });
 });

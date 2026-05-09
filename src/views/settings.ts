@@ -222,6 +222,25 @@ export function mountSettingsView(
         <h2 id="storage-heading">Lagring</h2>
         <dl class="settings-view__status" data-region="storage-status"></dl>
       </section>
+      ${
+        import.meta.env.DEV
+          ? `
+      <section class="settings-view__panel settings-view__panel--dev" aria-labelledby="developer-qa-heading" data-region="developer-qa">
+        <h2 id="developer-qa-heading">Developer QA</h2>
+        <p class="settings-view__hint">
+          Dev-only. Not included in production builds.
+          Brukes til seed, persistence diagnostic, console audit, og max-stress.
+          Sidebar-tabben for QA er fjernet (Phase 2 cleanup) — denne knappen og
+          tastatur-snarveien <code>g q</code> er de offisielle dev-only
+          inngangene til <code>#qa</code>.
+        </p>
+        <a class="settings-view__button settings-view__button--primary" href="#qa" data-action="open-qa-harness" data-region="developer-qa-link">
+          Open QA harness
+        </a>
+      </section>
+      `
+          : ''
+      }
     </section>
   `;
 
@@ -605,7 +624,16 @@ async function handleSyncNow(refs: SyncRefs): Promise<void> {
   refs.syncNowButton.disabled = true;
 
   const apiKey = refs.apiKeyInput.value.trim();
+  const isPublicMode = apiKey.length === 0;
   const db = getDb();
+
+  // PR 28 review patch — surface the API mode in the progress line
+  // so the user sees whether they're hitting the rate-limited public
+  // tier (28 req/min) or the authenticated tier (no client-side
+  // pacing). Audited in `db.auditLog` via the orchestrator too.
+  const modeLabel = isPublicMode
+    ? 'public API mode (no key, ~28 req/min)'
+    : 'authenticated';
 
   let result: SyncResult | null = null;
   try {
@@ -615,9 +643,9 @@ async function handleSyncNow(refs: SyncRefs): Promise<void> {
         apiKey: apiKey.length > 0 ? apiKey : null,
         onProgress: (progress) => {
           if (progress.phase === 'sets') {
-            refs.syncProgress.textContent = `Henter sett… ${progress.fetched} / ${progress.total}`;
+            refs.syncProgress.textContent = `[${modeLabel}] Henter sett… ${progress.fetched} / ${progress.total}`;
           } else {
-            refs.syncProgress.textContent = `Henter kort i ${progress.setId}: ${progress.fetched} / ${progress.total}`;
+            refs.syncProgress.textContent = `[${modeLabel}] Henter kort i ${progress.setId}: ${progress.fetched} / ${progress.total}`;
           }
         },
       });
@@ -632,10 +660,10 @@ async function handleSyncNow(refs: SyncRefs): Promise<void> {
     }
 
     if (result.ok) {
-      refs.syncFeedback.textContent = `Synk ferdig: ${result.setsCount} sett, ${result.cardsCount} kort.`;
+      refs.syncFeedback.textContent = `Synk ferdig (${modeLabel}): ${result.setsCount} sett, ${result.cardsCount} kort.`;
     } else {
       refs.syncFeedback.classList.add('settings-view__feedback--error');
-      refs.syncFeedback.textContent = `Synk feilet: ${result.error}. Samlingen er trygg.`;
+      refs.syncFeedback.textContent = `Synk feilet (${modeLabel}): ${result.error}. Samlingen er trygg.`;
     }
 
     await renderSyncStatus(

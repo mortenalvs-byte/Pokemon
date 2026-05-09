@@ -50,6 +50,7 @@ import { createSetsRepo } from '../repositories/sets-repo';
 import { createWishlistRepo } from '../repositories/wishlist-repo';
 import { assignHoldingToSlot } from '../services/binder-assignment-service';
 import { createMasterSetGapService } from '../services/master-set-gap-service';
+import { placeRecommendedForReport } from '../services/recommended-placement-service';
 import { createPersonalPreferencesService } from '../services/personal-preferences-service';
 import { createSettingsRepo } from '../repositories/settings-repo';
 import type { CardFinish, SlotsPerPage } from '../domain/types';
@@ -104,6 +105,12 @@ interface ViewState {
   // first render can display the user's saved choices instead of
   // hardcoded defaults.
   preferencesLoaded: boolean;
+  /**
+   * PR 28 — bulk-place-recommended summary line that survives the
+   * re-render that follows a successful placement run. Cleared when
+   * the user opens a new binder report.
+   */
+  lastBulkSummary: string | null;
 }
 
 // PR 26 — actionable predicate. Hides `complete` (already done) and
@@ -126,6 +133,7 @@ export function mountMasterGapView(
     hideComplete: false,
     onlyActionable: false,
     preferencesLoaded: false,
+    lastBulkSummary: null,
   };
   // PR 27 — load persisted view preferences. We seed the state and
   // re-render so the first paint reflects the user's saved density /
@@ -317,6 +325,11 @@ async function renderReportMode(
   loading.textContent = 'Bygger gap-rapport …';
   root.appendChild(loading);
 
+  // PR 28 — opening a new binder clears the previous binder's bulk
+  // summary so it doesn't bleed across reports.
+  if (state.cachedBinderId !== null && state.cachedBinderId !== binderId) {
+    state.lastBulkSummary = null;
+  }
   let report =
     state.cachedReport !== null && state.cachedBinderId === binderId
       ? state.cachedReport
@@ -344,6 +357,28 @@ async function renderReportMode(
   }
 
   root.appendChild(buildBinderHeader(report.binder));
+  // PR 28 — bulk-place button lives between the binder header and
+  // the toolbar so it sits next to the per-binder counts but stays
+  // above the filter strip.
+  const bulkBar = document.createElement('div');
+  bulkBar.className = 'master-gap-view__bulk-bar';
+  bulkBar.dataset['region'] = 'bulk-recommended-bar';
+  bulkBar.appendChild(buildBulkRecommendedButton(report, state, container));
+  // Result summary slot (populated after bulk placement). The text
+  // is stashed on `state.lastBulkSummary` so it survives the
+  // re-render that follows a successful run.
+  const summarySlot = document.createElement('div');
+  summarySlot.dataset['region'] = 'bulk-recommended-summary';
+  summarySlot.className = 'master-gap-view__bulk-summary';
+  if (state.lastBulkSummary !== null) {
+    const line = document.createElement('p');
+    line.className = 'master-gap-view__bulk-summary-line';
+    line.dataset['region'] = 'bulk-recommended-summary-line';
+    line.textContent = state.lastBulkSummary;
+    summarySlot.appendChild(line);
+  }
+  bulkBar.appendChild(summarySlot);
+  root.appendChild(bulkBar);
   // PR 26 — sticky table toolbar wraps filter strip + density /
   // hide-complete / only-actionable toggles so they all live in one
   // visually-grouped strip above the table.
@@ -395,6 +430,36 @@ function buildBinderHeader(summary: MasterGapBinderSummary): HTMLElement {
   openBinder.addEventListener('click', () => navigateToBinder(summary.binderId));
   header.appendChild(openBinder);
   return header;
+}
+
+// PR 28 — bulk-place-all-recommended button. Lives in the binder
+// header strip alongside `Åpne perm`. Disabled (rendered as a
+// disabled chip) when the current report has no safe
+// recommendations, but always rendered so the test/UI surface is
+// stable.
+function buildBulkRecommendedButton(
+  report: MasterGapReport,
+  state: ViewState,
+  container: HTMLElement,
+): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'master-gap-view__bulk-recommended';
+  button.dataset['action'] = 'place-all-recommended';
+  const count = report.binder.recommendedAmbiguousCount;
+  button.textContent =
+    count > 0
+      ? `Plasser alle anbefalte (${count})`
+      : 'Plasser alle anbefalte';
+  button.disabled = count === 0;
+  if (count === 0) {
+    button.title =
+      'Ingen ambiguous_owned-rader har en deterministisk anbefaling akkurat nå.';
+  }
+  button.addEventListener('click', () => {
+    void handleBulkPlaceRecommended(report, state, container);
+  });
+  return button;
 }
 
 function buildFilterStrip(
@@ -721,6 +786,11 @@ function buildRow(
 
   const reasonCell = document.createElement('td');
   reasonCell.textContent = row.reason;
+  // PR 28 — best-copy recommendation overlay. Only shown for
+  // ambiguous rows; otherwise the reason cell stays untouched.
+  if (row.status === 'ambiguous_owned') {
+    reasonCell.appendChild(buildRecommendationOverlay(row));
+  }
   tr.appendChild(reasonCell);
 
   const actionsCell = document.createElement('td');
@@ -769,6 +839,25 @@ function buildActions(
     );
   }
   if (row.status === 'ambiguous_owned') {
+    // PR 28 — recommend the best copy when scoring picks a unique
+    // winner; otherwise the row stays manual-only. The button uses
+    // PR 24's `assignHoldingToSlot` via handlePlaceRecommended; we
+    // never go around it.
+    if (
+      row.bestCopyRecommendation?.status === 'recommended' &&
+      row.bestCopyRecommendation.recommendedHoldingId !== null
+    ) {
+      out.push(
+        makeAction(
+          'Plasser anbefalt',
+          'place-recommended',
+          () => {
+            void handlePlaceRecommended(row, container, state);
+          },
+          true,
+        ),
+      );
+    }
     out.push(
       makeAction('Velg holding', 'choose-holding', () => {
         void handleChooseHolding(row, container, state);
@@ -849,6 +938,163 @@ async function handlePlaceDirect(
         ? caught.message
         : 'Plassering feilet uten melding.';
     alert(`Kunne ikke plassere holdingen: ${message}`);
+    return;
+  }
+  state.cachedReport = null;
+  state.cachedDashboard = null;
+  window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
+  void renderInto(container, state);
+}
+
+// PR 28 — recommendation overlay rendered inside the reason cell of
+// ambiguous rows. The text is purely informational; the actual
+// "Plasser anbefalt" button is built in `buildActions`.
+function buildRecommendationOverlay(row: MasterGapRow): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'master-gap-row__recommendation';
+  wrap.dataset['region'] = 'best-copy-recommendation';
+  const rec = row.bestCopyRecommendation;
+  if (rec === null) {
+    wrap.classList.add('master-gap-row__recommendation--missing');
+    wrap.textContent = 'Ingen anbefaling tilgjengelig.';
+    return wrap;
+  }
+  if (rec.status === 'no_candidates') {
+    wrap.classList.add('master-gap-row__recommendation--no-candidates');
+    wrap.textContent = 'Ingen kandidat funnet — oppdater eller velg manuelt.';
+    return wrap;
+  }
+  if (rec.status === 'manual_required') {
+    wrap.classList.add('master-gap-row__recommendation--manual');
+    wrap.textContent = 'Ingen trygg anbefaling — velg manuelt.';
+    return wrap;
+  }
+  // recommended
+  wrap.classList.add('master-gap-row__recommendation--recommended');
+  const heading = document.createElement('p');
+  heading.className = 'master-gap-row__recommendation-heading';
+  heading.textContent =
+    rec.score !== null
+      ? `Anbefalt kopi · score ${rec.score}`
+      : 'Anbefalt kopi';
+  wrap.appendChild(heading);
+  if (rec.reasons.length > 0) {
+    const list = document.createElement('ul');
+    list.className = 'master-gap-row__recommendation-reasons';
+    for (const reason of rec.reasons.slice(0, 4)) {
+      const li = document.createElement('li');
+      li.textContent = reason;
+      list.appendChild(li);
+    }
+    wrap.appendChild(list);
+  }
+  return wrap;
+}
+
+async function handleBulkPlaceRecommended(
+  report: MasterGapReport,
+  state: ViewState,
+  container: HTMLElement,
+): Promise<void> {
+  const safeCount = report.binder.recommendedAmbiguousCount;
+  if (safeCount === 0) return;
+
+  const confirmed = await openDialog({
+    mount(host, close) {
+      const wrap = document.createElement('section');
+      wrap.className = 'master-gap-bulk-confirm';
+      const heading = document.createElement('h2');
+      heading.textContent = 'Plasser anbefalte';
+      wrap.appendChild(heading);
+      const body = document.createElement('p');
+      body.textContent = `${safeCount} rader har én trygg anbefaling og blir plassert. Uklare valg hoppes over.`;
+      wrap.appendChild(body);
+      const actions = document.createElement('div');
+      actions.className = 'master-gap-bulk-confirm__actions';
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.dataset['action'] = 'bulk-cancel';
+      cancel.textContent = 'Avbryt';
+      cancel.addEventListener('click', () => close());
+      const confirm = document.createElement('button');
+      confirm.type = 'button';
+      confirm.className = 'master-gap-bulk-confirm__confirm';
+      confirm.dataset['action'] = 'bulk-confirm';
+      confirm.textContent = 'Plasser anbefalte';
+      confirm.addEventListener('click', () => {
+        wrap.dispatchEvent(
+          new CustomEvent('dialog:submitted', { bubbles: true }),
+        );
+      });
+      actions.appendChild(cancel);
+      actions.appendChild(confirm);
+      wrap.appendChild(actions);
+      host.appendChild(wrap);
+    },
+  });
+  if (confirmed !== 'submitted') return;
+
+  const db = getDb();
+  const result = await placeRecommendedForReport({
+    report,
+    deps: {
+      bindersRepo: createBindersRepo(db),
+      binderSlotsRepo: createBinderSlotsRepo(db),
+      holdingsRepo: createHoldingsRepo(db),
+      cardsRepo: createCardsRepo(db),
+    },
+  });
+
+  // Stash the summary on view state so it survives the re-render
+  // triggered by `state.cachedReport = null` below.
+  const skipped =
+    result.skippedManualRequired + result.skippedNoRecommendation;
+  state.lastBulkSummary =
+    `${result.placed.length} plassert · ` +
+    `${skipped} hoppet over — manuell vurdering kreves · ` +
+    `${result.failed.length} feilet`;
+
+  if (result.placed.length > 0) {
+    state.cachedReport = null;
+    state.cachedDashboard = null;
+    window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
+  }
+  void renderInto(container, state);
+}
+
+async function handlePlaceRecommended(
+  row: MasterGapRow,
+  container: HTMLElement,
+  state: ViewState,
+): Promise<void> {
+  const rec = row.bestCopyRecommendation;
+  if (rec === null || rec.status !== 'recommended' || rec.recommendedHoldingId === null) {
+    return;
+  }
+  const db = getDb();
+  const slotsRepo = createBinderSlotsRepo(db);
+  const bindersRepo = createBindersRepo(db);
+  const holdingsRepo = createHoldingsRepo(db);
+  const cardsRepo = createCardsRepo(db);
+  const slot = await slotsRepo.get(row.slotId);
+  if (slot === undefined) return;
+  const holding = await holdingsRepo.get(rec.recommendedHoldingId);
+  if (holding === undefined) return;
+  const binder = await bindersRepo.get(row.binderId);
+  if (binder === undefined) return;
+  try {
+    await assignHoldingToSlot(
+      { bindersRepo, binderSlotsRepo: slotsRepo, holdingsRepo, cardsRepo },
+      slot,
+      holding,
+      binder.slotsPerPage as SlotsPerPage,
+    );
+  } catch (caught) {
+    const message =
+      caught instanceof Error
+        ? caught.message
+        : 'Plassering feilet uten melding.';
+    alert(`Kunne ikke plassere anbefalt holding: ${message}`);
     return;
   }
   state.cachedReport = null;

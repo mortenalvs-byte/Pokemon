@@ -1,5 +1,12 @@
 // Tiny helper for browser-native lazy image loading. Used by Browse rows
 // and Card Detail. Pure DOM construction — no network, no IndexedDB.
+//
+// PR 28 review patch (Phase 5) — when an image is missing or fails to
+// load we now render a visible "No image" placeholder instead of a
+// near-invisible dot. The placeholder keeps the same width/height so
+// the surrounding layout doesn't shift, and it carries a
+// `data-lazy-image-fallback` attribute so the dev-only image-audit
+// module can count failures across a real route walk.
 
 export interface LazyImageOptions {
   readonly src: string | null;
@@ -11,7 +18,7 @@ export interface LazyImageOptions {
 
 export function createLazyImage(options: LazyImageOptions): HTMLElement {
   if (options.src === null || options.src.length === 0) {
-    return createPlaceholder(options);
+    return createPlaceholder(options, 'missing');
   }
 
   const img = document.createElement('img');
@@ -29,17 +36,34 @@ export function createLazyImage(options: LazyImageOptions): HTMLElement {
     img.className = options.className;
   }
 
-  // On error, swap the failing <img> for a neutral placeholder so a
-  // broken thumbnail does not leave a crossed-out icon in a tabell row.
+  // On error, swap the failing <img> for a visible "No image"
+  // placeholder so a broken thumbnail does not leave a crossed-out
+  // icon (or, worse, an empty spot) in a table row.
   img.addEventListener('error', () => {
-    const placeholder = createPlaceholder(options);
+    const placeholder = createPlaceholder(options, 'load-error');
     img.replaceWith(placeholder);
+    // Dev-only image audit hook — `installImageAudit()` listens for
+    // this event so the QA harness can summarise broken images
+    // without the user manually scrolling through every route.
+    window.dispatchEvent(
+      new CustomEvent('pokemon:image-load-error', {
+        detail: {
+          src: options.src,
+          alt: options.alt,
+          ts: new Date().toISOString(),
+          route: window.location.hash.slice(1) || '<empty>',
+        },
+      }),
+    );
   });
 
   return img;
 }
 
-function createPlaceholder(options: LazyImageOptions): HTMLElement {
+function createPlaceholder(
+  options: LazyImageOptions,
+  reason: 'missing' | 'load-error',
+): HTMLElement {
   const placeholder = document.createElement('span');
   placeholder.className = 'lazy-image lazy-image--placeholder';
   if (options.className !== undefined) {
@@ -47,7 +71,8 @@ function createPlaceholder(options: LazyImageOptions): HTMLElement {
   }
   placeholder.setAttribute('role', 'img');
   placeholder.setAttribute('aria-label', options.alt);
-  placeholder.textContent = '·';
+  placeholder.setAttribute('data-lazy-image-fallback', reason);
+  placeholder.textContent = 'No image';
   if (options.width !== undefined) {
     placeholder.style.width = `${options.width}px`;
   }

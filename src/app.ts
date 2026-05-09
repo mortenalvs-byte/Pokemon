@@ -33,6 +33,17 @@ import { createPersonalPreferencesService } from './services/personal-preference
 // after the route has changed (PR 15A — fixes F-3 router race).
 type ViewMounter = (container: HTMLElement, signal: AbortSignal) => void;
 
+// PR 28 review patch — dev-only QA harness mounter. In production
+// builds the route exists in the type union but maps to the
+// dashboard so `#qa` does nothing; in dev it mounts the harness UI.
+// Vite injects `import.meta.env.DEV` at build time so the production
+// chunk never carries the QA module bundled in.
+const qaViewMounter: ViewMounter = import.meta.env.DEV
+  ? (container, signal): void => {
+      void import('./views/qa').then((mod) => mod.mountQaView(container, signal));
+    }
+  : mountDashboardView;
+
 const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
   dashboard: mountDashboardView,
   browse: mountBrowseView,
@@ -46,6 +57,7 @@ const VIEW_MOUNTERS: Record<Route, ViewMounter> = {
   'binder-detail': mountBinderDetailView,
   'lot-detail': mountLotDetailView,
   'master-gap': mountMasterGapView,
+  qa: qaViewMounter,
 };
 
 interface NavLink {
@@ -63,9 +75,29 @@ const NAV_LINKS: readonly NavLink[] = [
   { route: 'backup', label: 'Backup' },
   { route: 'settings', label: 'Innstillinger' },
 ];
+// PR 28 review patch (Phase 2) — the QA harness used to be a full
+// sidebar entry under `import.meta.env.DEV`, which made the dev/desktop
+// app feel like a test sandbox. Discoverability now goes through:
+//   - the "Developer QA" section inside `#settings` (dev-only)
+//   - the `g q` keyboard shortcut (dev-only)
+// `#qa` is still a documented route in `Route` and is still mounted
+// only when `import.meta.env.DEV` is true; production builds map it
+// to the dashboard mounter (verified by qa-route-prod-gating).
 
 export function mountApp(root: HTMLElement): void {
   root.innerHTML = renderShell();
+  // PR 28 review patch — dev-only boot-time persistence auto-audit.
+  // Runs once on every app boot in dev/preview builds, captures a
+  // full `PersistenceDiagnostic`, and appends it to a localStorage
+  // history (`pokemon.persistenceDiagBootHistory`). This lets us
+  // observe Launch A → B → C across cold restarts WITHOUT any UI
+  // navigation — the data is dumped to localStorage which survives
+  // the same way `pokemon.desktopPersistenceSentinel` does. We
+  // tree-shake the entire path out of production builds via the
+  // `import.meta.env.DEV` guard.
+  if (import.meta.env.DEV) {
+    void runBootTimePersistenceAudit();
+  }
   // PR 27 — apply personal preferences AFTER the shell is in place so
   // the brand text/href reflect the user's choices on first paint.
   // Default-start-route runs before `renderActiveView()` so the empty
@@ -94,6 +126,65 @@ export function mountApp(root: HTMLElement): void {
     renderActiveView();
     updateNavActive();
   });
+}
+
+// ---------------------------------------------------------------------
+// PR 28 review patch — dev-only boot-time persistence audit.
+
+const BOOT_AUDIT_HISTORY_KEY = 'pokemon.persistenceDiagBootHistory';
+const BOOT_AUDIT_HISTORY_LIMIT = 5;
+
+async function runBootTimePersistenceAudit(): Promise<void> {
+  try {
+    const { buildPersistenceDiagnostic } = await import(
+      './qa/desktop-persistence-diagnostic'
+    );
+    const diagnostic = await buildPersistenceDiagnostic(getDb());
+    const history = readBootAuditHistory();
+    history.push({
+      capturedAt: diagnostic.capturedAt,
+      origin: diagnostic.location.origin,
+      runtime: diagnostic.runtime,
+      dexie: diagnostic.dexie,
+      storeCounts: diagnostic.storeCounts,
+      firstHoldingIds: diagnostic.firstHoldingIds,
+      firstAppMetaKeys: diagnostic.firstAppMetaKeys,
+      storage: diagnostic.storage,
+      indexedDbDatabases: diagnostic.indexedDbDatabases,
+      localStorageSentinel: diagnostic.localStorageSentinel,
+      appMetaSentinel: diagnostic.appMetaSentinel,
+      notes: diagnostic.notes,
+    });
+    while (history.length > BOOT_AUDIT_HISTORY_LIMIT) history.shift();
+    writeBootAuditHistory(history);
+    // eslint-disable-next-line no-console -- dev-only diagnostic
+    console.log('[boot-audit]', diagnostic);
+  } catch (caught) {
+    // eslint-disable-next-line no-console -- dev-only diagnostic
+    console.error('[boot-audit] failed', caught);
+  }
+}
+
+function readBootAuditHistory(): unknown[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(BOOT_AUDIT_HISTORY_KEY);
+    if (raw === null) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+function writeBootAuditHistory(history: unknown[]): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(BOOT_AUDIT_HISTORY_KEY, JSON.stringify(history));
+  } catch {
+    // best-effort; storage may be full
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -173,6 +264,18 @@ const SIDEBAR_KEYSHORTCUT: Partial<Record<Route, string>> = {
   wishlist: 'g w',
 };
 
+// PR 28 — runtime detection. Tauri v2 injects `window.__TAURI_INTERNALS__`
+// before the app boots, which is the documented signal Tauri itself
+// uses. We never import a Tauri JS API — this is a pure feature flag,
+// safe in browser tests (where the property is absent) and safe in
+// the desktop shell (where it is present).
+export function isTauriRuntime(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    Object.prototype.hasOwnProperty.call(window, '__TAURI_INTERNALS__')
+  );
+}
+
 function renderShell(): string {
   const navItems = NAV_LINKS.map((link) => {
     const shortcut = SIDEBAR_KEYSHORTCUT[link.route];
@@ -198,6 +301,7 @@ function renderShell(): string {
       <header class="topbar" role="banner" data-region="topbar">
         <a class="topbar__brand" href="#dashboard" data-region="topbar-brand">Pokemon TCG Tracker</a>
         <div class="topbar__search" data-region="topbar-search"></div>
+        ${isTauriRuntime() ? '<span class="topbar__runtime-badge" data-region="runtime-badge" title="Kjører i Tauri desktop-shell">Desktop</span>' : ''}
         <div class="topbar__status" data-region="topbar-status" aria-live="polite"></div>
       </header>
       <div class="layout">

@@ -4432,3 +4432,140 @@ body {
   font-size: 13px;
   color: var(--color-fg);
 }
+
+/* ========================================================== */
+/* PR 28 — Desktop app shell                                    */
+/* ========================================================== */
+
+.topbar__runtime-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  margin-left: var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border-radius: var(--radius-1);
+  user-select: none;
+}
+
+/* ========================================================== */
+/* PR 28 — Best-copy recommendations                            */
+/* ========================================================== */
+
+.master-gap-row__recommendation {
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: var(--color-bg);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-1);
+}
+
+.master-gap-row__recommendation--manual,
+.master-gap-row__recommendation--no-candidates,
+.master-gap-row__recommendation--missing {
+  border-left-color: var(--color-fg-muted);
+  color: var(--color-fg-muted);
+  font-style: italic;
+}
+
+.master-gap-row__recommendation-heading {
+  margin: 0 0 4px;
+  font-weight: 600;
+  color: var(--color-fg);
+}
+
+.master-gap-row__recommendation-reasons {
+  list-style: disc inside;
+  margin: 0;
+  padding: 0;
+  color: var(--color-fg-muted);
+}
+
+.master-gap-row__recommendation-reasons li {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* ========================================================== */
+/* PR 28 — Recommended placement actions                        */
+/* ========================================================== */
+
+.master-gap-view__bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
+}
+
+.master-gap-view__bulk-recommended {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border: none;
+  border-radius: var(--radius-1);
+  cursor: pointer;
+}
+
+.master-gap-view__bulk-recommended:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.master-gap-view__bulk-recommended:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.master-gap-view__bulk-summary-line {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.master-gap-bulk-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 320px;
+}
+
+.master-gap-bulk-confirm h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.master-gap-bulk-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.master-gap-bulk-confirm__actions button {
+  padding: 6px 14px;
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  background: var(--color-surface);
+  color: var(--color-fg);
+}
+
+.master-gap-bulk-confirm__confirm {
+  background: var(--color-accent) !important;
+  color: var(--color-accent-fg) !important;
+  border-color: var(--color-accent) !important;
+}
+
+.master-gap-row__action--primary[data-action="place-recommended"] {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border-color: var(--color-accent);
+}

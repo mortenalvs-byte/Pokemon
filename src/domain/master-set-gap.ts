@@ -54,6 +54,20 @@ export interface MasterGapRequiredVariant {
   readonly reason: string;
 }
 
+/**
+ * PR 28 — best-copy overlay attached to ambiguous_owned rows. The
+ * row's `status` is unchanged (PR 25 classification semantics are
+ * locked); the recommendation is informational + drives the row's
+ * `Plasser anbefalt` button. `null` for non-ambiguous rows.
+ */
+export interface MasterGapBestCopyRecommendation {
+  readonly status: 'recommended' | 'manual_required' | 'no_candidates';
+  readonly recommendedHoldingId: string | null;
+  readonly score: number | null;
+  readonly reasons: readonly string[];
+  readonly candidateCount: number;
+}
+
 export interface MasterGapRow {
   readonly binderId: string;
   readonly binderName: string;
@@ -80,6 +94,13 @@ export interface MasterGapRow {
   readonly unmaterializedLotItemIds: readonly string[];
 
   readonly canPlaceDirectly: boolean;
+
+  /**
+   * PR 28 — populated only for `ambiguous_owned` rows; null elsewhere.
+   * Drives the master-gap UI's `Plasser anbefalt` button and the
+   * dashboard command-center split.
+   */
+  readonly bestCopyRecommendation: MasterGapBestCopyRecommendation | null;
 }
 
 export interface MasterGapBinderSummary {
@@ -101,6 +122,10 @@ export interface MasterGapBinderSummary {
   readonly completionPercent: number;
   readonly actionableCount: number;
   readonly canPlaceDirectlyCount: number;
+  /** PR 28 — ambiguous rows that have a deterministic best-copy winner. */
+  readonly recommendedAmbiguousCount: number;
+  /** PR 28 — ambiguous rows that still need a manual choice (ties / no candidates). */
+  readonly manualAmbiguousCount: number;
 }
 
 export interface MasterGapReport {
@@ -128,6 +153,10 @@ export interface MasterGapDashboardSummary {
   readonly inLotUnmaterialized: number;
   readonly invalidCount: number;
   readonly canPlaceDirectlyCount: number;
+  /** PR 28 — sum of binder.recommendedAmbiguousCount across binders. */
+  readonly recommendedAmbiguousCount: number;
+  /** PR 28 — sum of binder.manualAmbiguousCount across binders. */
+  readonly manualAmbiguousCount: number;
   readonly averageCompletionPercent: number;
   readonly closestBinder: MasterGapBinderSummary | null;
   readonly weakestBinder: MasterGapBinderSummary | null;
@@ -253,6 +282,66 @@ const REASONS: Record<MasterGapStatus, string> = {
   blank_slot: 'Slot uten målkort.',
 };
 
+// PR 29 review patch — contextual reasons. The operator's "Gap analysis
+// is poor/bad" review specifically mentioned that the row reasons were
+// generic. Each status now embeds the actionable detail (required
+// finish, candidate count, etc.) so the operator does not have to
+// cross-reference the row metadata to know what's blocking it.
+function finishLabel(f: CardFinish | null): string {
+  if (f === null) return 'ukjent variant';
+  if (f === 'reverse_holo') return 'reverse holo';
+  return f;
+}
+
+interface ReasonContext {
+  readonly required: MasterGapRequiredVariant;
+  readonly matchingHoldingsCount?: number;
+  readonly activeWishlistCount?: number;
+  readonly orderedWishlistCount?: number;
+  readonly unmaterializedLotItemCount?: number;
+  readonly assignedHoldingFinish?: string | null;
+}
+
+function buildReason(
+  status: MasterGapStatus,
+  ctx: ReasonContext,
+): string {
+  switch (status) {
+    case 'complete':
+      return REASONS.complete;
+    case 'missing':
+      return `Mangler. Trenger ${finishLabel(ctx.required.finish)}.`;
+    case 'owned_unplaced':
+      return `Du eier 1 ${finishLabel(ctx.required.finish)}-holding — kan plasseres direkte.`;
+    case 'ambiguous_owned': {
+      const n = ctx.matchingHoldingsCount ?? 0;
+      return `${n} holdings matcher (${finishLabel(ctx.required.finish)}). Velg manuelt.`;
+    }
+    case 'wishlist_ordered': {
+      const n = ctx.orderedWishlistCount ?? 0;
+      return `Bestilt fra ønskeliste (${n}).`;
+    }
+    case 'wishlist_wanted': {
+      const n = ctx.activeWishlistCount ?? 0;
+      return `Står på ønskeliste (${n}).`;
+    }
+    case 'in_lot_unmaterialized': {
+      const n = ctx.unmaterializedLotItemCount ?? 0;
+      return `Finnes i ${n} lot${n === 1 ? '' : 's'} — ikke materialisert.`;
+    }
+    case 'invalid_assignment':
+      return REASONS.invalid_assignment;
+    case 'invalid_variant':
+      return `Slotten krever ${finishLabel(ctx.required.finish)}, holding er ${ctx.assignedHoldingFinish ?? 'ukjent finish'}.`;
+    case 'unverified_variant_data':
+      return ctx.required.reason !== ''
+        ? `Mangler trygg variantdata: ${ctx.required.reason}`
+        : REASONS.unverified_variant_data;
+    case 'blank_slot':
+      return REASONS.blank_slot;
+  }
+}
+
 /**
  * Run the full classification for one slot. The service feeds in
  * pre-built lookups so a 1088-slot binder doesn't repeat the same
@@ -268,7 +357,7 @@ export function classifySlot(
     return {
       status: 'blank_slot',
       severity: 'info',
-      reason: REASONS.blank_slot,
+      reason: buildReason('blank_slot', { required: BLANK_REQUIRED }),
       required: BLANK_REQUIRED,
       matchingUnplacedHoldingIds: [],
       activeWishlistIds: [],
@@ -291,7 +380,7 @@ export function classifySlot(
       return {
         status: 'invalid_assignment',
         severity: 'critical',
-        reason: REASONS.invalid_assignment,
+        reason: buildReason('invalid_assignment', { required }),
         required,
         matchingUnplacedHoldingIds: [],
         activeWishlistIds: [],
@@ -307,7 +396,10 @@ export function classifySlot(
       return {
         status: 'invalid_variant',
         severity: 'critical',
-        reason: REASONS.invalid_variant,
+        reason: buildReason('invalid_variant', {
+          required,
+          assignedHoldingFinish: assigned.finish,
+        }),
         required,
         matchingUnplacedHoldingIds: [],
         activeWishlistIds: [],
@@ -319,7 +411,7 @@ export function classifySlot(
     return {
       status: 'complete',
       severity: 'ok',
-      reason: REASONS.complete,
+      reason: buildReason('complete', { required }),
       required,
       matchingUnplacedHoldingIds: [],
       activeWishlistIds: [],
@@ -334,7 +426,7 @@ export function classifySlot(
     return {
       status: 'unverified_variant_data',
       severity: 'warning',
-      reason: REASONS.unverified_variant_data,
+      reason: buildReason('unverified_variant_data', { required }),
       required,
       matchingUnplacedHoldingIds: [],
       activeWishlistIds: [],
@@ -389,7 +481,10 @@ export function classifySlot(
     return {
       status: 'owned_unplaced',
       severity: 'warning',
-      reason: REASONS.owned_unplaced,
+      reason: buildReason('owned_unplaced', {
+        required,
+        matchingHoldingsCount: 1,
+      }),
       required,
       matchingUnplacedHoldingIds,
       activeWishlistIds,
@@ -402,7 +497,10 @@ export function classifySlot(
     return {
       status: 'ambiguous_owned',
       severity: 'warning',
-      reason: REASONS.ambiguous_owned,
+      reason: buildReason('ambiguous_owned', {
+        required,
+        matchingHoldingsCount: matchingHoldings.length,
+      }),
       required,
       matchingUnplacedHoldingIds,
       activeWishlistIds,
@@ -415,7 +513,10 @@ export function classifySlot(
     return {
       status: 'wishlist_ordered',
       severity: 'info',
-      reason: REASONS.wishlist_ordered,
+      reason: buildReason('wishlist_ordered', {
+        required,
+        orderedWishlistCount: orderedWishlistIds.length,
+      }),
       required,
       matchingUnplacedHoldingIds,
       activeWishlistIds,
@@ -428,7 +529,10 @@ export function classifySlot(
     return {
       status: 'wishlist_wanted',
       severity: 'info',
-      reason: REASONS.wishlist_wanted,
+      reason: buildReason('wishlist_wanted', {
+        required,
+        activeWishlistCount: activeWishlistIds.length,
+      }),
       required,
       matchingUnplacedHoldingIds,
       activeWishlistIds,
@@ -441,7 +545,10 @@ export function classifySlot(
     return {
       status: 'in_lot_unmaterialized',
       severity: 'info',
-      reason: REASONS.in_lot_unmaterialized,
+      reason: buildReason('in_lot_unmaterialized', {
+        required,
+        unmaterializedLotItemCount: unmaterializedLotItemIds.length,
+      }),
       required,
       matchingUnplacedHoldingIds,
       activeWishlistIds,
@@ -453,7 +560,7 @@ export function classifySlot(
   return {
     status: 'missing',
     severity: 'warning',
-    reason: REASONS.missing,
+    reason: buildReason('missing', { required }),
     required,
     matchingUnplacedHoldingIds,
     activeWishlistIds,
@@ -479,6 +586,14 @@ interface BinderRowAggregate {
   invalidVariant: number;
   unverifiedVariantData: number;
   canPlaceDirectlyCount: number;
+  /** PR 28 — ambiguous rows with a deterministic best-copy winner. */
+  recommendedAmbiguousCount: number;
+  /**
+   * PR 28 — ambiguous rows that still need a manual choice. Includes
+   * the `manual_required` (top-score tie) and `no_candidates` cases
+   * so a single chip can communicate "still needs your eyes".
+   */
+  manualAmbiguousCount: number;
 }
 
 function emptyAggregate(): BinderRowAggregate {
@@ -495,12 +610,18 @@ function emptyAggregate(): BinderRowAggregate {
     invalidVariant: 0,
     unverifiedVariantData: 0,
     canPlaceDirectlyCount: 0,
+    recommendedAmbiguousCount: 0,
+    manualAmbiguousCount: 0,
   };
 }
 
 function addToAggregate(
   agg: BinderRowAggregate,
-  row: { status: MasterGapStatus; canPlaceDirectly: boolean },
+  row: {
+    status: MasterGapStatus;
+    canPlaceDirectly: boolean;
+    bestCopyRecommendation: MasterGapBestCopyRecommendation | null;
+  },
 ): void {
   if (row.status === 'blank_slot') return;
   agg.totalTargetSlots += 1;
@@ -526,6 +647,14 @@ function addToAggregate(
       break;
     case 'ambiguous_owned':
       agg.ambiguousOwned += 1;
+      // PR 28 — split ambiguous rows by whether best-copy can pick a
+      // deterministic winner. The classification stays
+      // `ambiguous_owned`; only the overlay decides.
+      if (row.bestCopyRecommendation?.status === 'recommended') {
+        agg.recommendedAmbiguousCount += 1;
+      } else {
+        agg.manualAmbiguousCount += 1;
+      }
       break;
     case 'invalid_assignment':
       agg.invalidAssignment += 1;
@@ -577,6 +706,8 @@ export function buildBinderSummary(
     completionPercent,
     actionableCount,
     canPlaceDirectlyCount: agg.canPlaceDirectlyCount,
+    recommendedAmbiguousCount: agg.recommendedAmbiguousCount,
+    manualAmbiguousCount: agg.manualAmbiguousCount,
   };
 }
 
@@ -598,6 +729,8 @@ export function buildDashboardSummary(
       inLotUnmaterialized: 0,
       invalidCount: 0,
       canPlaceDirectlyCount: 0,
+      recommendedAmbiguousCount: 0,
+      manualAmbiguousCount: 0,
       averageCompletionPercent: 0,
       closestBinder: null,
       weakestBinder: null,
@@ -614,6 +747,8 @@ export function buildDashboardSummary(
   let inLotUnmaterialized = 0;
   let invalidCount = 0;
   let canPlaceDirectlyCount = 0;
+  let recommendedAmbiguousCount = 0;
+  let manualAmbiguousCount = 0;
   for (const b of binders) {
     totalTargetSlots += b.totalTargetSlots;
     complete += b.complete;
@@ -625,6 +760,8 @@ export function buildDashboardSummary(
     inLotUnmaterialized += b.inLotUnmaterialized;
     invalidCount += b.invalidAssignment + b.invalidVariant;
     canPlaceDirectlyCount += b.canPlaceDirectlyCount;
+    recommendedAmbiguousCount += b.recommendedAmbiguousCount;
+    manualAmbiguousCount += b.manualAmbiguousCount;
   }
   // Closest = highest completion %, but only among binders that
   // actually have target slots and aren't yet at 100%. Weakest =
@@ -669,6 +806,8 @@ export function buildDashboardSummary(
     inLotUnmaterialized,
     invalidCount,
     canPlaceDirectlyCount,
+    recommendedAmbiguousCount,
+    manualAmbiguousCount,
     averageCompletionPercent,
     closestBinder,
     weakestBinder,

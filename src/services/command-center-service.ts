@@ -34,6 +34,12 @@ export type CommandCenterItemKind =
   | 'fix_invalid_slots'
   | 'place_owned_cards'
   | 'resolve_ambiguous_owned'
+  // PR 28 — split of `resolve_ambiguous_owned`. The recommended item
+  // covers ambiguous rows where best-copy picks a single trygg vinner
+  // (one click via the master-gap "Plasser anbefalt" button); the
+  // manual item covers rows that still need user judgement.
+  | 'place_recommended_copies'
+  | 'resolve_manual_ambiguous'
   | 'follow_up_ordered'
   | 'wishlist_missing'
   | 'materialize_lots'
@@ -73,11 +79,15 @@ const FOCUS_BOOSTS: Record<DashboardFocusMode, ReadonlySet<CommandCenterItemKind
   master_set: new Set([
     'fix_invalid_slots',
     'place_owned_cards',
+    'place_recommended_copies',
+    'resolve_manual_ambiguous',
     'resolve_ambiguous_owned',
     'wishlist_missing',
   ]),
   binder_work: new Set([
     'place_owned_cards',
+    'place_recommended_copies',
+    'resolve_manual_ambiguous',
     'resolve_ambiguous_owned',
     'collection_not_in_binder',
   ]),
@@ -165,7 +175,14 @@ export function buildCommandCenterItems(
         target: { type: 'hash', hash: '#master-gap' },
       });
     }
-    if (masterGap.ambiguousOwned > 0) {
+    // PR 28 — split ambiguous_owned into "safe to bulk-place" and
+    // "still manual". Falls back to the legacy single chip when the
+    // master-gap summary doesn't carry the new aggregate fields
+    // (defensive — older snapshots, third-party callers).
+    const recommended = masterGap.recommendedAmbiguousCount ?? 0;
+    const manual = masterGap.manualAmbiguousCount ?? 0;
+    if (recommended === 0 && manual === 0 && masterGap.ambiguousOwned > 0) {
+      // Legacy fallback (e.g. an older summary feeding the service).
       candidates.push({
         kind: 'resolve_ambiguous_owned',
         severity: 'warning',
@@ -176,6 +193,29 @@ export function buildCommandCenterItems(
         actionLabel: 'Åpne master gap',
         target: { type: 'hash', hash: '#master-gap' },
       });
+    } else {
+      if (recommended > 0) {
+        candidates.push({
+          kind: 'place_recommended_copies',
+          severity: 'warning',
+          title: 'Plasser anbefalte kopier',
+          message: `${recommended} slot har trygg anbefaling.`,
+          count: recommended,
+          actionLabel: 'Åpne master gap',
+          target: { type: 'hash', hash: '#master-gap' },
+        });
+      }
+      if (manual > 0) {
+        candidates.push({
+          kind: 'resolve_manual_ambiguous',
+          severity: 'warning',
+          title: 'Velg manuelt',
+          message: `${manual} slot trenger manuell vurdering.`,
+          count: manual,
+          actionLabel: 'Åpne master gap',
+          target: { type: 'hash', hash: '#master-gap' },
+        });
+      }
     }
     if (masterGap.wishlistOrdered > 0) {
       candidates.push({
@@ -317,16 +357,21 @@ const KIND_ORDER: ReadonlyMap<CommandCenterItemKind, number> = new Map<
 >([
   ['fix_invalid_slots', 0],
   ['place_owned_cards', 1],
-  ['resolve_ambiguous_owned', 2],
-  ['wishlist_missing', 3],
-  ['follow_up_ordered', 4],
-  ['materialize_lots', 5],
-  ['collection_not_in_binder', 6],
-  ['collection_duplicates', 7],
-  ['collection_missing_condition', 8],
-  ['collection_missing_value', 9],
-  ['backup_needed', 10],
-  ['sync_needed', 11],
+  // PR 28 — recommended copies sit BEFORE the manual ambiguous chip
+  // so the safe one-click bulk action is always closer to the top
+  // when both are present.
+  ['place_recommended_copies', 2],
+  ['resolve_manual_ambiguous', 3],
+  ['resolve_ambiguous_owned', 3],
+  ['wishlist_missing', 4],
+  ['follow_up_ordered', 5],
+  ['materialize_lots', 6],
+  ['collection_not_in_binder', 7],
+  ['collection_duplicates', 8],
+  ['collection_missing_condition', 9],
+  ['collection_missing_value', 10],
+  ['backup_needed', 11],
+  ['sync_needed', 12],
   ['all_clear', 99],
 ]);
 
