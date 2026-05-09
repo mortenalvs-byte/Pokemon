@@ -8,6 +8,139 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR 30 — Repo-driven full technical audit)
+PR 30 is a repo-driven evidence-based audit after the merged PR #29
+(Phase G — "whole-system action audit for the other 10+ views" was
+explicitly deferred to a follow-up PR per operator decision). The
+output is three permanent reference docs, one targeted security fix,
+and a regression-test pin for the next deferred follow-up.
+
+**Hard rules carried forward (verified at HEAD `762f105`):** no
+schema migration, no new IndexedDB store, no Tauri capability change
+(still `core:default` only), no backup format change, no new
+dependency, no new external API, no smart-placement scoring change,
+no PR 24 / PR 25 / PR 29 semantic change, no production gating
+weakening.
+
+#### Audit deliverables
+- `docs/PR30_FULL_TECHNICAL_AUDIT.md` — canonical audit. Every R1–R13
+  risk lane addressed with file:line evidence; 19 findings classified
+  using the `ID / Severity / Area / Evidence / Files / Why it matters
+  / Fixed in PR #30 / Tests / Status` template.
+- `docs/PR30_FULL_TECHNICAL_REPORT.md` — system health classification
+  (GREEN / YELLOW / RED per area), highest-risk modules, overgrown
+  files, and final technical recommendation.
+- `docs/PR30_CLEANUP_ROADMAP.md` — PR 31–38 with scope, files,
+  acceptance criteria, and "must not change" guards per PR.
+
+#### Fixed: F-CSV-1 — CSV / formula injection
+`src/utils/csv.ts` `escapeCell` previously only quoted commas,
+quotes, newlines and CRs. A user-typed holding note such as
+`=HYPERLINK("https://evil.test","click")` would land verbatim in
+the exported CSV. When the operator opened it in Excel / Sheets /
+Numbers / Calc the cell was interpreted as a live formula —
+classic OWASP "CSV / formula injection".
+
+The fix adds `guardFormulaInjection`: when a cell's first character
+is one of `=`, `+`, `-`, `@`, `\t`, `\r`, `\n`, the value is
+prefixed with a single apostrophe (`'`). The apostrophe is the
+documented spreadsheet convention for "render as text" and is
+stripped on display by every major spreadsheet app. Headers are
+never user data and pass through unprefixed; RFC 4180 quoting
+still composes on top.
+
+The change is in the canonical CSV writer, so every exporter
+inherits the protection: `binder-csv-export`, `lot-csv-export`,
+and the four `mvp-csv-export` flows (collection, wishlist,
+duplicates, missing-cards). 14 regression cases cover every
+class of payload, plus a Norwegian-character roundtrip and a
+"safe values pass through unchanged" regression guard.
+
+#### Findings deferred (with reason and successor PR)
+- F-BACKUP-VALID-1 (MEDIUM) — `validateBackup` in `src/db/restore.ts`
+  checks shape and IDs only; per-record field types are NOT
+  validated. Pinned with `tests/pr30-backup-deep-validation.test.ts`
+  so PR 33 has a fail-then-fix baseline. Successor: **PR 33**.
+- F-TAURI-CSP-1 (LOW) — `style-src 'unsafe-inline'` is required
+  today by `createLazyImage`'s inline width/height. Successor:
+  **PR 38** (CSS rewrite + CSP tightening).
+- F-TAURI-CSP-2 (LOW) — `connect-src 'self' https:` is broader
+  than required. Successor: **PR 38**.
+- F-PERF-LISTLIVE-N-PLUS-1 (INFO) — bulk recommended-placement
+  re-walks `binderSlotsRepo.listLive()` per row. Successor: **PR 38**.
+- F-PROD-GATE-1 (LOW) — `tests/qa-route-prod-gating.test.ts` skips
+  silently when `dist/` is missing. Documented + guarded.
+
+#### Findings verified safe
+- R1 (route/view listener leaks) — every route mount uses the
+  AbortController signal; PR 15A F-3 invariant intact.
+- R2 (global search lifetime) — single AbortController gates every
+  global listener; `searchRequestSeq` stale-result guard in place;
+  receive button only renders when `receiveCandidateCount > 0`.
+- R3 (cards/sets cache) — WeakMap by Dexie instance; invalidated
+  after every repo write, sync commit, restore commit, and
+  local-fixture import.
+- R6 (XSS / innerHTML) — 31 `innerHTML` uses, all static skeletons;
+  dynamic data goes through `createElement` + `textContent`.
+- R7 (dev-only QA tooling) — 38 banned strings in
+  `tests/qa-route-prod-gating.test.ts`; bundle re-built at HEAD
+  shows 0 occurrences.
+- R8 capabilities — `core:default` only; zero custom Rust commands;
+  bundle target MSI only; `npm run desktop:build` PASSES at HEAD.
+- R9 (slot assignment) — `assignHoldingToSlot` is the only writer
+  for `binderSlots.holdingId`; PR 24 invariants intact;
+  PR 29 binder-detail action audit (16 cases) remains green.
+- R10 (wishlist receive) — every receive path goes through
+  `wishlist-receive-service.markWishlistCandidatesReceived`;
+  match key is `cardId + finish + active + live`.
+- R11 (performance) — page-rendering contracts intact (binder-detail
+  16-tile pages, lot-detail pagination, master-gap O(store) lookups).
+- R12 (accessibility) — `role=dialog` + `showModal()`, `aria-current`
+  on active nav, `label[for]` pairs, `aria-live` on validation.
+- R13 (dependencies) — `npm audit --omit=dev` and `npm audit` both
+  report 0 vulnerabilities. Single production dependency: `dexie ^4.4.2`.
+
+#### Touched / new files
+- `docs/PR30_FULL_TECHNICAL_AUDIT.md` — new (canonical audit).
+- `docs/PR30_FULL_TECHNICAL_REPORT.md` — new (health report).
+- `docs/PR30_CLEANUP_ROADMAP.md` — new (PR 31–38 roadmap).
+- `src/utils/csv.ts` — `guardFormulaInjection` + serializeCsv body
+  routes user-data cells through the guard. Headers untouched.
+- `tests/pr30-csv-formula-injection.test.ts` — new (14 cases).
+- `tests/pr30-backup-deep-validation.test.ts` — new (14 cases,
+  pin-then-flip baseline for PR 33).
+
+#### Verification (measured against HEAD before merge)
+```
+npm run typecheck          PASS
+npm test                   119 files / 1202 / 1202 PASS  (was 117 / 1174 / 1174 → +2 files / +28 cases)
+npm run qa:browser         11 files / 92 / 92 PASS
+npm run build              460.28 KB JS / 120.58 KB gzip   (was 460.15 / 120.51 → +130 bytes JS, +70 bytes gzip)
+npm run desktop:build      PASS — exe 3.4 MB + MSI 1.9 MB (release build 1m 21s)
+npm audit --omit=dev       0 vulnerabilities
+npm audit                  0 vulnerabilities
+qa-route-prod-gating       3/3 PASS, 0 banned strings in dist/
+PR 29 binder-detail        16/16 PASS (unchanged at HEAD)
+```
+
+Bundle delta is the entire footprint of the `guardFormulaInjection`
+helper plus the routing call inside `serializeCsv` — well below the
++5 KB gzip stop-condition for security fixes.
+
+Verification numbers are mirrored in
+`docs/PR30_FULL_TECHNICAL_AUDIT.md` § Final verification.
+
+#### Out of scope
+- ❌ Phase G as a per-view audit-suite rebuild. Section 15 of the
+  audit doc explains why the wider repo-driven sweep is the more
+  useful output (every action surface PR 29's pattern would catch
+  is already covered by an existing test or has a known canonical
+  writer).
+- ❌ Schema / store / Tauri capability / backup format changes.
+- ❌ Broad cleanup work — moved to PR 31–38 per `PR30_CLEANUP_ROADMAP.md`.
+- ❌ Pricing / value layer, scanner, CSV import, cloud, login —
+  unchanged from PR 28's hard-rule list.
+
 ### Added (PR 28 — Desktop app + smart placement engine)
 PR 28 lands two big changes in one bounded PR:
 
