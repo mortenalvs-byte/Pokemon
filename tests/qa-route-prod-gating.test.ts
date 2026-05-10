@@ -131,10 +131,10 @@ describe('qa route — production gating', () => {
       //   - devAutoMaxStress / Result
       //   - desktopPersistenceSentinel, desktopPersistenceBootCounter
       ...ALL_DEV_ONLY_STORAGE_KEYS,
-      // The Dexie appMeta sentinel key is intentionally NOT in
-      // ALL_DEV_ONLY_STORAGE_KEYS (it's a Dexie key, not a
-      // pokemon.*-prefixed localStorage key); pin it here.
-      'desktopPersistenceSentinel',
+      // (The Dexie appMeta sentinel key 'desktopPersistenceSentinel'
+      // is intentionally NOT in ALL_DEV_ONLY_STORAGE_KEYS — it's a
+      // Dexie key, not a pokemon.*-prefixed localStorage key. It is
+      // already pinned in the persistence diagnostic block above.)
     ];
     for (const needle of banned) {
       expect(
