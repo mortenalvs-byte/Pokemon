@@ -43,8 +43,13 @@ import { createSetsRepo } from '../src/repositories/sets-repo';
 import { createWishlistRepo } from '../src/repositories/wishlist-repo';
 import { createMasterSetGapService } from '../src/services/master-set-gap-service';
 import { closeAndDelete } from './helpers/fresh-db';
+// PR 36 — shared fixture / DOM helpers. Replaces the local
+// `makeCard(n)` / `holdingInput(...)` / `settle(...)` declarations
+// that lived inline in this file before the cleanup.
+import { makeCard as helperMakeCard } from './helpers/cards';
+import { holdingInput } from './helpers/holdings';
+import { settle } from './helpers/dom';
 import type { CardRecord, SetRecord } from '../src/domain/types';
-import type { HoldingInput } from '../src/domain/validators';
 
 // `download` module is mocked so we can assert the CSV click path
 // invoked it with the expected filename and content. Mocking is
@@ -55,8 +60,21 @@ vi.mock('../src/utils/download', () => ({
 }));
 import * as downloadModule from '../src/utils/download';
 
-async function settle(ms = 80): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
+// Tiny adapter so call-sites stay `makeCard(n)`. Test-specific
+// fields (Stress-prefixed name, per-row image URLs, dated
+// updatedAt) are passed as overrides; the helper supplies the
+// boilerplate (setId derivation, default tcgplayer.prices for
+// the five common variant keys, supertype/subtypes defaults).
+function makeCard(n: number): CardRecord {
+  return helperMakeCard(`stress-${n}`, {
+    overrides: {
+      name: `Stress Card ${n}`,
+      number: String(n),
+      imageSmall: 'https://example.test/i.png',
+      imageLarge: 'https://example.test/l.png',
+      updatedAt: '2026-05-09T00:00:00.000Z',
+    },
+  });
 }
 
 // ─── Stress-shape fixture ────────────────────────────────────────────
@@ -94,66 +112,6 @@ const sampleSet: SetRecord = {
   logoUrl: null,
   updatedAt: '2026-05-09T00:00:00.000Z',
 };
-
-function makeCard(n: number): CardRecord {
-  return {
-    id: `stress-${n}`,
-    setId: 'stress',
-    name: `Stress Card ${n}`,
-    number: String(n),
-    rarity: 'Common',
-    supertype: 'Pokémon',
-    subtypes: [],
-    types: [],
-    imageSmall: 'https://example.test/i.png',
-    imageLarge: 'https://example.test/l.png',
-    tcgplayer: {
-      prices: {
-        normal: { market: 1 },
-        holofoil: { market: 1 },
-        reverseHolofoil: { market: 1 },
-        '1stEditionNormal': { market: 1 },
-        '1stEditionHolofoil': { market: 1 },
-      },
-    },
-    cardmarket: null,
-    updatedAt: '2026-05-09T00:00:00.000Z',
-  };
-}
-
-function holdingInput(
-  cardId: string,
-  overrides: Partial<HoldingInput> = {},
-): HoldingInput {
-  return {
-    cardId,
-    quantity: 1,
-    conditionType: 'raw',
-    rawCondition: 'NM',
-    gradingCompany: null,
-    grade: null,
-    certNumber: null,
-    certUrl: null,
-    gradedDate: null,
-    finish: 'normal',
-    edition: 'unlimited',
-    language: 'en',
-    purchasePrice: null,
-    purchaseCurrency: null,
-    estimatedValue: null,
-    valueCurrency: null,
-    valueSource: 'unknown',
-    valueNote: null,
-    valueUpdatedAt: null,
-    source: 'manual',
-    note: null,
-    specialVariant: false,
-    tags: [],
-    lotId: null,
-    status: 'owned',
-    ...overrides,
-  };
-}
 
 interface StressFixture {
   readonly binderId: string;

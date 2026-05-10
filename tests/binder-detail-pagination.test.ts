@@ -27,6 +27,17 @@ import type {
 } from '../src/domain/types';
 import type { PokemonTrackerDB } from '../src/db/database';
 
+// PR 36 note: this file's local `settle(ms = 100)` and
+// `seedBinder(pages)` are intentionally NOT lifted to the shared
+// helpers. `settle` here defaults to 100 ms (vs the shared 80 ms)
+// because PR 20's 1088-slot binder render needs longer to settle in
+// jsdom; bare `settle()` calls here would flake at 80 ms.
+// `seedBinder(pages)` does direct `db.binderSlots.bulkAdd` to avoid
+// the per-slot service round-trip — that bypass is the whole point
+// of the PR 20 performance test, so the shared `seedBinderWithSlots`
+// helper (which goes through the service) would defeat the perf
+// assertion.
+
 async function settle(ms = 100): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
