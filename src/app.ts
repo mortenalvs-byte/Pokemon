@@ -87,16 +87,15 @@ const NAV_LINKS: readonly NavLink[] = [
 export function mountApp(root: HTMLElement): void {
   root.innerHTML = renderShell();
   // PR 28 review patch — dev-only boot-time persistence auto-audit.
-  // Runs once on every app boot in dev/preview builds, captures a
-  // full `PersistenceDiagnostic`, and appends it to a localStorage
-  // history (`pokemon.persistenceDiagBootHistory`). This lets us
-  // observe Launch A → B → C across cold restarts WITHOUT any UI
-  // navigation — the data is dumped to localStorage which survives
-  // the same way `pokemon.desktopPersistenceSentinel` does. We
-  // tree-shake the entire path out of production builds via the
-  // `import.meta.env.DEV` guard.
+  // PR 32 — implementation lives in `src/qa/dev-runtime.ts` along
+  // with the rest of the dev-only QA orchestration. Dynamic-imported
+  // here under `if (import.meta.env.DEV)` so production builds drop
+  // the entire chain (the call site, the dev-runtime chunk, and the
+  // storage-keys registry it imports) via Vite dead-code elimination.
   if (import.meta.env.DEV) {
-    void runBootTimePersistenceAudit();
+    void import('./qa/dev-runtime').then((mod) =>
+      mod.runBootTimePersistenceAudit(),
+    );
   }
   // PR 27 — apply personal preferences AFTER the shell is in place so
   // the brand text/href reflect the user's choices on first paint.
@@ -126,65 +125,6 @@ export function mountApp(root: HTMLElement): void {
     renderActiveView();
     updateNavActive();
   });
-}
-
-// ---------------------------------------------------------------------
-// PR 28 review patch — dev-only boot-time persistence audit.
-
-const BOOT_AUDIT_HISTORY_KEY = 'pokemon.persistenceDiagBootHistory';
-const BOOT_AUDIT_HISTORY_LIMIT = 5;
-
-async function runBootTimePersistenceAudit(): Promise<void> {
-  try {
-    const { buildPersistenceDiagnostic } = await import(
-      './qa/desktop-persistence-diagnostic'
-    );
-    const diagnostic = await buildPersistenceDiagnostic(getDb());
-    const history = readBootAuditHistory();
-    history.push({
-      capturedAt: diagnostic.capturedAt,
-      origin: diagnostic.location.origin,
-      runtime: diagnostic.runtime,
-      dexie: diagnostic.dexie,
-      storeCounts: diagnostic.storeCounts,
-      firstHoldingIds: diagnostic.firstHoldingIds,
-      firstAppMetaKeys: diagnostic.firstAppMetaKeys,
-      storage: diagnostic.storage,
-      indexedDbDatabases: diagnostic.indexedDbDatabases,
-      localStorageSentinel: diagnostic.localStorageSentinel,
-      appMetaSentinel: diagnostic.appMetaSentinel,
-      notes: diagnostic.notes,
-    });
-    while (history.length > BOOT_AUDIT_HISTORY_LIMIT) history.shift();
-    writeBootAuditHistory(history);
-    // eslint-disable-next-line no-console -- dev-only diagnostic
-    console.log('[boot-audit]', diagnostic);
-  } catch (caught) {
-    // eslint-disable-next-line no-console -- dev-only diagnostic
-    console.error('[boot-audit] failed', caught);
-  }
-}
-
-function readBootAuditHistory(): unknown[] {
-  if (typeof localStorage === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(BOOT_AUDIT_HISTORY_KEY);
-    if (raw === null) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed;
-  } catch {
-    return [];
-  }
-}
-
-function writeBootAuditHistory(history: unknown[]): void {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.setItem(BOOT_AUDIT_HISTORY_KEY, JSON.stringify(history));
-  } catch {
-    // best-effort; storage may be full
-  }
 }
 
 // ---------------------------------------------------------------------

@@ -28,14 +28,36 @@
 //
 // Production-gating ban list in
 // `tests/qa-route-prod-gating.test.ts` continues to grep the
-// production bundle for every dev-only identifier here. PR 31 adds
-// `runDevAutoTriggersAfterInit` to that list.
+// production bundle for every dev-only identifier here. PR 31 added
+// `runDevAutoTriggersAfterInit` to that list. PR 32 added
+// `runBootTimePersistenceAudit` (lifted from `src/app.ts`).
+//
+// PR 32 — every `pokemon.*` localStorage key string lives in
+// `src/domain/storage-keys.ts`. This file imports them so the
+// strings have one source of truth; the import chain stays
+// dev-only (main.ts dynamic-imports this module under
+// `if (import.meta.env.DEV)`), so storage-keys.ts and its values
+// continue to be tree-shaken from production.
 
-const CONSOLE_HISTORY_KEY = 'pokemon.consoleAuditHistory';
+import {
+  CONSOLE_AUDIT_HISTORY_KEY,
+  DEV_AUTO_FIXTURE_IMPORT_KEY,
+  DEV_AUTO_FIXTURE_IMPORT_RESULT_KEY,
+  DEV_AUTO_IMAGE_AUDIT_KEY,
+  DEV_AUTO_IMAGE_AUDIT_RESULT_KEY,
+  DEV_AUTO_MAX_STRESS_KEY,
+  DEV_AUTO_MAX_STRESS_RESULT_KEY,
+  DEV_AUTO_PUBLIC_SYNC_KEY,
+  DEV_AUTO_PUBLIC_SYNC_RESULT_KEY,
+  PERSISTENCE_DIAG_BOOT_HISTORY_KEY,
+  ROUTE_WALK_HISTORY_KEY,
+} from '../domain/storage-keys';
+import { SYNC_STATUS_CHANGED_EVENT } from '../domain/events';
+
 const CONSOLE_HISTORY_LIMIT = 200;
-const ROUTE_WALK_KEY = 'pokemon.routeWalkHistory';
 const ROUTE_WALK_DELAY_MS = 1500;
 const ROUTE_WALK_INITIAL_DELAY_MS = 5000;
+const BOOT_AUDIT_HISTORY_LIMIT = 5;
 const AUDIT_ROUTES: ReadonlyArray<string> = [
   'dashboard',
   'browse',
@@ -87,7 +109,7 @@ export function installConsoleAudit(): void {
   };
   const push = (level: string, message: string): void => {
     try {
-      const raw = localStorage.getItem(CONSOLE_HISTORY_KEY);
+      const raw = localStorage.getItem(CONSOLE_AUDIT_HISTORY_KEY);
       const arr: Array<{
         ts: string;
         route: string;
@@ -101,7 +123,7 @@ export function installConsoleAudit(): void {
         message,
       });
       while (arr.length > CONSOLE_HISTORY_LIMIT) arr.shift();
-      localStorage.setItem(CONSOLE_HISTORY_KEY, JSON.stringify(arr));
+      localStorage.setItem(CONSOLE_AUDIT_HISTORY_KEY, JSON.stringify(arr));
     } catch {
       // best-effort
     }
@@ -136,7 +158,7 @@ function kickOffAutoRouteWalk(): void {
   // Skip the walk on subsequent refreshes — each tauri-dev cold boot
   // gets exactly one walk, so the localStorage history stays diffable.
   // The Node reader resets the flag between runs.
-  const existing = localStorage.getItem(ROUTE_WALK_KEY);
+  const existing = localStorage.getItem(ROUTE_WALK_HISTORY_KEY);
   if (existing !== null) {
     // Already walked — boot-audit history captures what we need.
     return;
@@ -150,7 +172,7 @@ function kickOffAutoRouteWalk(): void {
         // Restore original hash and persist the walk record.
         window.location.hash = startHash || 'dashboard';
         try {
-          localStorage.setItem(ROUTE_WALK_KEY, JSON.stringify(walk));
+          localStorage.setItem(ROUTE_WALK_HISTORY_KEY, JSON.stringify(walk));
         } catch {
           // best-effort
         }
@@ -199,13 +221,13 @@ async function runDevAutoFixtureImport(): Promise<void> {
   // `src/main.ts`.
   if (
     typeof localStorage === 'undefined' ||
-    typeof localStorage.getItem('pokemon.devAutoFixtureImport') !== 'string'
+    typeof localStorage.getItem(DEV_AUTO_FIXTURE_IMPORT_KEY) !== 'string'
   ) {
     return;
   }
-  const fixturePath = localStorage.getItem('pokemon.devAutoFixtureImport');
+  const fixturePath = localStorage.getItem(DEV_AUTO_FIXTURE_IMPORT_KEY);
   try {
-    localStorage.removeItem('pokemon.devAutoFixtureImport');
+    localStorage.removeItem(DEV_AUTO_FIXTURE_IMPORT_KEY);
   } catch {
     // best-effort
   }
@@ -232,7 +254,7 @@ async function runDevAutoFixtureImport(): Promise<void> {
     };
     try {
       localStorage.setItem(
-        'pokemon.devAutoFixtureImportResult',
+        DEV_AUTO_FIXTURE_IMPORT_RESULT_KEY,
         JSON.stringify(payload),
       );
     } catch {
@@ -243,8 +265,8 @@ async function runDevAutoFixtureImport(): Promise<void> {
     // The fixture import bypasses `handleSyncNow`, so the
     // dashboard / topbar listeners that fire on
     // `SYNC_STATUS_CHANGED_EVENT` need a manual nudge to refresh
-    // their cached snapshot.
-    const { SYNC_STATUS_CHANGED_EVENT } = await import('../views/settings');
+    // their cached snapshot. PR 32: imported statically from the
+    // event registry rather than dynamic-importing `views/settings`.
     window.dispatchEvent(new CustomEvent(SYNC_STATUS_CHANGED_EVENT));
   } catch (caught) {
     const failure = {
@@ -256,7 +278,7 @@ async function runDevAutoFixtureImport(): Promise<void> {
     };
     try {
       localStorage.setItem(
-        'pokemon.devAutoFixtureImportResult',
+        DEV_AUTO_FIXTURE_IMPORT_RESULT_KEY,
         JSON.stringify(failure),
       );
     } catch {
@@ -274,12 +296,12 @@ async function runDevAutoImageAudit(): Promise<void> {
   // `pokemon.devAutoImageAuditResult`.
   if (
     typeof localStorage === 'undefined' ||
-    localStorage.getItem('pokemon.devAutoImageAudit') !== '1'
+    localStorage.getItem(DEV_AUTO_IMAGE_AUDIT_KEY) !== '1'
   ) {
     return;
   }
   try {
-    localStorage.removeItem('pokemon.devAutoImageAudit');
+    localStorage.removeItem(DEV_AUTO_IMAGE_AUDIT_KEY);
   } catch {
     // best-effort
   }
@@ -300,7 +322,7 @@ async function runDevAutoImageAudit(): Promise<void> {
     };
     try {
       localStorage.setItem(
-        'pokemon.devAutoImageAuditResult',
+        DEV_AUTO_IMAGE_AUDIT_RESULT_KEY,
         JSON.stringify(payload),
       );
     } catch {
@@ -324,14 +346,14 @@ async function runDevAutoPublicSync(): Promise<void> {
   // count.
   if (
     typeof localStorage === 'undefined' ||
-    localStorage.getItem('pokemon.devAutoPublicSync') !== '1'
+    localStorage.getItem(DEV_AUTO_PUBLIC_SYNC_KEY) !== '1'
   ) {
     return;
   }
   // Clear the flag immediately so a second boot doesn't re-run
   // the sync before the operator inspects the result.
   try {
-    localStorage.removeItem('pokemon.devAutoPublicSync');
+    localStorage.removeItem(DEV_AUTO_PUBLIC_SYNC_KEY);
   } catch {
     // best-effort
   }
@@ -355,7 +377,7 @@ async function runDevAutoPublicSync(): Promise<void> {
   };
   try {
     localStorage.setItem(
-      'pokemon.devAutoPublicSyncResult',
+      DEV_AUTO_PUBLIC_SYNC_RESULT_KEY,
       JSON.stringify(summary),
     );
   } catch {
@@ -373,12 +395,12 @@ async function runDevAutoMaxStress(): Promise<void> {
   // can read it without any UI driving.
   if (
     typeof localStorage === 'undefined' ||
-    localStorage.getItem('pokemon.devAutoMaxStress') !== '1'
+    localStorage.getItem(DEV_AUTO_MAX_STRESS_KEY) !== '1'
   ) {
     return;
   }
   try {
-    localStorage.removeItem('pokemon.devAutoMaxStress');
+    localStorage.removeItem(DEV_AUTO_MAX_STRESS_KEY);
   } catch {
     // best-effort
   }
@@ -396,7 +418,7 @@ async function runDevAutoMaxStress(): Promise<void> {
   };
   try {
     localStorage.setItem(
-      'pokemon.devAutoMaxStressResult',
+      DEV_AUTO_MAX_STRESS_RESULT_KEY,
       JSON.stringify(stressPayload),
     );
   } catch {
@@ -404,4 +426,72 @@ async function runDevAutoMaxStress(): Promise<void> {
   }
   // eslint-disable-next-line no-console -- dev-only diagnostic
   console.log('[dev-auto-stress] done', stressPayload);
+}
+
+// ---------------------------------------------------------------------
+// Boot-time persistence audit (PR 32 — lifted from `src/app.ts`).
+//
+// Runs once on every app boot in dev/preview builds, captures a
+// full `PersistenceDiagnostic`, and appends it to a localStorage
+// history. Lets us observe Launch A → B → C across cold restarts
+// WITHOUT any UI navigation — the data is dumped to localStorage
+// which survives the same way `pokemon.desktopPersistenceSentinel`
+// does. Tree-shaken from production builds via `src/app.ts`'s
+// `if (import.meta.env.DEV)` dynamic-import gate.
+
+export async function runBootTimePersistenceAudit(): Promise<void> {
+  try {
+    const { buildPersistenceDiagnostic } = await import(
+      './desktop-persistence-diagnostic'
+    );
+    const { getDb } = await import('../db/database');
+    const diagnostic = await buildPersistenceDiagnostic(getDb());
+    const history = readBootAuditHistory();
+    history.push({
+      capturedAt: diagnostic.capturedAt,
+      origin: diagnostic.location.origin,
+      runtime: diagnostic.runtime,
+      dexie: diagnostic.dexie,
+      storeCounts: diagnostic.storeCounts,
+      firstHoldingIds: diagnostic.firstHoldingIds,
+      firstAppMetaKeys: diagnostic.firstAppMetaKeys,
+      storage: diagnostic.storage,
+      indexedDbDatabases: diagnostic.indexedDbDatabases,
+      localStorageSentinel: diagnostic.localStorageSentinel,
+      appMetaSentinel: diagnostic.appMetaSentinel,
+      notes: diagnostic.notes,
+    });
+    while (history.length > BOOT_AUDIT_HISTORY_LIMIT) history.shift();
+    writeBootAuditHistory(history);
+    // eslint-disable-next-line no-console -- dev-only diagnostic
+    console.log('[boot-audit]', diagnostic);
+  } catch (caught) {
+    // eslint-disable-next-line no-console -- dev-only diagnostic
+    console.error('[boot-audit] failed', caught);
+  }
+}
+
+function readBootAuditHistory(): unknown[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(PERSISTENCE_DIAG_BOOT_HISTORY_KEY);
+    if (raw === null) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+function writeBootAuditHistory(history: unknown[]): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(
+      PERSISTENCE_DIAG_BOOT_HISTORY_KEY,
+      JSON.stringify(history),
+    );
+  } catch {
+    // best-effort; storage may be full
+  }
 }

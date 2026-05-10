@@ -8,6 +8,8 @@
 // `data-lazy-image-fallback` attribute so the dev-only image-audit
 // module can count failures across a real route walk.
 
+import { IMAGE_LOAD_ERROR_EVENT } from '../domain/events';
+
 export interface LazyImageOptions {
   readonly src: string | null;
   readonly alt: string;
@@ -46,7 +48,7 @@ export function createLazyImage(options: LazyImageOptions): HTMLElement {
     // this event so the QA harness can summarise broken images
     // without the user manually scrolling through every route.
     window.dispatchEvent(
-      new CustomEvent('pokemon:image-load-error', {
+      new CustomEvent(IMAGE_LOAD_ERROR_EVENT, {
         detail: {
           src: options.src,
           alt: options.alt,

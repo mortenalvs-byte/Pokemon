@@ -23,13 +23,24 @@
 import { Dexie } from 'dexie';
 
 import type { PokemonTrackerDB } from '../db/database';
+// PR 32 — canonical localStorage keys live in
+// `src/domain/storage-keys.ts`; re-exported here so existing
+// import paths (`PERSISTENCE_SENTINEL_LOCAL_STORAGE_KEY`,
+// `PERSISTENCE_BOOT_COUNTER_LOCAL_STORAGE_KEY`) keep working.
+// `PERSISTENCE_SENTINEL_APP_META_KEY` is intentionally NOT a
+// `pokemon.*`-prefixed localStorage key — it's the Dexie
+// `appMeta` key, so it stays defined here.
+import {
+  DESKTOP_PERSISTENCE_BOOT_COUNTER_KEY,
+  DESKTOP_PERSISTENCE_SENTINEL_KEY,
+} from '../domain/storage-keys';
 
 export const PERSISTENCE_SENTINEL_LOCAL_STORAGE_KEY =
-  'pokemon.desktopPersistenceSentinel';
+  DESKTOP_PERSISTENCE_SENTINEL_KEY;
 export const PERSISTENCE_SENTINEL_APP_META_KEY =
   'desktopPersistenceSentinel';
 export const PERSISTENCE_BOOT_COUNTER_LOCAL_STORAGE_KEY =
-  'pokemon.desktopPersistenceBootCounter';
+  DESKTOP_PERSISTENCE_BOOT_COUNTER_KEY;
 
 // ---------------------------------------------------------------------
 // Public types — also consumed by the QA report.

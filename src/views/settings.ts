@@ -38,20 +38,18 @@ import { createSetsRepo } from '../repositories/sets-repo';
 import { createSettingsRepo } from '../repositories/settings-repo';
 import { createPersonalPreferencesService } from '../services/personal-preferences-service';
 
-// Dispatched after every sync attempt — both successful and failed.
-// Listeners (currently the topbar; later possibly the dashboard) read
-// `appMeta.lastSyncAt` and `appMeta.lastSyncStatus` to decide what to
-// show. Using one event for both outcomes means the chip never gets
-// stuck on a stale "ok" state after a subsequent failure.
-export const SYNC_STATUS_CHANGED_EVENT = 'pokemon:sync-status-changed';
-
-// PR 27 — dispatched after the user saves a personal-app preference.
-// The app shell listens for this to refresh the brand text/href and
-// the topbar shortcut-help button visibility without remounting the
-// whole app. Master-gap and dashboard refresh themselves through the
-// existing `USER_DATA_CHANGED_EVENT` plus a per-mount preferences
-// load on next render.
-export const SETTINGS_CHANGED_EVENT = 'pokemon:settings-changed';
+// PR 32 — both event names live in `src/domain/events.ts`. Re-exported
+// here so existing import paths (`import { SYNC_STATUS_CHANGED_EVENT }
+// from './views/settings'`) keep working. Same dispatchers, same
+// listeners, same string values — only the source-of-truth file moved.
+export {
+  SYNC_STATUS_CHANGED_EVENT,
+  SETTINGS_CHANGED_EVENT,
+} from '../domain/events';
+import {
+  SYNC_STATUS_CHANGED_EVENT,
+  SETTINGS_CHANGED_EVENT,
+} from '../domain/events';
 
 // `signal` is accepted for ViewMounter signature parity (PR 15A — F-3).
 // Settings registers no window listeners; the signal is unused.
