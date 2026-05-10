@@ -16,13 +16,13 @@ import { createCardsRepo } from '../src/repositories/cards-repo';
 import { createHoldingsRepo } from '../src/repositories/holdings-repo';
 import { createSetsRepo } from '../src/repositories/sets-repo';
 import { closeAndDelete } from './helpers/fresh-db';
+// PR 36 — shared fixture / DOM helpers.
+import { makeCard as helperMakeCard } from './helpers/cards';
+import { holdingInput } from './helpers/holdings';
+import { settle } from './helpers/dom';
 import type { CardRecord, SetRecord } from '../src/domain/types';
 import type { HoldingInput } from '../src/domain/validators';
 import type { PokemonTrackerDB } from '../src/db/database';
-
-async function settle(ms = 80): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 const sampleSet: SetRecord = {
   id: 'base1',
@@ -36,51 +36,16 @@ const sampleSet: SetRecord = {
   updatedAt: '2026-05-06T00:00:00.000Z',
 };
 
+// Tiny adapter so call-sites stay `makeCard(n)`. Helper supplies
+// the boilerplate (setId, tcgplayer.prices); this file only needs
+// the test-specific name.
 function makeCard(n: number): CardRecord {
-  return {
-    id: `base1-${n}`,
-    setId: 'base1',
-    name: `Card ${n}`,
-    number: String(n),
-    rarity: 'Common',
-    supertype: 'Pokémon',
-    subtypes: [],
-    types: [],
-    imageSmall: null,
-    imageLarge: null,
-    tcgplayer: { prices: { normal: { market: 1 }, holofoil: { market: 1 }, reverseHolofoil: { market: 1 }, "1stEditionNormal": { market: 1 }, "1stEditionHolofoil": { market: 1 } } },
-    cardmarket: null,
-    updatedAt: '2026-05-06T00:00:00.000Z',
-  };
+  return helperMakeCard(`base1-${n}`, {
+    overrides: { name: `Card ${n}`, number: String(n) },
+  });
 }
 
-const baseHolding: HoldingInput = {
-  cardId: 'base1-1',
-  quantity: 1,
-  conditionType: 'raw',
-  rawCondition: 'NM',
-  gradingCompany: null,
-  grade: null,
-  certNumber: null,
-  certUrl: null,
-  gradedDate: null,
-  finish: 'normal',
-  edition: 'unlimited',
-  language: 'en',
-  purchasePrice: null,
-  purchaseCurrency: null,
-  estimatedValue: null,
-  valueCurrency: null,
-  valueSource: 'unknown',
-  valueNote: null,
-  valueUpdatedAt: null,
-  source: 'manual',
-  note: null,
-  specialVariant: false,
-  tags: [],
-  lotId: null,
-  status: 'owned',
-};
+const baseHolding: HoldingInput = holdingInput('base1-1');
 
 describe('Binder detail — checklist + missing filter', () => {
   let db: PokemonTrackerDB;
