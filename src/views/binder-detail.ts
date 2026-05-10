@@ -24,33 +24,19 @@
 // `slot-action-menu` and `assign-holding-modal`, both unchanged from
 // PR 8a.
 
-import { openDialog } from '../components/dialog';
 import { USER_DATA_CHANGED_EVENT, onUserDataChanged } from '../components/events';
-import { buildAssignHoldingModal } from '../components/assign-holding-modal';
-import { buildSlotActionMenu } from '../components/slot-action-menu';
-import { buildSlotDirectAddForm } from '../components/slot-direct-add-form';
-import { openWishlistReceivePrompt } from '../components/wishlist-receive-prompt';
 import { getDb } from '../db/database';
-import { cardMatchesQuery, isEmptyQuery } from '../domain/card-search';
-import { isReverseHoloTemplateSlot } from '../domain/card-variants';
-import type { MasterGapBinderSummary } from '../domain/master-set-gap';
 import {
   getCurrentBinderId,
   getCurrentBinderSlotFocus,
   navigate,
-  navigateToCard,
   navigateToMasterGapBinder,
 } from '../router';
 import { createBindersRepo } from '../repositories/binders-repo';
 import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createHoldingsRepo } from '../repositories/holdings-repo';
-import { createLotItemsRepo } from '../repositories/lot-items-repo';
-import { createSetsRepo } from '../repositories/sets-repo';
-import { createWishlistRepo } from '../repositories/wishlist-repo';
-import { createBinderCsvExporter } from '../services/binder-csv-export';
 import {
-  assignHoldingToSlot,
   autoAssignBinder,
   buildAutoPlacementPlan,
   type AutoAssignResult,
@@ -60,47 +46,37 @@ import {
   createBinderSlotService,
   type BinderDetail,
 } from '../services/binder-slot-service';
-import { createMasterSetGapService } from '../services/master-set-gap-service';
-import { findWishlistReceiveCandidates } from '../services/wishlist-receive-service';
-import { createLazyImage } from '../utils/lazy-image';
-import { downloadTextFile } from '../utils/download';
+import type { BinderSlotRecord } from '../domain/types';
+// PR 34 — async dialog/handler routines lifted to a sibling module.
+import {
+  handleExportCsv,
+  populateGapBanner,
+} from './binder-detail-actions';
+// PR 34 — pure helpers / label maps / types lifted to a sibling
+// module so this orchestrator stays focused on mount + state +
+// async actions.
+import {
+  CHECKLIST_PAGE_SIZE,
+  FILTER_LABELS,
+  appendMessage,
+  computeAssignableInfo,
+  focusSlotInDom,
+  makeToggleButton,
+  slotMatchesFilter,
+  slotMatchesSearch,
+} from './binder-detail-helpers';
 import type {
-  BinderSlotRecord,
-  BinderSlotStatus,
-  CardFinish,
-  CardRecord,
-  HoldingRecord,
-  SlotsPerPage,
-} from '../domain/types';
-
-const STATUS_LABELS: Record<BinderSlotStatus, string> = {
-  empty: 'Tom',
-  wanted: 'Ønsket',
-  owned: 'Eid',
-  missing: 'Mangler',
-  ordered: 'Bestilt',
-  duplicate: 'Duplikat',
-  upgrade_needed: 'Oppgrader',
-};
-
-const FINISH_LABELS: Record<CardFinish, string> = {
-  normal: 'Normal',
-  holo: 'Holo',
-  reverse_holo: 'Reverse holo',
-  non_holo: 'Non-holo',
-  stamped: 'Stamped',
-  unknown: 'Ukjent',
-};
-
-type ViewMode = 'pages' | 'checklist';
-
-type SlotFilter =
-  | 'all'
-  | 'missing'
-  | 'ordered'
-  | 'duplicate'
-  | 'completed'
-  | 'empty';
+  AssignableSlotInfo,
+  SlotFilter,
+  ViewMode,
+} from './binder-detail-helpers';
+// PR 34 — pure render builders (state-coupled wrappers stay below).
+import {
+  buildChecklistRow,
+  buildGapBannerSkeleton,
+  buildPage,
+  buildSummary,
+} from './binder-detail-render';
 
 interface ViewState {
   mode: ViewMode;
@@ -178,17 +154,6 @@ interface ViewState {
   consumedSlotFocusId: string | null;
 }
 
-const CHECKLIST_PAGE_SIZE = 50;
-
-const FILTER_LABELS: ReadonlyArray<{ readonly value: SlotFilter; readonly label: string }> = [
-  { value: 'all', label: 'Alle' },
-  { value: 'missing', label: 'Mangler' },
-  { value: 'completed', label: 'Eid' },
-  { value: 'empty', label: 'Tomme' },
-  { value: 'ordered', label: 'Bestilt' },
-  { value: 'duplicate', label: 'Duplikater' },
-];
-
 export function mountBinderDetailView(
   container: HTMLElement,
   signal?: AbortSignal,
@@ -223,54 +188,6 @@ export function mountBinderDetailView(
     void renderInto(container, state);
   };
   onUserDataChanged(refresh, signal);
-}
-
-interface AssignableSlotInfo {
-  /** Count of live unassigned holdings that match this slot. */
-  readonly count: number;
-  /** When `count === 1`, the single eligible holding id (used by "Plasser"). */
-  readonly eligibleHoldingId: string | null;
-}
-
-/**
- * PR 24 — compute assignable-holding info for every slot in the binder
- * via O(1) lookups. Avoids the 1088-Dexie-query trap on a Vault X
- * 16-pocket binder. Mirrors `autoAssignBinder`'s rules so the badges
- * match exactly what the auto-assign action would do.
- */
-function computeAssignableInfo(
-  detail: BinderDetail,
-  liveHoldings: readonly HoldingRecord[],
-): Map<string, AssignableSlotInfo> {
-  const holdingsByCardId = new Map<string, HoldingRecord[]>();
-  for (const h of liveHoldings) {
-    const arr = holdingsByCardId.get(h.cardId);
-    if (arr === undefined) holdingsByCardId.set(h.cardId, [h]);
-    else arr.push(h);
-  }
-  const assignedHoldingIds = new Set<string>();
-  for (const slot of detail.slots) {
-    if (slot.deletedAt !== null) continue;
-    if (slot.holdingId !== null) assignedHoldingIds.add(slot.holdingId);
-  }
-  const out = new Map<string, AssignableSlotInfo>();
-  for (const slot of detail.slots) {
-    if (slot.deletedAt !== null) continue;
-    if (slot.holdingId !== null && slot.status === 'owned') continue;
-    if (slot.targetCardId === null) continue;
-    const candidates = (holdingsByCardId.get(slot.targetCardId) ?? []).filter(
-      (h) => !assignedHoldingIds.has(h.id),
-    );
-    const eligible = isReverseHoloTemplateSlot(slot.note)
-      ? candidates.filter((h) => h.finish === 'reverse_holo')
-      : candidates;
-    if (eligible.length === 0) continue;
-    out.set(slot.id, {
-      count: eligible.length,
-      eligibleHoldingId: eligible.length === 1 ? (eligible[0]?.id ?? null) : null,
-    });
-  }
-  return out;
 }
 
 async function renderInto(
@@ -469,93 +386,6 @@ async function renderInto(
   }
 }
 
-function focusSlotInDom(root: HTMLElement, slotId: string): void {
-  const target = root.querySelector<HTMLElement>(
-    `[data-slot-id="${cssEscape(slotId)}"]`,
-  );
-  if (target === null) return;
-  // jsdom does not implement scrollIntoView; guard so tests still
-  // pass while the production browser scrolls as expected.
-  if (typeof target.scrollIntoView === 'function') {
-    target.scrollIntoView({ block: 'center', behavior: 'auto' });
-  }
-  target.classList.add('binder-slot--focused');
-  // Drop the highlight after a few seconds so a subsequent navigation
-  // to the same binder without the slot suffix doesn't keep the
-  // highlight forever.
-  setTimeout(() => {
-    target.classList.remove('binder-slot--focused');
-  }, 3000);
-}
-
-function cssEscape(value: string): string {
-  // CSS.escape is not in jsdom; this minimal escape covers the
-  // characters our slot ids contain (UUIDs only — no quotes or
-  // backslashes — but be defensive in case of future changes).
-  return value.replace(/(["\\])/g, '\\$1');
-}
-
-function appendMessage(root: HTMLElement, text: string): void {
-  const p = document.createElement('p');
-  p.className = 'binder-detail-view__message';
-  p.textContent = text;
-  root.appendChild(p);
-}
-
-function buildSummary(detail: BinderDetail): HTMLElement {
-  const summary = document.createElement('header');
-  summary.className = 'binder-detail-view__summary';
-
-  const title = document.createElement('h1');
-  title.className = 'binder-detail-view__title';
-  title.textContent = detail.binder.name;
-  summary.appendChild(title);
-
-  if (detail.binder.binderType !== null) {
-    const t = document.createElement('p');
-    t.className = 'binder-detail-view__type';
-    t.textContent = detail.binder.binderType;
-    summary.appendChild(t);
-  }
-  if (detail.binder.description !== null) {
-    const d = document.createElement('p');
-    d.className = 'binder-detail-view__description';
-    d.textContent = detail.binder.description;
-    summary.appendChild(d);
-  }
-
-  const stats = document.createElement('dl');
-  stats.className = 'binder-detail-view__stats';
-  appendStat(stats, 'Sider', String(detail.binder.totalPages));
-  appendStat(stats, 'Slots/side', String(detail.binder.slotsPerPage));
-  appendStat(
-    stats,
-    'Mål-slots',
-    String(detail.completion.totalTargetSlots),
-  );
-  appendStat(
-    stats,
-    'Fullført',
-    `${detail.completion.completedSlots} (${detail.completion.percentage}%)`,
-  );
-  appendStat(stats, 'Mangler', String(detail.completion.missingSlots));
-  summary.appendChild(stats);
-
-  const progress = document.createElement('div');
-  progress.className = 'binder-detail-view__progress';
-  progress.setAttribute('role', 'progressbar');
-  progress.setAttribute('aria-valuemin', '0');
-  progress.setAttribute('aria-valuemax', '100');
-  progress.setAttribute('aria-valuenow', String(detail.completion.percentage));
-  const fill = document.createElement('span');
-  fill.className = 'binder-detail-view__progress-fill';
-  fill.style.width = `${detail.completion.percentage}%`;
-  progress.appendChild(fill);
-  summary.appendChild(progress);
-
-  return summary;
-}
-
 function buildToolbar(
   detail: BinderDetail,
   state: ViewState,
@@ -741,77 +571,6 @@ function buildToolbar(
 // and integration tools can target the banner deterministically. The
 // PR 25 region (`data-region="gap-summary"`) is kept too for callers
 // that already depend on it.
-function buildGapBannerSkeleton(binderId: string): HTMLElement {
-  const banner = document.createElement('section');
-  banner.className = 'binder-detail-view__gap-summary';
-  banner.dataset['region'] = 'binder-gap-summary';
-  banner.dataset['binderId'] = binderId;
-  const loading = document.createElement('p');
-  loading.className = 'binder-detail-view__gap-summary-loading';
-  loading.dataset['region'] = 'gap-summary-loading';
-  loading.textContent = 'Laster gap-analyse …';
-  banner.appendChild(loading);
-  return banner;
-}
-
-async function populateGapBanner(
-  banner: HTMLElement,
-  binderId: string,
-): Promise<void> {
-  let summary: MasterGapBinderSummary | null;
-  try {
-    const db = getDb();
-    const report = await createMasterSetGapService({
-      bindersRepo: createBindersRepo(db),
-      binderSlotsRepo: createBinderSlotsRepo(db),
-      cardsRepo: createCardsRepo(db),
-      setsRepo: createSetsRepo(db),
-      holdingsRepo: createHoldingsRepo(db),
-      wishlistRepo: createWishlistRepo(db),
-      lotItemsRepo: createLotItemsRepo(db),
-    }).buildBinderReport(binderId);
-    summary = report?.binder ?? null;
-  } catch {
-    if (!banner.isConnected) return;
-    banner.replaceChildren();
-    const err = document.createElement('p');
-    err.className = 'binder-detail-view__gap-summary-error';
-    err.textContent = 'Kunne ikke laste gap-analyse.';
-    banner.appendChild(err);
-    return;
-  }
-  if (!banner.isConnected) return;
-  if (summary === null) {
-    banner.replaceChildren();
-    return;
-  }
-
-  banner.replaceChildren();
-  const fragment = `Master gap: ${summary.complete} / ${summary.totalTargetSlots} fullført · ${summary.missing} mangler · ${summary.ownedUnplaced} eies men ikke plassert · ${summary.wishlistWanted} ønsket · ${summary.wishlistOrdered} bestilt · ${summary.invalidAssignment + summary.invalidVariant} feil`;
-  const main = document.createElement('p');
-  main.className = 'binder-detail-view__gap-summary-line';
-  main.textContent = fragment;
-  banner.appendChild(main);
-
-  if (summary.canPlaceDirectlyCount > 0) {
-    const directly = document.createElement('p');
-    directly.className =
-      'binder-detail-view__gap-summary-line binder-detail-view__gap-summary-line--quickwin';
-    directly.textContent = `${summary.canPlaceDirectlyCount} kan plasseres direkte`;
-    banner.appendChild(directly);
-  }
-
-  const showBtn = document.createElement('button');
-  showBtn.type = 'button';
-  showBtn.className = 'binder-detail-view__gap-summary-action';
-  showBtn.dataset['action'] = 'show-gap';
-  showBtn.textContent = 'Vis gap';
-  showBtn.addEventListener('click', () => {
-    navigateToMasterGapBinder(binderId);
-  });
-  banner.appendChild(showBtn);
-}
-
 function buildAutoAssignSummary(
   detail: BinderDetail,
   state: ViewState,
@@ -877,108 +636,6 @@ async function handleAutoAssign(
   // Re-render even if no assignments happened so the summary banner
   // shows up.
   void renderInto(container, state);
-}
-
-function makeToggleButton(
-  mode: ViewMode,
-  label: string,
-  active: boolean,
-): HTMLButtonElement {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.dataset['mode'] = mode;
-  btn.className = active
-    ? 'binder-detail-view__toggle-btn binder-detail-view__toggle-btn--active'
-    : 'binder-detail-view__toggle-btn';
-  btn.setAttribute('role', 'tab');
-  btn.setAttribute('aria-selected', active ? 'true' : 'false');
-  btn.textContent = label;
-  return btn;
-}
-
-async function handleExportCsv(binderId: string): Promise<void> {
-  const db = getDb();
-  const exporter = createBinderCsvExporter(
-    db,
-    createBindersRepo(db),
-    createBinderSlotsRepo(db),
-    createHoldingsRepo(db),
-    createCardsRepo(db),
-    createSetsRepo(db),
-  );
-  const result = await exporter.build(binderId);
-  if (result === null) return;
-  // Hand the content to the download helper FIRST. The audit row says
-  // "the CSV was generated and a download was started" — write it
-  // after the call so a thrown error in download still leaves an
-  // audit-correct trail (or no trail at all on failure).
-  downloadTextFile(result.filename, result.content, { mimeType: 'text/csv' });
-  const binder = await createBindersRepo(db).get(binderId);
-  if (binder === undefined) return;
-  await exporter.recordExport(binder, result.rowCount);
-}
-
-function appendStat(dl: HTMLDListElement, label: string, value: string): void {
-  const dt = document.createElement('dt');
-  dt.textContent = label;
-  dl.appendChild(dt);
-  const dd = document.createElement('dd');
-  dd.textContent = value;
-  dl.appendChild(dd);
-}
-
-// ---------------------------------------------------------------------
-// Filter math (KRAVSPEC §6)
-
-function isSlotComplete(
-  slot: BinderSlotRecord,
-  detail: BinderDetail,
-): boolean {
-  if (slot.targetCardId === null) return false;
-  if (slot.status !== 'owned') return false;
-  if (slot.holdingId === null) return false;
-  return detail.holdingsById.has(slot.holdingId);
-}
-
-function slotMatchesFilter(
-  slot: BinderSlotRecord,
-  filter: SlotFilter,
-  detail: BinderDetail,
-): boolean {
-  switch (filter) {
-    case 'all':
-      return true;
-    case 'completed':
-      return isSlotComplete(slot, detail);
-    case 'missing':
-      // Missing = target slot that is NOT complete. Slots without a
-      // target (blank manual slots) are not part of the completion
-      // denominator, so they are not "missing" either.
-      return slot.targetCardId !== null && !isSlotComplete(slot, detail);
-    case 'empty':
-      // PR 17 — fully blank slot: no target card AND no assigned
-      // holding. Useful when assigning an unassigned holding to a
-      // free pocket without filtering by status.
-      return slot.targetCardId === null && slot.holdingId === null;
-    case 'ordered':
-      return slot.status === 'ordered';
-    case 'duplicate':
-      return slot.status === 'duplicate';
-  }
-}
-
-function slotMatchesSearch(
-  slot: BinderSlotRecord,
-  detail: BinderDetail,
-  search: string,
-): boolean {
-  if (isEmptyQuery(search)) return true;
-  const card = resolveCardForSlot(detail, slot);
-  if (card === null) return false;
-  // Set-name search inside a binder is intentionally omitted —
-  // binders have at most one source set anyway, so name / id /
-  // number / setid coverage is enough.
-  return cardMatchesQuery(card, search);
 }
 
 // ---------------------------------------------------------------------
@@ -1092,208 +749,6 @@ function buildPagesNav(
   nav.appendChild(next);
 
   return nav;
-}
-
-function buildPage(
-  detail: BinderDetail,
-  pageNumber: number,
-  slots: readonly BinderSlotRecord[],
-  matches: (slot: BinderSlotRecord) => boolean,
-  assignableInfo: Map<string, AssignableSlotInfo>,
-): HTMLElement {
-  const page = document.createElement('section');
-  page.className = 'binder-page';
-  page.dataset['pageNumber'] = String(pageNumber);
-
-  const heading = document.createElement('h2');
-  heading.className = 'binder-page__heading';
-  heading.textContent = `Side ${pageNumber}`;
-  page.appendChild(heading);
-
-  const grid = document.createElement('div');
-  grid.className = `binder-page__grid binder-page__grid--${detail.binder.slotsPerPage}`;
-  for (const slot of slots) {
-    grid.appendChild(
-      buildSlot(detail, slot, matches(slot), assignableInfo.get(slot.id) ?? null),
-    );
-  }
-  page.appendChild(grid);
-  return page;
-}
-
-function buildSlot(
-  detail: BinderDetail,
-  slot: BinderSlotRecord,
-  matchesFilter: boolean,
-  assignable: AssignableSlotInfo | null,
-): HTMLElement {
-  const tile = document.createElement('article');
-  const isReverseTemplate = isReverseHoloTemplateSlot(slot.note);
-  tile.className = `binder-slot binder-slot--${slot.status}${
-    !matchesFilter ? ' binder-slot--filtered-out' : ''
-  }${isReverseTemplate ? ' binder-slot--reverse-template' : ''}`;
-  tile.dataset['slotId'] = slot.id;
-  tile.dataset['status'] = slot.status;
-  tile.dataset['pageNumber'] = String(slot.pageNumber);
-  tile.dataset['slotNumber'] = String(slot.slotNumber);
-  tile.dataset['matchesFilter'] = matchesFilter ? 'true' : 'false';
-  if (isReverseTemplate) {
-    tile.dataset['reverseHoloTemplate'] = 'true';
-  }
-  if (!matchesFilter) {
-    tile.setAttribute('aria-hidden', 'true');
-  }
-
-  const indexLabel = document.createElement('span');
-  indexLabel.className = 'binder-slot__index';
-  indexLabel.textContent = `${slot.pageNumber}.${slot.slotNumber}`;
-  tile.appendChild(indexLabel);
-
-  const statusBadge = document.createElement('span');
-  statusBadge.className = `status-chip status-chip--${slot.status}`;
-  statusBadge.dataset['region'] = 'status-badge';
-  statusBadge.textContent = STATUS_LABELS[slot.status];
-  tile.appendChild(statusBadge);
-
-  if (isReverseTemplate) {
-    const finishBadge = document.createElement('span');
-    finishBadge.className = 'binder-slot__finish-badge';
-    finishBadge.textContent = 'Reverse holo';
-    tile.appendChild(finishBadge);
-  }
-
-  // PR 24 — assignable badge. Visible on missing target slots that
-  // have at least one matching unassigned holding.
-  if (assignable !== null && matchesFilter) {
-    const badge = document.createElement('span');
-    badge.className = 'binder-slot__assignable-badge';
-    badge.dataset['region'] = 'assignable-badge';
-    badge.textContent =
-      assignable.count === 1
-        ? 'Kan plasseres'
-        : `Kan plasseres (${assignable.count})`;
-    tile.appendChild(badge);
-  }
-
-  const card = resolveCardForSlot(detail, slot);
-  if (card !== null) {
-    const thumb = createLazyImage({
-      src: card.imageSmall,
-      alt: card.name,
-      width: 80,
-      height: 112,
-      className: 'binder-slot__thumb',
-    });
-    tile.appendChild(thumb);
-
-    // Filtered-out tiles must have no focusable children (the tile is
-    // `aria-hidden`). Render the card name as plain text instead of a
-    // button so screen readers + keyboard users skip it cleanly.
-    if (matchesFilter) {
-      const nameButton = document.createElement('button');
-      nameButton.type = 'button';
-      nameButton.className = 'binder-slot__card-link';
-      nameButton.dataset['action'] = 'open-card';
-      nameButton.textContent = card.name;
-      nameButton.addEventListener('click', (event) => {
-        event.stopPropagation();
-        navigateToCard(card.id);
-      });
-      tile.appendChild(nameButton);
-    } else {
-      const nameText = document.createElement('p');
-      nameText.className = 'binder-slot__card-link binder-slot__card-link--inert';
-      nameText.textContent = card.name;
-      tile.appendChild(nameText);
-    }
-
-    const meta = document.createElement('p');
-    meta.className = 'binder-slot__meta';
-    meta.textContent = `${card.id}`;
-    tile.appendChild(meta);
-  } else {
-    const placeholder = document.createElement('p');
-    placeholder.className = 'binder-slot__empty';
-    placeholder.textContent =
-      slot.targetCardId !== null
-        ? `Mål: ${slot.targetCardId}`
-        : 'Tom slot';
-    tile.appendChild(placeholder);
-  }
-
-  // Action buttons are the only mutation surface in the grid view. We
-  // never render them for a filtered-out tile so:
-  //   1) The filter contract holds (filtered slots cannot be mutated).
-  //   2) `aria-hidden` content has no focusable descendants.
-  //   3) There is no accidental scroll/tab landing on an opaque tile
-  //      the user filtered away.
-  if (matchesFilter) {
-    const actions = document.createElement('div');
-    actions.className = 'binder-slot__actions';
-
-    // PR 24 — single-click "Plasser" only renders when there is exactly
-    // one eligible holding for this slot. Multi-candidate / wrong-finish
-    // / blank slots fall back to the existing assign modal.
-    if (
-      assignable !== null &&
-      assignable.count === 1 &&
-      assignable.eligibleHoldingId !== null
-    ) {
-      const placeBtn = document.createElement('button');
-      placeBtn.type = 'button';
-      placeBtn.className = 'binder-slot__action binder-slot__action--success';
-      placeBtn.dataset['action'] = 'place-eligible';
-      placeBtn.textContent = 'Plasser';
-      const eligibleHoldingId = assignable.eligibleHoldingId;
-      placeBtn.addEventListener('click', (event) => {
-        event.stopPropagation();
-        void handlePlaceEligible(slot, detail.binder.slotsPerPage, eligibleHoldingId);
-      });
-      actions.appendChild(placeBtn);
-    }
-
-    const assignBtn = document.createElement('button');
-    assignBtn.type = 'button';
-    assignBtn.className = 'binder-slot__action';
-    assignBtn.dataset['action'] = 'assign';
-    assignBtn.textContent =
-      slot.holdingId === null ? 'Tilordne holding' : 'Bytt holding';
-    assignBtn.addEventListener('click', (event) => {
-      event.stopPropagation();
-      void openAssign(slot, detail.binder.slotsPerPage);
-    });
-    actions.appendChild(assignBtn);
-
-    // PR 24 — direct add for target slots only. Blank slots route
-    // through "Tilordne holding" (the existing modal) where the user
-    // can search/pick from existing holdings.
-    if (slot.targetCardId !== null && slot.holdingId === null) {
-      const directAddBtn = document.createElement('button');
-      directAddBtn.type = 'button';
-      directAddBtn.className = 'binder-slot__action';
-      directAddBtn.dataset['action'] = 'direct-add';
-      directAddBtn.textContent = 'Legg til her';
-      directAddBtn.addEventListener('click', (event) => {
-        event.stopPropagation();
-        void openDirectAdd(slot, detail.binder.slotsPerPage);
-      });
-      actions.appendChild(directAddBtn);
-    }
-
-    const menuBtn = document.createElement('button');
-    menuBtn.type = 'button';
-    menuBtn.className = 'binder-slot__action';
-    menuBtn.dataset['action'] = 'open-menu';
-    menuBtn.textContent = 'Endre status';
-    menuBtn.addEventListener('click', (event) => {
-      event.stopPropagation();
-      void openMenu(slot, detail.binder.slotsPerPage);
-    });
-    actions.appendChild(menuBtn);
-
-    tile.appendChild(actions);
-  }
-  return tile;
 }
 
 // ---------------------------------------------------------------------
@@ -1438,253 +893,14 @@ function buildChecklistNav(
   return nav;
 }
 
-function buildChecklistRow(
-  detail: BinderDetail,
-  slot: BinderSlotRecord,
-  assignable: AssignableSlotInfo | null,
-): HTMLTableRowElement {
-  const tr = document.createElement('tr');
-  const isReverseTemplate = isReverseHoloTemplateSlot(slot.note);
-  tr.className = 'checklist-table__row';
-  tr.dataset['slotId'] = slot.id;
-  tr.dataset['status'] = slot.status;
-  if (isReverseTemplate) {
-    tr.dataset['reverseHoloTemplate'] = 'true';
-  }
-
-  const card = resolveCardForSlot(detail, slot);
-  const holding =
-    slot.holdingId !== null
-      ? (detail.holdingsById.get(slot.holdingId) ?? null)
-      : null;
-
-  appendCell(tr, card?.number ?? '');
-  appendCell(tr, card?.name ?? slot.targetCardId ?? '–');
-  appendCell(tr, card?.id ?? '');
-
-  const finishLabel = isReverseTemplate
-    ? 'Reverse holo'
-    : (holding !== null ? FINISH_LABELS[holding.finish] : '–');
-  appendCell(tr, finishLabel);
-
-  // PR 24 — append a "Kan plasseres" indicator inline with the status
-  // cell so the checklist surfaces the same affordance as the grid
-  // tile. Empty cell when no candidate.
-  const statusCell = document.createElement('td');
-  const statusLabel = document.createElement('span');
-  statusLabel.textContent = STATUS_LABELS[slot.status];
-  statusCell.appendChild(statusLabel);
-  if (assignable !== null) {
-    const badge = document.createElement('span');
-    badge.className = 'checklist-table__assignable-badge';
-    badge.dataset['region'] = 'assignable-badge';
-    badge.textContent =
-      assignable.count === 1
-        ? 'Kan plasseres'
-        : `Kan plasseres (${assignable.count})`;
-    statusCell.appendChild(badge);
-  }
-  tr.appendChild(statusCell);
-
-  appendCell(tr, isSlotComplete(slot, detail) ? '✓' : '–');
-  appendCell(tr, `${slot.pageNumber}.${slot.slotNumber}`);
-  appendCell(tr, describeCondition(holding));
-  appendCell(tr, displaySlotNote(slot));
-
-  const actions = document.createElement('td');
-  actions.className = 'checklist-table__actions';
-  // PR 24 — single-click "Plasser" mirrors the grid action.
-  if (
-    assignable !== null &&
-    assignable.count === 1 &&
-    assignable.eligibleHoldingId !== null
-  ) {
-    const place = document.createElement('button');
-    place.type = 'button';
-    place.className = 'checklist-table__action checklist-table__action--success';
-    place.dataset['action'] = 'place-eligible';
-    place.textContent = 'Plasser';
-    const eligibleHoldingId = assignable.eligibleHoldingId;
-    place.addEventListener('click', (event) => {
-      event.stopPropagation();
-      void handlePlaceEligible(slot, detail.binder.slotsPerPage, eligibleHoldingId);
-    });
-    actions.appendChild(place);
-  }
-  const assign = document.createElement('button');
-  assign.type = 'button';
-  assign.className = 'checklist-table__action';
-  assign.dataset['action'] = 'assign';
-  assign.textContent = slot.holdingId === null ? 'Tilordne' : 'Bytt';
-  assign.addEventListener('click', (event) => {
-    event.stopPropagation();
-    void openAssign(slot, detail.binder.slotsPerPage);
-  });
-  actions.appendChild(assign);
-  if (slot.targetCardId !== null && slot.holdingId === null) {
-    const directAdd = document.createElement('button');
-    directAdd.type = 'button';
-    directAdd.className = 'checklist-table__action';
-    directAdd.dataset['action'] = 'direct-add';
-    directAdd.textContent = 'Legg til her';
-    directAdd.addEventListener('click', (event) => {
-      event.stopPropagation();
-      void openDirectAdd(slot, detail.binder.slotsPerPage);
-    });
-    actions.appendChild(directAdd);
-  }
-  const menu = document.createElement('button');
-  menu.type = 'button';
-  menu.className = 'checklist-table__action';
-  menu.dataset['action'] = 'open-menu';
-  menu.textContent = 'Status';
-  menu.addEventListener('click', (event) => {
-    event.stopPropagation();
-    void openMenu(slot, detail.binder.slotsPerPage);
-  });
-  actions.appendChild(menu);
-  tr.appendChild(actions);
-
-  return tr;
-}
-
-function describeCondition(holding: HoldingRecord | null): string {
-  if (holding === null) return '–';
-  if (holding.conditionType === 'graded') {
-    const company = holding.gradingCompany ?? '?';
-    const grade = holding.grade !== null ? holding.grade.toFixed(1) : '?';
-    return `${company} ${grade}`;
-  }
-  return holding.rawCondition ?? '–';
-}
-
-function displaySlotNote(slot: BinderSlotRecord): string {
-  // Hide the internal reverse-holo template marker from the note
-  // column. User-authored notes pass through unchanged.
-  if (isReverseHoloTemplateSlot(slot.note)) return '';
-  return slot.note ?? '';
-}
-
-function appendCell(tr: HTMLTableRowElement, value: string): void {
-  const td = document.createElement('td');
-  td.textContent = value;
-  tr.appendChild(td);
-}
-
-// ---------------------------------------------------------------------
-// Shared helpers (slot → card resolution, dialog openers)
-
-function resolveCardForSlot(
-  detail: BinderDetail,
-  slot: BinderSlotRecord,
-): CardRecord | null {
-  if (slot.holdingId !== null) {
-    const holding = detail.holdingsById.get(slot.holdingId);
-    if (holding !== undefined) {
-      return resolveCardFromHolding(detail, holding);
-    }
-  }
-  if (slot.targetCardId !== null) {
-    return detail.cardsById.get(slot.targetCardId) ?? null;
-  }
-  return null;
-}
-
-function resolveCardFromHolding(
-  detail: BinderDetail,
-  holding: HoldingRecord,
-): CardRecord | null {
-  return detail.cardsById.get(holding.cardId) ?? null;
-}
-
-async function openAssign(
-  slot: BinderSlotRecord,
-  slotsPerPage: SlotsPerPage,
-): Promise<void> {
-  await openDialog(buildAssignHoldingModal({ slot, slotsPerPage }));
-}
-
-async function openMenu(
-  slot: BinderSlotRecord,
-  slotsPerPage: SlotsPerPage,
-): Promise<void> {
-  await openDialog(buildSlotActionMenu({ slot, slotsPerPage }));
-}
-
-// PR 24 — single-click "Plasser" handler. Looks up the eligible
-// holding by id and calls assignHoldingToSlot. We do NOT re-open the
-// assign modal because the candidate is unambiguous (count === 1 was
-// the badge condition).
-async function handlePlaceEligible(
-  slot: BinderSlotRecord,
-  slotsPerPage: SlotsPerPage,
-  holdingId: string,
-): Promise<void> {
-  const db = getDb();
-  const holdingsRepo = createHoldingsRepo(db);
-  const holding = await holdingsRepo.get(holdingId);
-  if (holding === undefined || holding.deletedAt !== null) {
-    window.alert('Holding finnes ikke lenger. Last inn permen på nytt.');
-    return;
-  }
-  try {
-    await assignHoldingToSlot(
-      {
-        bindersRepo: createBindersRepo(db),
-        binderSlotsRepo: createBinderSlotsRepo(db),
-        holdingsRepo,
-        cardsRepo: createCardsRepo(db),
-      },
-      slot,
-      holding,
-      slotsPerPage,
-    );
-    window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
-  } catch (caught) {
-    window.alert(
-      caught instanceof Error
-        ? `Plassering feilet: ${caught.message}`
-        : 'Plassering feilet av en ukjent grunn.',
-    );
-  }
-}
-
-// PR 24 — direct-add for target slots. Opens the smaller slot form
-// from `slot-direct-add-form.ts`; on success we run the wishlist
-// receive prompt for the freshly-created holding so the receive flow
-// stays consistent across all write-paths.
-async function openDirectAdd(
-  slot: BinderSlotRecord,
-  slotsPerPage: SlotsPerPage,
-): Promise<void> {
-  let createdHoldingId: string | null = null;
-  await openDialog(
-    buildSlotDirectAddForm({
-      slot,
-      slotsPerPage,
-      onCreated: (holding) => {
-        createdHoldingId = holding.id;
-      },
-    }),
-  );
-  if (createdHoldingId === null) return;
-  try {
-    const db = getDb();
-    const holding = await createHoldingsRepo(db).get(createdHoldingId);
-    if (holding === undefined) return;
-    const candidates = await findWishlistReceiveCandidates(
-      createWishlistRepo(db),
-      holding,
-    );
-    if (candidates.length === 0) return;
-    await openWishlistReceivePrompt({
-      candidates,
-      heading:
-        candidates.length === 1
-          ? 'Legg til i slot: 1 match på aktiv ønskeliste.'
-          : `Legg til i slot: ${candidates.length} matcher på aktiv ønskeliste.`,
-    });
-  } catch {
-    // Receive flow is non-blocking. Holding + slot are already saved.
-  }
-}
+// PR 34 — async openers + handleExportCsv + populateGapBanner now
+// live in `./binder-detail-actions`. All are stateless; they take
+// their slot + slotsPerPage (or banner + binderId) and run against
+// the live DB and global services.
+//
+// Pure render helpers (`buildSummary`, `buildGapBannerSkeleton`,
+// `buildPage`, `buildSlot`, `buildChecklistRow`) live in
+// `./binder-detail-render`. State-coupled wrappers
+// (`buildToolbar`, `buildAutoAssignSummary`, `buildPagesGrid`,
+// `buildPagesNav`, `buildChecklist`, `buildChecklistNav`) stay in
+// this file because they wire callbacks back to `renderInto`.
