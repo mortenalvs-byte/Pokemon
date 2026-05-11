@@ -14,12 +14,13 @@ Reviewer determined this branch is contaminated (interleaved unrelated changes, 
 {{/each}}
 
 ### Next actions
-1. Commit current state to `wip/{{task_id}}-rebuild-archive` for forensics.
-2. Reset HEAD to `origin/main`.
-3. Create fresh branch `{{task_branch_v2}}` from main.
-4. Start over, applying the lessons above.
-5. Use a smaller initial scope than last time.
+1. Commit current state to `wip/{{task_id}}-rebuild-archive` (the contaminated branch stays intact for forensics; do NOT delete it).
+2. From the existing worktree, create a fresh branch from origin/main without touching the contaminated branch:
+   `git fetch origin main && git checkout -b {{task_branch_v2}} origin/main`
+3. Start over, applying the lessons above.
+4. Use a smaller initial scope than last time.
 
 ### Constraints
 - Do not copy commits from the contaminated branch.
 - Do not revisit the failed approaches listed above.
+- Do not `git reset --hard`, `git branch -D`, or otherwise destroy the contaminated branch — it is the forensic record.

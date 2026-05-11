@@ -12,7 +12,7 @@ Your previous attempt was reviewed and needs adjustment.
 
 ### Next actions (do in order)
 {{#each fix_instructions}}
-{{@index}}. {{this}}
+- {{this}}
 {{/each}}
 
 ### Constraints

@@ -28,6 +28,7 @@
         "enum": [1]
       },
       "verdict": {
+        "$comment": "AUTO_MERGE_TO_INTEGRATION is reserved for a future PR (not V1). Model must use AUTO_READY instead. BUDGET_HALT and QUEUE_EXHAUSTED are supervisor-only verdicts emitted by code, never by the model.",
         "type": "string",
         "enum": [
           "CONTINUE_CLAUDE",
@@ -35,7 +36,6 @@
           "SPLIT_AUTOMATICALLY",
           "REBUILD_FROM_SCRATCH",
           "AUTO_READY",
-          "AUTO_MERGE_TO_INTEGRATION",
           "QUARANTINE_AND_CONTINUE",
           "SECURITY_QUARANTINE"
         ]
