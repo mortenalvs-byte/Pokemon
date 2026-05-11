@@ -55,12 +55,12 @@ const HARD_FORBIDDEN_PATTERNS = [
 
 // Content-pattern checks against the diff text itself.
 const CONTENT_CHECKS = [
-  // 5. package.json deps add/remove
+  // 5. package.json deps add/remove (any "+ key": "value" addition in package.json requires review)
   {
     gate: 'package-json-deps',
     appliesTo: (filePath) => filePath === 'package.json' || filePath === 'package-lock.json',
-    test: (diffText) => /^\+\s*"[^"]+":\s*"[^"]+"/m.test(diffText) && /"(dependencies|devDependencies|peerDependencies|optionalDependencies)"/.test(diffText),
-    detail: 'package.json dependencies/devDependencies adds (or lockfile equivalent) require approval. No new deps in V1.',
+    test: (diffText) => /^\+\s*"[^"]+":\s*"[^"]*"/m.test(diffText),
+    detail: 'package.json edits (including dep adds/version bumps/script changes) require approval. No new deps in V1.',
   },
   // 7. Sacred-store-name deletions
   {
