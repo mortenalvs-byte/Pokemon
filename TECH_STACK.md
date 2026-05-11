@@ -59,7 +59,7 @@ The following are forbidden in MVP and may not be added without an explicit, sep
 - Backend server (Node/Express/Fastify/etc.), serverless functions, or edge workers
 - Login / accounts / OAuth
 - Cloud sync of any kind
-- External paid APIs
+- External paid APIs *(does not include local-only dev/review tools — see [PR_RULES.md §7](PR_RULES.md#7-forbidden-without-explicit-approval) and [docs/governance/AI_SUPERVISOR_APPROVAL.md](docs/governance/AI_SUPERVISOR_APPROVAL.md))*
 - Image upload / image storage in IndexedDB
 - Service workers (Service workers may be revisited later, but they are not MVP.)
 - Any storage of API keys outside the IndexedDB `settings` store

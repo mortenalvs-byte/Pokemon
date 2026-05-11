@@ -52,6 +52,8 @@ The following are explicitly out of scope for the MVP and may not be added witho
 - Sealed products in MVP
 - AI pricing in MVP
 
+This "hard out-of-scope" list applies to **application features delivered to end users** — not to local development/review tooling that runs on the developer's machine and never ships in the production bundle. See [PR_RULES.md §7 "Local development tooling exception"](PR_RULES.md#local-development-tooling-exception-2026-05-11) and [docs/governance/AI_SUPERVISOR_APPROVAL.md](docs/governance/AI_SUPERVISOR_APPROVAL.md) for the carve-out.
+
 ---
 
 ## 4. User data protection (sacred data)
