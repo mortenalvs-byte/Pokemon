@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Local-validation schema for .local/ai-supervisor/queue.json. Used by state.mjs / discover-tasks.mjs.",
+  "title": "ai_supervisor_queue_v1",
+  "type": "object",
+  "required": ["schema_version", "tasks"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "ai_supervisor_queue_v1" },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "description", "allowedFiles", "mustNotChange", "acceptance", "added_at"],
+        "properties": {
+          "id":              { "type": "string" },
+          "title":           { "type": "string" },
+          "description":     { "type": "string" },
+          "roadmap_pr_ref":  { "type": ["string", "null"] },
+          "branch_hint":     { "type": "string" },
+          "allowedFiles":    { "type": "array", "items": { "type": "string" } },
+          "mustNotChange":   { "type": "array", "items": { "type": "string" } },
+          "acceptance":      { "type": "array", "items": { "type": "string" } },
+          "approval_id":     { "type": ["string", "null"] },
+          "added_at":        { "type": "string" }
+        }
+      }
+    },
+    "quarantine_warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

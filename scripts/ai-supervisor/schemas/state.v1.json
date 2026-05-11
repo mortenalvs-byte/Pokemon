@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Local-validation schema for .local/ai-supervisor/state.json. Used by state.mjs on read.",
+  "title": "ai_supervisor_state_v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tasks",
+    "cost",
+    "runInProgress",
+    "system_prompt_sha",
+    "pending_pushes",
+    "quarantine_fingerprints"
+  ],
+  "properties": {
+    "schema_version":     { "type": "integer", "const": 1 },
+    "system_prompt_sha":  { "type": "string" },
+    "runInProgress":      { "type": "boolean" },
+    "code_pins_verified_at": { "type": ["string", "null"] },
+    "tasks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status", "repairCount", "consecutiveBlocks", "errorSignatures", "iterations"],
+        "properties": {
+          "status":            { "type": "string", "enum": ["pending", "in_progress", "auto_ready", "quarantined", "completed"] },
+          "repairCount":       { "type": "integer", "minimum": 0 },
+          "consecutiveBlocks": { "type": "integer", "minimum": 0 },
+          "errorSignatures":   { "type": "array", "items": { "type": "string" } },
+          "iterations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["hash", "verdict", "at"],
+              "properties": {
+                "hash":    { "type": "string" },
+                "verdict": { "type": "string" },
+                "at":      { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "required": ["daily", "tasks"],
+      "properties": {
+        "daily": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["actual_input_cost_usd", "cached_input_cost_usd", "output_cost_usd", "total_usd"],
+            "properties": {
+              "actual_input_cost_usd": { "type": "number" },
+              "cached_input_cost_usd": { "type": "number" },
+              "output_cost_usd":       { "type": "number" },
+              "total_usd":             { "type": "number" }
+            }
+          }
+        },
+        "tasks": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["total_usd"],
+            "properties": { "total_usd": { "type": "number" } }
+          }
+        }
+      }
+    },
+    "pending_pushes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "quarantine_fingerprints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "file", "signature", "quarantined_at"],
+        "properties": {
+          "kind":           { "type": "string" },
+          "file":           { "type": "string" },
+          "signature":      { "type": "string" },
+          "quarantined_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}
