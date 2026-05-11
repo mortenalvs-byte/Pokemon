@@ -99,6 +99,24 @@ async function main() {
   const verdictSchema = JSON.parse(verdictSchemaRaw);
 
   // 7. Startup validations
+
+  // 7-pin. Verify supervisor module SHAs against pinned values. Tamper
+  //        detection: if anyone (or Claude) modified a pinned module
+  //        without running `install-hook.mjs --update-pins`, we refuse to
+  //        start so an unreviewed change can't take effect silently.
+  const pinCheck = await verifyCodePins();
+  if (!pinCheck.ok) {
+    await writeOutput({
+      decision: 'block',
+      reason:
+        `Supervisor refuses to start: code-pin mismatch on ${pinCheck.mismatched.length} module(s).\n` +
+        pinCheck.mismatched.map(m => `- ${m.file}: pinned ${m.pinned} actual ${m.actual}`).join('\n') +
+        `\n\nIf the supervisor code was intentionally updated, run:\n  node scripts/ai-supervisor/install-hook.mjs --update-pins\n` +
+        `If this is unexpected, investigate the unreviewed change before continuing.`,
+    });
+    process.exit(0);
+  }
+
   // 7a. Identify any sibling supervisor that holds state.lock BEFORE reaping
   //     zombies — otherwise zombie-cleanup may kill the legitimate lock holder.
   let lockHolderPid = null;
@@ -185,7 +203,12 @@ async function main() {
       cwd: REPO_ROOT,
     });
 
-    // 11. Dedup check
+    // 11. Dedup check — same (task_id, error_signature, head_sha) hash twice
+    //     in a 5-iteration window forces QUARANTINE_AND_CONTINUE without
+    //     calling OpenAI. Route through verdict-router so the same dequeue +
+    //     next-task prompt rendering applies as for a model-emitted
+    //     QUARANTINE_AND_CONTINUE — the operator (and Claude) gets a real
+    //     actionable next-task block, not a dangling "Picking next task..." text.
     if (currentTask?.id) {
       const errorSig = verification.commands.filter(c => c.status === 'FAIL').map(c => c.name).sort().join(',');
       const iterHash = computeIterationHash({
@@ -197,15 +220,52 @@ async function main() {
       const taskState = state.tasks?.[currentTask.id];
       const dedupCheck = checkDedupTrigger(taskState, iterHash);
       if (dedupCheck.shouldQuarantine) {
-        const newState = recordQuarantineFingerprint(
+        let qState = recordQuarantineFingerprint(
           recordIteration(state, currentTask.id, iterHash, 'QUARANTINE_AND_CONTINUE'),
           { kind: 'dedup-trigger', file: currentTask.allowedFiles?.[0] ?? '', signature: errorSig }
         );
-        await saveState(newState, LOCAL_DIR);
-        output = {
-          decision: 'block',
-          reason: `${dedupCheck.reason}\n\nPicking next task from queue...`,
+        // Synthesize a quarantine verdict and route it normally.
+        const synthVerdict = {
+          schema_version: 1,
+          verdict: 'QUARANTINE_AND_CONTINUE',
+          risk_level: 'MEDIUM',
+          confidence: 1.0,
+          claude_next_prompt: null,
+          quarantine_reason: dedupCheck.reason,
+          summary: `Dedup-trigger quarantine: ${dedupCheck.reason}`,
+          verification: Object.fromEntries(verification.commands.map(c => [c.name, { status: c.status, summary: c.summary }])),
+          scope_guard: { status: 'PASS', violations: [], approval_used: null },
+          required_sources: [],
+          blocking_findings: [],
+          allowed_next_actions: [],
+          forbidden_next_actions: [],
+          behaviour_drift_check: { passed: true, notes: 'n/a — dedup-trigger quarantine' },
         };
+        const routing = routeVerdict({
+          verdict: synthVerdict,
+          state: qState,
+          queue,
+          currentTask,
+          discoveryCandidate: null,
+          options: {},
+        });
+        // Apply dequeue + report side effects from the router
+        let qQueue = queue;
+        for (const eff of routing.sideEffects) {
+          if (eff.kind === 'dequeue-next-task') {
+            qQueue = { ...qQueue, tasks: qQueue.tasks.slice(1) };
+          } else if (eff.kind === 'write-quarantine-report') {
+            const qDir = path.join(LOCAL_DIR, 'quarantine');
+            await mkdir(qDir, { recursive: true });
+            const fname = eff.taskId ? `${eff.taskId}.md` : `dedup-${Date.now()}.md`;
+            await writeFile(path.join(qDir, fname), JSON.stringify(eff, null, 2), 'utf8');
+          }
+        }
+        await saveState(qState, LOCAL_DIR);
+        await saveQueue(qQueue, LOCAL_DIR);
+        output = routing.action === 'block'
+          ? { decision: 'block', reason: routing.reason }
+          : {};
         return;
       }
     }
@@ -408,6 +468,47 @@ async function readStdin() {
 
 async function fileExists(p) {
   try { await stat(p); return true; } catch { return false; }
+}
+
+/**
+ * Verify pinned supervisor modules match their committed SHA. Returns:
+ * - { ok: true } when pin file is absent (first install, no pins recorded yet)
+ *   OR when every pinned module hashes to its expected value.
+ * - { ok: false, mismatched: [{file, pinned, actual}] } on any drift.
+ *
+ * Intentionally tolerant of missing pin file so the supervisor still works
+ * on a fresh install before the operator runs `install-hook.mjs`.
+ */
+async function verifyCodePins() {
+  const pinsPath = path.join(LOCAL_DIR, 'code-pins.json');
+  let pinsContent;
+  try {
+    pinsContent = await readFile(pinsPath, 'utf8');
+  } catch { return { ok: true }; }  // no pins yet — first run
+
+  let pinsDoc;
+  try { pinsDoc = JSON.parse(pinsContent); } catch {
+    return { ok: false, mismatched: [{ file: 'code-pins.json', pinned: 'valid JSON', actual: 'corrupt' }] };
+  }
+  const expected = pinsDoc?.pins ?? {};
+  if (typeof expected !== 'object' || expected === null) return { ok: true };
+
+  const { createHash } = await import('node:crypto');
+  const supervisorDir = path.dirname(import.meta.dirname ? import.meta.dirname : '');
+  const modulesDir = import.meta.dirname;
+  const mismatched = [];
+  for (const [file, pinned] of Object.entries(expected)) {
+    try {
+      const content = await readFile(path.join(modulesDir, file), 'utf8');
+      const actual = 'sha256:' + createHash('sha256').update(content).digest('hex');
+      if (actual !== pinned) {
+        mismatched.push({ file, pinned: pinned.slice(0, 18) + '...', actual: actual.slice(0, 18) + '...' });
+      }
+    } catch (err) {
+      mismatched.push({ file, pinned: pinned.slice(0, 18) + '...', actual: `unreadable (${err.code ?? err.message})` });
+    }
+  }
+  return mismatched.length === 0 ? { ok: true } : { ok: false, mismatched };
 }
 
 main().catch(err => emitFallbackBlockAndExit(`main: ${err?.message ?? err}`, err?.stack));

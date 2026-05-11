@@ -114,6 +114,12 @@ export async function callOpenAI(input) {
 
   const reasoningEffort = input.options?.reasoningEffort ?? config.reasoning_effort ?? 'xhigh';
 
+  // Strip annotation-only keywords ($comment) before sending — Responses API
+  // strict mode tolerates them today (Phase 0 confirmed), but the safer surface
+  // is to send only the structural keywords the schema validator cares about.
+  // Documents stay annotated in the repo; only the wire form is stripped.
+  const wireSchema = stripAnnotationKeywords(input.verdictSchema.schema ?? input.verdictSchema);
+
   const requestBody = {
     model: config.model_id_pinned ?? config.model_id ?? 'gpt-5.5-pro',
     reasoning: { effort: reasoningEffort },
@@ -127,7 +133,7 @@ export async function callOpenAI(input) {
         type: 'json_schema',
         name: input.verdictSchema.name ?? 'ai_supervisor_verdict_v1',
         strict: true,
-        schema: input.verdictSchema.schema ?? input.verdictSchema,
+        schema: wireSchema,
       },
     },
   };
@@ -362,6 +368,24 @@ function makeBudgetHaltVerdict(reason) {
     forbidden_next_actions: [],
     behaviour_drift_check: { passed: true, notes: 'n/a — budget halt' },
   };
+}
+
+/**
+ * Strip JSON-Schema annotation keywords ($comment, title, description, default,
+ * examples) from a schema object so the wire form sent to OpenAI contains only
+ * structural keywords. This is defense-in-depth — strict mode accepts $comment
+ * today, but the policy is "send only what the validator needs."
+ */
+function stripAnnotationKeywords(obj) {
+  const ANNOTATIONS = new Set(['$comment', 'title', 'description', 'default', 'examples']);
+  if (Array.isArray(obj)) return obj.map(stripAnnotationKeywords);
+  if (obj === null || typeof obj !== 'object') return obj;
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (ANNOTATIONS.has(k)) continue;
+    out[k] = stripAnnotationKeywords(v);
+  }
+  return out;
 }
 
 function makePerTaskCapQuarantineVerdict(reason) {

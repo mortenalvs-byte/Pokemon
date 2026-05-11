@@ -23,11 +23,15 @@ const PATTERNS = [
 const BASH_ENV_VAR_LEAK_RE = /(?:^|;|&&|\|\|)\s*echo\s+[^|>]*\$(?:OPENAI_API_KEY|ANTHROPIC_API_KEY|GITHUB_TOKEN|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)[^|>]*\s*(?:>|>>|\||tee)/;
 const BASH_ENV_VAR_BARE = /\$\{?(?:OPENAI_API_KEY|ANTHROPIC_API_KEY|GITHUB_TOKEN|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\}?/;
 
-// Path whitelist: files that legitimately contain pattern-like literals (regexes, examples)
+// Path whitelist: files that legitimately contain pattern-like literals (regexes).
+// Strictly narrow: only the two scanner-source files themselves, which embed
+// the secret-pattern regexes as their core data. docs/governance/** is NOT
+// whitelisted — a real key written into a committed doc must be blocked.
 const PATH_WHITELIST = [
   /^scripts\/ai-supervisor\/redact\.mjs$/,
   /^scripts\/ai-supervisor\/pre-tool-use-keyscan\.mjs$/,
-  /^docs\/governance\//,
+  /^tests\/ai-supervisor-redact\.test\.ts$/,    // test file constructs synthetic patterns
+  /^tests\/ai-supervisor-keyscan\.test\.ts$/,   // (future test file; safe to pre-list)
 ];
 
 function isWhitelistedPath(p) {

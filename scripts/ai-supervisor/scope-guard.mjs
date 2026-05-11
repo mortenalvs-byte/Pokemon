@@ -69,12 +69,25 @@ const CONTENT_CHECKS = [
     test: (diffText) => SACRED_STORE_NAMES.some(name => new RegExp(`^-\\s*${name}\\s*:`, 'm').test(diffText)),
     detail: 'A sacred user-data store name has been deleted from src/db/. This is forbidden without a separate KRAVSPEC-level approval PR.',
   },
-  // 8. auditLog UPDATE/DELETE
+  // 8. auditLog UPDATE/DELETE — broadened to cover Dexie direct-table forms.
+  // Catches all reasonable mutation entry points whether the code goes through
+  // a repo wrapper or hits Dexie directly. Inserts (.add / .bulkAdd / .put on
+  // a NEW key) are allowed by gate intent, but Dexie's `.put` can also overwrite;
+  // we flag `.put` on auditLog conservatively — the operator can use approval
+  // records to greenlight a legitimate audit-log INSERT path that uses .put().
   {
     gate: 'audit-log-mutation',
     appliesTo: (filePath) => filePath.endsWith('.ts') && !filePath.startsWith('tests/'),
-    test: (diffText) => /^\+.*auditLog(?:Repo)?\.(update|delete|put|bulkPut)\s*\(/m.test(diffText),
-    detail: 'auditLog is append-only (DATA_MODEL.md §4). UPDATE/DELETE on auditLog rows is forbidden; only INSERT permitted.',
+    test: (diffText) => {
+      const PATTERNS = [
+        /^\+.*auditLog(?:Repo)?\.(update|delete|put|bulkPut|bulkDelete|clear)\s*\(/m,
+        /^\+.*\bdb\.auditLog\.(update|delete|put|bulkPut|bulkDelete|clear)\s*\(/m,
+        /^\+.*\bdb\.table\(\s*['"]auditLog['"]\s*\)\.(update|delete|put|bulkPut|bulkDelete|clear)\s*\(/m,
+        /^\+.*\.where\(\s*['"]?auditLog['"]?[^)]*\)\.(modify|delete)\s*\(/m,
+      ];
+      return PATTERNS.some(re => re.test(diffText));
+    },
+    detail: 'auditLog is append-only (DATA_MODEL.md §4). UPDATE/DELETE/PUT/CLEAR on auditLog rows is forbidden in any form (auditLogRepo, db.auditLog, db.table("auditLog"), .where(...).modify/delete). Only INSERT via .add/.bulkAdd is permitted.',
   },
   // 10. pokemonTcgApiKey leak
   {
@@ -151,10 +164,14 @@ const CONTENT_CHECKS = [
 // or scripts that produce backup files.
 function checkBackupFileShape(diffText, filePath) {
   if (!filePath.includes('backup')) return null;
-  // Heuristic: if diff adds an object literal with 'app:' but NOT all 12 keys,
-  // flag it. This is approximate — full validation would need AST parsing.
-  const added = diffText.split('\n').filter(l => l.startsWith('+')).join('\n');
-  if (!/^['"]?app['"]?\s*:/m.test(added)) return null;
+  // Strip the leading `+` from added diff lines BEFORE pattern-matching;
+  // otherwise multiline `^app:` anchors never trigger because each line
+  // starts with `+`. This was the reviewer-flagged bug.
+  const added = diffText.split('\n')
+    .filter(l => l.startsWith('+'))
+    .map(l => l.slice(1))           // drop the '+' so line starts with actual content
+    .join('\n');
+  if (!/^\s*['"]?app['"]?\s*:/m.test(added)) return null;
 
   const required = ['app', 'schemaVersion', 'exportedAt', 'settings', 'sets', 'cards', 'holdings', 'lots', 'lotItems', 'binders', 'binderSlots', 'wishlist', 'auditLog', 'appMeta'];
   const missing = required.filter(key => !new RegExp(`['"]?${key}['"]?\\s*:`).test(added));

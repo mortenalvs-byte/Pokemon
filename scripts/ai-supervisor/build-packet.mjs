@@ -128,13 +128,25 @@ export async function buildPacket(input) {
   const packetPath = path.join(REVIEW_PACKETS_DIR_DEFAULT, `${runId}.md`);
   await writeFile(packetPath, userContent, 'utf8');
 
-  // Also write the full JSON form
+  // Also write the JSON form, but NEVER persist raw full_diff or unredacted
+  // packet_diff/diff to disk — review-packets are local but still operator-
+  // accessible and could be backed up. Replace diff fields with sha+size
+  // references; the .md form (above) holds the redacted packet content.
   const jsonPath = path.join(REVIEW_PACKETS_DIR_DEFAULT, `${runId}.json`);
+  const { createHash } = await import('node:crypto');
+  const sha = (s) => createHash('sha256').update(String(s ?? '')).digest('hex').slice(0, 16);
+  const evidenceForJson = { ...gitEvidence };
+  for (const k of ['full_diff', 'packet_diff', 'diff']) {
+    if (typeof evidenceForJson[k] === 'string') {
+      const orig = evidenceForJson[k];
+      evidenceForJson[k] = `(omitted from JSON; size=${orig.length}, sha256-prefix=${sha(orig)}) — see ${runId}.md for the redacted packet body`;
+    }
+  }
   await writeFile(jsonPath, JSON.stringify({
     runId,
     at: new Date().toISOString(),
     currentTask,
-    gitEvidence: { ...gitEvidence, diff: gitEvidence.diff_truncated ? '(truncated; see .md)' : gitEvidence.diff },
+    gitEvidence: evidenceForJson,
     verification,
     scopeGuardResult,
   }, null, 2), 'utf8');

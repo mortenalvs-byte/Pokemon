@@ -9,12 +9,21 @@ import { readFile, stat } from 'node:fs/promises';
 
 const exec = promisify(execFile);
 
+// Note: we DELIBERATELY do NOT exclude .claude here. Scope-guard has hard-forbidden
+// gates for .claude/plans/** and .claude/projects/** — if we excluded the whole
+// .claude directory at evidence-collection time, those gates would never fire.
+// We exclude only the gitignored .claude subdirs that are user/operator scratch
+// space (worktrees, launch.json, settings.local.json). settings.local.json is
+// gitignored so it won't appear in committed diffs anyway; we exclude it from
+// the unstaged/untracked pass to keep packets focused on real work.
 const EXCLUDE_PATHS = [
   ':(exclude)node_modules',
   ':(exclude)dist',
   ':(exclude).git',
   ':(exclude).local',
-  ':(exclude).claude',
+  ':(exclude).claude/worktrees',
+  ':(exclude).claude/settings.local.json',
+  ':(exclude).claude/launch.json',
   ':(exclude)coverage',
   ':(exclude)src-tauri/target',
 ];

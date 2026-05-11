@@ -80,6 +80,41 @@ describe('scope-guard — hard-forbidden paths', () => {
   });
 });
 
+describe('scope-guard — auditLog append-only (broadened)', () => {
+  it.each([
+    ['auditLogRepo.update',                          'auditLogRepo.update(1, {x:1})'],
+    ['auditLogRepo.delete',                          'auditLogRepo.delete(1)'],
+    ['auditLogRepo.bulkDelete',                      'auditLogRepo.bulkDelete([1,2])'],
+    ['auditLogRepo.clear',                           'auditLogRepo.clear()'],
+    ['db.auditLog.update',                           'db.auditLog.update(1, {x:1})'],
+    ['db.auditLog.delete',                           'db.auditLog.delete(1)'],
+    ['db.auditLog.bulkDelete',                       'db.auditLog.bulkDelete([1,2])'],
+    ['db.table("auditLog").update',                  'db.table("auditLog").update(1, {x:1})'],
+    ['db.table("auditLog").delete',                  'db.table("auditLog").delete(1)'],
+    ['db.table("auditLog").bulkDelete',              'db.table("auditLog").bulkDelete([1,2])'],
+    ['db.table(\'auditLog\').clear',                  "db.table('auditLog').clear()"],
+  ])('blocks %s', async (_label, snippet) => {
+    const r = await runScopeGuard({
+      changedFiles: ['src/services/audit-service.ts'],
+      fullDiff: makeDiff('src/services/audit-service.ts', `+ ${snippet};\n`),
+      currentTask: { id: 't' },
+    });
+    expect(r.passed).toBe(false);
+    expect(r.violations.find((v: any) => v.gate === 'audit-log-mutation')).toBeTruthy();
+  });
+
+  it('allows auditLog INSERT via .add', async () => {
+    const r = await runScopeGuard({
+      changedFiles: ['src/services/audit-service.ts'],
+      fullDiff: makeDiff('src/services/audit-service.ts', '+ db.auditLog.add({ at: Date.now(), action: "x" });\n'),
+      currentTask: { id: 't' },
+    });
+    // .add() is not in the forbidden verbs, so this content-pattern doesn't fire.
+    // (Some src/db/* gate may still fire, but for this file it should pass.)
+    expect(r.violations.find((v: any) => v.gate === 'audit-log-mutation')).toBeUndefined();
+  });
+});
+
 describe('scope-guard — content-pattern checks', () => {
   it('blocks .skip() addition in existing test', async () => {
     const r = await runScopeGuard({
