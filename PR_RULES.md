@@ -132,6 +132,10 @@ If one of these is genuinely needed, the approval PR must:
 2. Be merged on its own.
 3. Be referenced in the implementation PR's description.
 
+### Local development tooling exception (2026-05-11)
+
+Local dev/review tools that run only on the developer's machine, never ship in the application bundle, never call out from the production app, and never receive user-owned data, are NOT considered "external paid APIs" under this section. Adding a new local dev tool that uses an external paid API requires a docs-only approval PR updating [docs/governance/AI_SUPERVISOR_APPROVAL.md](docs/governance/AI_SUPERVISOR_APPROVAL.md) (or a sibling approval record) before any implementation PR.
+
 ---
 
 ## 8. Merge rule
