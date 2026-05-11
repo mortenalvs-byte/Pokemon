@@ -254,7 +254,7 @@ Phase 7 — Schema migration (REQUIRES OPERATOR APPROVAL FIRST; not auto-queueab
   PR E2 (errorLog store + schema v3→v4 OR combined with A4)
 ```
 
-**Total: 24 PRs (22 auto-queueable v2-compatible + 2 deferred schema-bump PRs that require explicit operator approval).** At roughly 1–4 hours wall-clock per PR with the AI Supervisor, the auto-queueable set is a multi-day to ~2-week autonomous run depending on operator review pace and OpenAI rate limits. The two schema-bump PRs are deferred to whenever the operator decides to take on a coordinated migration.
+**Total: 25 PRs** when Section G's three pending PR30-roadmap items (35, 37, 38) are counted: **23 v2-compatible + auto-queueable** plus **2 deferred schema-bump PRs that require explicit operator approval** (A4, E2). At roughly 1–4 hours wall-clock per PR with the AI Supervisor, the v2-compatible set is a multi-day to ~2-week autonomous run depending on operator review pace and OpenAI rate limits. The two schema-bump PRs are deferred to whenever the operator decides to take on a coordinated migration. If F1–F4 turn out to cover PR 37's a11y polish, F1–F4 may obsolete PR 37 — note this when scheduling phase 6.
 
 ---
 
@@ -294,12 +294,13 @@ Section A PRs explicitly **change** binder behaviour (mixed-set binders become i
 ### Branch naming convention
 
 Each PR uses the convention `feat/<section><number>-<slug>`:
-- `feat/A1-binder-setid-schema-v3`
+- `feat/A1-manual-binder-setid-required`  (v2-compatible)
+- `feat/A4-binder-setid-schema-v3`        (deferred; schema bump)
 - `feat/B1-lot-bulk-import`
 - `feat/C1-browse-virtualization`
 - …
 
-This mirrors [PR_RULES.md §11](../PR_RULES.md) branch naming.
+This mirrors [PR_RULES.md §11](../PR_RULES.md) branch naming. **A1 uses `feat/A1-manual-binder-setid-required`** (v2-compatible, no schema change). The `schema-v3` suffix belongs only to A4 (`feat/A4-binder-setid-schema-v3`).
 
 ### Queue seed (for `.local/ai-supervisor/queue.json`)
 
@@ -345,7 +346,9 @@ After this document merges to main, copy the following into `.local/ai-superviso
 }
 ```
 
-After PR A1 lands, append PR A2's task (assignment-service set-guard, v2-compatible). Then A3 (per-card open-slot dropdown). Then proceed to Section B. The discovery pass in `discover-tasks.mjs` may pick up additional v2-compatible items from this roadmap automatically; **it must not queue tasks marked `requires_approval_record`** (a PR3 supervisor enhancement will enforce this filter explicitly — until then, the responsibility is operator-side: review every queued task before letting the loop run).
+After PR A1 lands, the operator manually appends PR A2's task (assignment-service set-guard, v2-compatible). Then A3 (per-card open-slot dropdown). Then proceed to Section B.
+
+**Important constraint on auto-discovery:** This document's tables (A1–F4 + 35/37/38) are **planning-only descriptions**. Only items that have been **explicitly expanded into queue.json entries with `allowedFiles` + `mustNotChange` + `acceptance` + non-null `approval_id` (for sacred-path PRs)** are executable by the supervisor. Today's `discover-tasks.mjs` does not have an approval-aware filter; until that filter ships (planned for a future supervisor enhancement PR), **the operator is fully responsible** for reviewing every entry before it enters `queue.json` and for ensuring no sacred-path task is queued without a covering approval record. The supervisor will block sacred-path iterations via scope-guard regardless, but pre-queue review avoids wasted cycles.
 
 **To queue PR A4 (schema v3 migration), the operator must:**
 1. Decide the migration is needed and ready to land.
