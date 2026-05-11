@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Strict-mode OpenAI Responses API JSON schema for supervisor verdicts. No anyOf/oneOf/allOf/$ref/pattern.",
+  "name": "ai_supervisor_verdict_v1",
+  "strict": true,
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schema_version",
+      "verdict",
+      "risk_level",
+      "confidence",
+      "claude_next_prompt",
+      "quarantine_reason",
+      "summary",
+      "verification",
+      "scope_guard",
+      "required_sources",
+      "blocking_findings",
+      "allowed_next_actions",
+      "forbidden_next_actions",
+      "behaviour_drift_check"
+    ],
+    "properties": {
+      "schema_version": {
+        "type": "integer",
+        "enum": [1]
+      },
+      "verdict": {
+        "$comment": "AUTO_MERGE_TO_INTEGRATION is reserved for a future PR (not V1). Model must use AUTO_READY instead. BUDGET_HALT and QUEUE_EXHAUSTED are supervisor-only verdicts emitted by code, never by the model.",
+        "type": "string",
+        "enum": [
+          "CONTINUE_CLAUDE",
+          "SOURCE_REQUIRED",
+          "SPLIT_AUTOMATICALLY",
+          "REBUILD_FROM_SCRATCH",
+          "AUTO_READY",
+          "QUARANTINE_AND_CONTINUE",
+          "SECURITY_QUARANTINE"
+        ]
+      },
+      "risk_level": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+      "confidence": { "type": "number" },
+      "claude_next_prompt": { "type": ["string", "null"] },
+      "quarantine_reason": { "type": ["string", "null"] },
+      "summary": { "type": "string" },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["typecheck", "test", "build", "audit", "qa_browser", "banned_strings_dist", "backup_tests", "binder_tests"],
+        "properties": {
+          "typecheck":           { "type": "object", "additionalProperties": false, "required": ["status", "summary"], "properties": { "status": { "type": "string", "enum": ["PASS", "FAIL", "SKIP"] }, "summary": { "type": "string" } } },
+          "test":                { "type": "object", "additionalProperties": false, "required": ["status", "summary"], "properties": { "status": { "type": "string", "enum": ["PASS", "FAIL", "SKIP"] }, "summary": { "type": "string" } } },
+          "build":               { "type": "object", "additionalProperties": false, "required": ["status", "summary"], "properties": { "status": { "type": "string", "enum": ["PASS", "FAIL", "SKIP"] }, "summary": { "type": "string" } } },
+          "audit":               { "type": "object", "additionalProperties": false, "required": ["status", "summary"], "properties": { "status": { "type": "string", "enum": ["PASS", "FAIL", "SKIP"] }, "summary": { "type": "string" } } },
+          "qa_browser":          { "type": "object", "additionalProperties": false, "required": ["status", "summary"], "properties": { "status": { "type": "string", "enum": ["PASS", "FAIL", "SKIP"] }, "summary": { "type": "string" } } },
+          "banned_strings_dist": { "type": "object", "additionalProperties": false, "required": ["status", "summary"], "properties": { "status": { "type": "string", "enum": ["PASS", "FAIL", "SKIP"] }, "summary": { "type": "string" } } },
+          "backup_tests":        { "type": "object", "additionalProperties": false, "required": ["status", "summary"], "properties": { "status": { "type": "string", "enum": ["PASS", "FAIL", "SKIP"] }, "summary": { "type": "string" } } },
+          "binder_tests":        { "type": "object", "additionalProperties": false, "required": ["status", "summary"], "properties": { "status": { "type": "string", "enum": ["PASS", "FAIL", "SKIP"] }, "summary": { "type": "string" } } }
+        }
+      },
+      "scope_guard": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "violations", "approval_used"],
+        "properties": {
+          "status": { "type": "string", "enum": ["PASS", "FAIL"] },
+          "violations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["rule", "file_path", "detail"],
+              "properties": {
+                "rule":      { "type": "string" },
+                "file_path": { "type": "string" },
+                "detail":    { "type": "string" }
+              }
+            }
+          },
+          "approval_used": { "type": ["string", "null"] }
+        }
+      },
+      "required_sources": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["topic", "url", "rationale", "max_age_days"],
+          "properties": {
+            "topic":        { "type": "string" },
+            "url":          { "type": "string" },
+            "rationale":    { "type": "string" },
+            "max_age_days": { "type": "integer" }
+          }
+        }
+      },
+      "blocking_findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["category", "severity", "file_path", "line_hint", "message"],
+          "properties": {
+            "category":  { "type": "string", "enum": ["TYPECHECK", "TEST", "BUILD", "AUDIT", "SCOPE", "DATA_SAFETY", "BACKUP_SAFETY", "SOURCE_MISSING", "PR_RULES", "SECURITY", "BEHAVIOUR_DRIFT", "OTHER"] },
+            "severity":  { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+            "file_path": { "type": ["string", "null"] },
+            "line_hint": { "type": ["integer", "null"] },
+            "message":   { "type": "string" }
+          }
+        }
+      },
+      "allowed_next_actions":   { "type": "array", "items": { "type": "string" } },
+      "forbidden_next_actions": { "type": "array", "items": { "type": "string" } },
+      "behaviour_drift_check": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["passed", "notes"],
+        "properties": {
+          "passed": { "type": "boolean" },
+          "notes":  { "type": "string" }
+        }
+      }
+    }
+  }
+}

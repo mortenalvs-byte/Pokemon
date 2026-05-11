@@ -1,0 +1,4 @@
+# Force LF on text files the AI Supervisor expects to read deterministically.
+# Without this, Windows clones convert CRLF and break the prompt-cache prefix.
+scripts/ai-supervisor/templates/*.md  text eol=lf
+scripts/ai-supervisor/schemas/*.json  text eol=lf
