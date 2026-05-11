@@ -26,7 +26,7 @@
 
 **Critical (directly contradicts operator requirements):**
 
-1. **Binders are NOT set-scoped at the data layer.** `sourceSetId` is optional + unenforced ([src/domain/types.ts:166](../src/domain/types.ts)); a binder can mix cards from different sets today. The operator's requirement "hver perm hører kun til hvert identiske sett" is a structural change.
+1. **Binders are NOT set-scoped at the data layer.** `sourceSetId` is optional + unenforced ([src/domain/types.ts:166](../src/domain/types.ts)); a binder can mix cards from different sets today. The operator's requirement "hver perm hører kun til hvert identiske sett" is closable in two stages: (a) **v2-compatible**: require setId in the manual-binder form and conditionally enforce it in the assignment service when set, preserving legacy binders untouched; (b) **deferred schema bump**: make the field NOT-NULL with backfill migration — requires operator-issued approval record.
 2. **No per-card "where can I put this in MY set's binder?" dropdown.** `slotsForCardId` ([src/services/binder-slot-service.ts:51](../src/services/binder-slot-service.ts)) returns ALL binders, not filtered by set or open-status. Card-detail's "Binder-lokasjoner" table lists every mention; it doesn't say "an open slot for this card exists in your Base Set binder."
 3. **No bulk paste/CSV import into a lot.** New lot items today require a one-at-a-time dialog ([src/views/lot-detail.ts:661](../src/views/lot-detail.ts)). A 200-card lot = 200 dialogs.
 4. **No search/filter inside lot-detail.** Pagination at 50/page is the only access pattern. A 500-card lot requires 10 page-turns to find an item.
@@ -158,12 +158,14 @@ The PRs below are ordered by **operator-value × independence**. Each PR is sing
 
 ### Section A — Binder set-scoping (CRITICAL: directly closes operator requirements #5, #9, #10)
 
-| PR | Title | Scope | Sacred-path? | Test gates |
-|---|---|---|---|---|
-| **A1** | Schema v3: `binders.setId` required + migration | Add NOT-NULL `setId` to `binders`; migration backfills from `sourceSetId` or majority-card-set heuristic; schemaVersion v2→v3; BACKUP_FORMAT bump | **YES** — schema.ts, BACKUP_FORMAT.md. Requires approval record. | New migration test; backup-roundtrip stays green |
-| **A2** | Assignment-service set-guard | `assignHoldingToSlot` rejects when holding's card.setId ≠ binder.setId; `findAssignableHoldingsForSlot` filters by setId; same for autoAssign + direct-add | NO (service-layer only) | New tests assert cross-set assignment rejected |
-| **A3** | Per-card open-slot dropdown | New `findOpenSlotsForCardInSetBinder(cardId)` service; new dropdown component in card-detail showing "Open slots in your <SetName> binder: 3, 7, 23 — click to assign" | NO | New view test |
-| **A4** | Require setId in manual-binder form | Manual `binder-form` requires set picker; from-set wizard already sets it; remove the nullable path | NO | Form test asserts setId required |
+**Phased approach.** Section A is restructured into three v2-compatible PRs (A1–A3, auto-queueable) plus a deferred schema-migration PR (A4, **explicitly NOT auto-queueable** — requires operator-initiated approval record before queueing). This lets the operator-critical UX land immediately without breaking the schemaVersion=2 invariant pinned in [PR_RULES.md §3](../PR_RULES.md), [BACKUP_FORMAT.md](../BACKUP_FORMAT.md), and the supervisor's scope-guard.
+
+| PR | Title | Scope | Sacred-path? | Test gates | Auto-queueable? |
+|---|---|---|---|---|---|
+| **A1** | Require setId in manual-binder form | Manual `binder-form` requires a set picker; from-set wizard already sets `sourceSetId`. **No schema change** — `sourceSetId` stays nullable to preserve existing binders. Only new binders are forced set-scoped. | NO (form + UI only) | Form test asserts set picker required for new binder | ✓ YES |
+| **A2** | Assignment-service set-guard (v2-compatible) | `assignHoldingToSlot` rejects when holding's card.setId ≠ binder.sourceSetId, **but only when sourceSetId is set** (legacy null-sourceSetId binders still work to preserve user data). `findAssignableHoldingsForSlot` filters by setId in the same conditional way. Adds a `binder_legacy_unscoped` audit row when a legacy binder is touched. | NO (service-layer only) | New tests assert cross-set assignment rejected for scoped binders + legacy binders still function | ✓ YES |
+| **A3** | Per-card open-slot dropdown | New `findOpenSlotsForCardInSetBinder(cardId)` service returning open slots in any binder where `sourceSetId === card.setId`. New dropdown component in card-detail. Legacy unscoped binders excluded from the lookup. | NO | New view test | ✓ YES |
+| **A4** | (DEFERRED) Schema v3: `binders.setId` NOT-NULL + migration | Make `setId` required; migrate v2→v3 by backfilling from `sourceSetId` or majority-card-set heuristic for legacy binders; schemaVersion v2→v3; BACKUP_FORMAT bump; restore validation extended. | **YES** — schema.ts, BACKUP_FORMAT.md, restore.ts, backup.ts, init.ts | New migration test + backup-roundtrip stays green | ✗ **NO — requires explicit operator approval record under `.local/ai-supervisor/approvals/` BEFORE queueing. The supervisor MUST NOT auto-discover this from this document.** |
 
 ### Section B — Bulk handling (operator requirements #4, #6, #7)
 
@@ -194,10 +196,10 @@ The PRs below are ordered by **operator-value × independence**. Each PR is sing
 
 | PR | Title | Scope | Notes |
 |---|---|---|---|
-| **E1** | Activity-log view | New route `/activity` showing recent `auditLog` entries with filter (action / date / store) | DB-read-only |
-| **E2** | Error-history panel | Persist last 100 user-visible errors in IndexedDB (new `errorLog` store); surface in settings or dashboard | Schema bump v3→v4 — bundle with A1 if possible to minimize migration count |
-| **E3** | Auto-sync schedule | Settings toggle: "Sync every N hours when app open"; background timer | UI + service-worker integration |
-| **E4** | Backup auto-export cadence | Settings: "Export backup to ~/Downloads every N days"; uses File System Access API on desktop | UI-only on web; Tauri integration on desktop |
+| **E1** | Activity-log view | New route `/activity` showing recent `auditLog` entries with filter (action / date / store) | DB-read-only. ✓ Auto-queueable |
+| **E2** | (DEFERRED) Error-history panel | Persist last 100 user-visible errors in IndexedDB (new `errorLog` store); surface in settings or dashboard | **Requires new store** → schema bump. **NOT auto-queueable; requires explicit operator approval record.** Defer until after A4 or merge into A4 to combine migrations. |
+| **E3** | Auto-sync schedule | Settings toggle: "Sync every N hours when app open"; background timer | UI + service-worker integration. ✓ Auto-queueable |
+| **E4** | Backup auto-export cadence | Settings: "Export backup to ~/Downloads every N days"; uses File System Access API on desktop | UI-only on web; Tauri integration on desktop. ✓ Auto-queueable |
 
 ### Section F — Accessibility polish (operator requirement #3, partial)
 
@@ -223,10 +225,12 @@ These are from [PR30_CLEANUP_ROADMAP.md](PR30_CLEANUP_ROADMAP.md) and should be 
 ## 5. Suggested execution order
 
 ```
-Phase 1 — Operator-critical UX (closes requirements #5, #9, #10, #6)
-  PR A1 → PR A2 → PR A3 → PR A4
-  Then: PR B3 (binder multi-select; depends on A3)
-  Then: PR D1 (lot→binder prompt; depends on A3)
+Phase 1 — Operator-critical UX, v2-compatible (closes requirements #5, #9, #10, #6)
+  PR A1 (manual-binder set picker)
+  PR A2 (assignment-service set-guard, conditional on sourceSetId)
+  PR A3 (per-card open-slot dropdown)
+  PR B3 (binder multi-select; depends on A3)
+  PR D1 (lot→binder prompt; depends on A3)
 
 Phase 2 — Bulk + lot ergonomics (closes #4, #7)
   PR B1 (lot bulk-import) → PR B2 (lot filter)
@@ -240,22 +244,31 @@ Phase 4 — Existing roadmap cleanup
   PR 35 (CSS) → PR 38 (perf + CSP) → PR 37 (a11y if still needed after F1-F4)
 
 Phase 5 — Observability + automation (closes #11 part 2)
-  PR E1 (activity log) → PR E2 (error history) → PR E3 (auto-sync) → PR E4 (backup cadence)
+  PR E1 (activity log) → PR E3 (auto-sync) → PR E4 (backup cadence)
 
 Phase 6 — Accessibility polish (closes #3)
   PR F1 (shortcuts) → PR F2 (skip-link) → PR F3 (focus-trap) → PR F4 (a11y audit doc)
+
+Phase 7 — Schema migration (REQUIRES OPERATOR APPROVAL FIRST; not auto-queueable)
+  PR A4 (binders.setId NOT-NULL + schemaVersion v2→v3 + BACKUP_FORMAT bump)
+  PR E2 (errorLog store + schema v3→v4 OR combined with A4)
 ```
 
-**Total: 24 PRs.** At roughly 1–4 hours wall-clock per PR with the AI Supervisor, this is a multi-day to ~2-week autonomous run depending on operator review pace and OpenAI rate limits.
+**Total: 24 PRs (22 auto-queueable v2-compatible + 2 deferred schema-bump PRs that require explicit operator approval).** At roughly 1–4 hours wall-clock per PR with the AI Supervisor, the auto-queueable set is a multi-day to ~2-week autonomous run depending on operator review pace and OpenAI rate limits. The two schema-bump PRs are deferred to whenever the operator decides to take on a coordinated migration.
 
 ---
 
 ## 6. Notes for the AI Supervisor
 
-### Approval records required (sacred-path PRs)
+### Approval records required (sacred-path PRs — NOT auto-queueable)
 
-- **PR A1** (schema v3 + migration + BACKUP_FORMAT bump): requires explicit approval record under `.local/ai-supervisor/approvals/`. Sacred paths touched: `src/db/schema.ts`, `BACKUP_FORMAT.md`, `src/db/restore.ts` (validator update for new field), `src/db/backup.ts` (writer includes new field), `src/db/init.ts` (migration registration).
-- **PR E2** (errorLog store): another schema bump (v3→v4). If A1 and E2 land close together, consider combining them into one schema bump to minimize migration count — though that violates PR_RULES §2 (one purpose per PR), so prefer separate PRs unless operator overrides.
+The following PRs touch sacred paths defined in [PR_RULES.md §3 + §7](../PR_RULES.md), [DATA_MODEL.md](../DATA_MODEL.md), and [BACKUP_FORMAT.md](../BACKUP_FORMAT.md). They are explicitly **NOT auto-discoverable** by `discover-tasks.mjs` and require an operator-issued approval record under `.local/ai-supervisor/approvals/` before being added to the queue. The supervisor's scope-guard ([scripts/ai-supervisor/scope-guard.mjs](../scripts/ai-supervisor/scope-guard.mjs)) blocks any iteration touching these paths until the approval is in place.
+
+- **PR A4** (schema v3 + migration + BACKUP_FORMAT bump): sacred paths `src/db/schema.ts`, `BACKUP_FORMAT.md`, `src/db/restore.ts`, `src/db/backup.ts`, `src/db/init.ts`. Required approval fields: `task_id`, exact `approved_paths` list, ≥20-char rationale, `expires_at` ≤48h from `issued_at`, `operator` identity.
+- **PR E2** (errorLog store): same as A4 — new IndexedDB store implies a schema bump. If E2 lands after A4, it becomes v3→v4. If the operator wants to bundle the two migrations, A4+E2 can be combined into a single PR with one approval record — but that violates PR_RULES §2 (one-purpose-per-PR); operator should weigh the trade-off.
+- Any future PR proposing a new store, a rename of an existing store/field, or a change to backup serialization: same requirement.
+
+The supervisor will **never** auto-queue these. They are operator-initiated only.
 
 ### Test gates per PR
 
@@ -290,7 +303,7 @@ This mirrors [PR_RULES.md §11](../PR_RULES.md) branch naming.
 
 ### Queue seed (for `.local/ai-supervisor/queue.json`)
 
-After this document merges to main, copy the following into `.local/ai-supervisor/queue.json` to bootstrap the supervisor's autonomous run. The supervisor's `discover-tasks.mjs` will also auto-pick up this file as a roadmap source on subsequent iterations.
+After this document merges to main, copy the following into `.local/ai-supervisor/queue.json` to bootstrap the supervisor. **Only v2-compatible PRs are auto-queueable.** The sacred-path migration (A4) and any other PR marked "NOT auto-queueable" in §4 require an explicit operator-issued approval record under `.local/ai-supervisor/approvals/` BEFORE being added to the queue.
 
 ```json
 {
@@ -298,34 +311,31 @@ After this document merges to main, copy the following into `.local/ai-superviso
   "tasks": [
     {
       "id": "task-20260511-A1",
-      "title": "PR A1 — Schema v3: binders.setId required + migration",
-      "description": "Add required setId field to binders store; migrate v2→v3 by backfilling from sourceSetId or majority-card-set heuristic; bump schemaVersion; update BACKUP_FORMAT.md to v3; preserve all existing binder data; backup-roundtrip stays green.",
+      "title": "PR A1 — Require setId in manual-binder form (v2-compatible)",
+      "description": "Add a required set picker to the manual-binder creation form. From-set wizard already populates sourceSetId; manual binders currently can have sourceSetId=null. After this PR, ALL NEW binders are set-scoped at creation time. Existing binders with sourceSetId=null are NOT touched (no migration; no schema change; schemaVersion stays at 2). A subsequent PR (A4) will eventually backfill and make the field required at the schema level — but that requires a separate approval record and is NOT auto-queueable from this document.",
       "roadmap_pr_ref": "AUDIT_2026-05-11 §A1",
-      "branch_hint": "feat/A1-binder-setid-schema-v3",
+      "branch_hint": "feat/A1-manual-binder-setid-required",
       "allowedFiles": [
-        "src/db/schema.ts",
-        "src/db/migrations.ts",
-        "src/db/init.ts",
-        "src/db/backup.ts",
-        "src/db/restore.ts",
-        "src/repositories/binders-repo.ts",
-        "src/domain/types.ts",
-        "BACKUP_FORMAT.md",
-        "CHANGELOG.md",
-        "tests/migrations.test.ts",
-        "tests/backup-roundtrip.test.ts"
+        "src/components/binder-form.ts",
+        "src/views/binders.ts",
+        "src/views/binder-detail.ts",
+        "src/services/binder-service.ts",
+        "tests/binder-form.test.ts",
+        "tests/binder-service.test.ts",
+        "CHANGELOG.md"
       ],
       "mustNotChange": [
-        "schemaVersion semantic for other stores",
-        "existing audit-log shape",
-        "soft-delete semantics"
+        "src/db/schema.ts",
+        "BACKUP_FORMAT.md",
+        "schemaVersion",
+        "existing nullable sourceSetId semantics for legacy binders",
+        "from-set wizard behaviour"
       ],
       "acceptance": [
-        "schemaVersion bumped v2→v3",
-        "All existing binders have setId populated after migration",
-        "backup-roundtrip test passes",
-        "BACKUP_FORMAT.md describes new field",
-        "Migration test asserts v2→v3 path"
+        "Manual binder form requires a set selection before submit",
+        "Existing binders with sourceSetId=null still load and render without error",
+        "Backup-roundtrip test stays green",
+        "schemaVersion remains 2"
       ],
       "approval_id": null,
       "added_at": "2026-05-11T00:00:00.000Z"
@@ -335,7 +345,13 @@ After this document merges to main, copy the following into `.local/ai-superviso
 }
 ```
 
-After PR A1 lands, append PR A2's task, etc. Or let `discover-tasks.mjs` pull entries from this document automatically (the discovery pass scans roadmap docs for `PR <id>` patterns).
+After PR A1 lands, append PR A2's task (assignment-service set-guard, v2-compatible). Then A3 (per-card open-slot dropdown). Then proceed to Section B. The discovery pass in `discover-tasks.mjs` may pick up additional v2-compatible items from this roadmap automatically; **it must not queue tasks marked `requires_approval_record`** (a PR3 supervisor enhancement will enforce this filter explicitly — until then, the responsibility is operator-side: review every queued task before letting the loop run).
+
+**To queue PR A4 (schema v3 migration), the operator must:**
+1. Decide the migration is needed and ready to land.
+2. Create an approval record at `.local/ai-supervisor/approvals/appr-<date>-binder-setid-schema-v3.md` covering the sacred paths in A4's row of §4. Include `task_id`, `approved_paths` with explicit list, `expires_at`, `operator`, rationale ≥20 chars.
+3. Manually append the A4 task to `queue.json` with the approval's `approval_id` filled in.
+4. Then start a Claude session — the supervisor will see the approval and let A4 proceed.
 
 ---
 
