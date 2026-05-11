@@ -311,9 +311,15 @@ export function isPathCoveredByApproval(filePath, taskId, activeApprovals) {
 
 function matchGlob(target, pattern) {
   // Convert minimal glob to regex: ** = any (including /), * = any except /
+  // The `**` token must be protected via a placeholder so the later `*` →
+  // `[^/]*` substitution does not corrupt it (otherwise `**` ends up as
+  // `.[^/]*` because the `*` inside `.*` from the first replace gets re-matched).
+  const DOUBLE_STAR_SENTINEL = ' DOUBLESTAR ';
   const re = '^' + pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*/g, '.*')
-    .replace(/\*/g, '[^/]*') + '$';
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')        // escape regex specials (not *)
+    .replace(/\*\*/g, DOUBLE_STAR_SENTINEL)      // protect ** from the next pass
+    .replace(/\*/g, '[^/]*')                      // single * → any except /
+    .replace(new RegExp(DOUBLE_STAR_SENTINEL, 'g'), '.*') // restore ** → any
+    + '$';
   return new RegExp(re).test(target);
 }

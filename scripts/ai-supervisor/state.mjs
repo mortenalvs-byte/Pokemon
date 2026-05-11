@@ -110,7 +110,7 @@ export async function acquireLock(localDir = LOCAL_DIR_DEFAULT) {
       if (fh) { try { await fh.close(); } catch {} }
       if (err.code !== 'EEXIST') throw err;
 
-      // Lock exists — read content, check PID liveness
+      // Lock exists — read content and apply layered staleness checks
       let existing;
       try {
         existing = JSON.parse(await readFile(lockPath, 'utf8'));
@@ -119,14 +119,38 @@ export async function acquireLock(localDir = LOCAL_DIR_DEFAULT) {
         try { await unlink(lockPath); } catch {}
         continue;
       }
-      if (await isPidAlive(existing.pid)) {
-        return { ok: false, reason: 'held-by-active-pid', existing };
+      if (await isLockStale(existing)) {
+        // Stale lock — reap and retry
+        try { await unlink(lockPath); } catch {}
+        continue;
       }
-      // Stale lock — reap and retry
-      try { await unlink(lockPath); } catch {}
+      return { ok: false, reason: 'held-by-active-pid', existing };
     }
   }
   return { ok: false, reason: 'unable-to-acquire-after-reap' };
+}
+
+// Maximum reasonable lifetime of a supervisor run. A single Stop hook is
+// capped at 900s; even with retries and long verification, an active lock
+// older than ~30 minutes almost certainly belongs to a process that died
+// and got its PID reused before we noticed.
+const MAX_LOCK_AGE_MS = 30 * 60 * 1000;
+
+/**
+ * Determine if an existing lock content describes a stale (releasable) lock.
+ * Layered detection mitigates PID reuse, locks left on a shared filesystem
+ * from another machine, and dead-but-replaced-PID scenarios.
+ */
+async function isLockStale(existing) {
+  if (!existing || typeof existing !== 'object') return true;
+  // Lock from another machine — we cannot validate the PID at all; treat as stale.
+  if (typeof existing.hostname === 'string' && existing.hostname !== os.hostname()) return true;
+  // Lock acquired implausibly long ago — assume the holder is gone (PID may have been reused).
+  const acquiredAt = typeof existing.start_time === 'number' ? existing.start_time : 0;
+  if (acquiredAt > 0 && Date.now() - acquiredAt > MAX_LOCK_AGE_MS) return true;
+  // PID liveness check (last layer)
+  if (typeof existing.pid !== 'number' || existing.pid <= 0) return true;
+  return !(await isPidAlive(existing.pid));
 }
 
 async function isPidAlive(pid) {

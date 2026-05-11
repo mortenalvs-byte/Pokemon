@@ -153,3 +153,20 @@ describe('redact.mjs — redactDiff (file-path-aware)', () => {
     expect(out).toContain('[REDACTED:openai-key]');
   });
 });
+
+describe('redact.mjs — global scrubSecretPatterns coverage', () => {
+  // This block proves that scrubSecretPatterns by itself catches secrets in
+  // free-form packet sections (task descriptions, approval rationale, verification
+  // summaries). build-packet.mjs runs this as a defense-in-depth pass on the WHOLE
+  // composed userContent so non-diff packet sections cannot leak keys.
+  it.each([
+    ['task description', `Description: rotate the key sk-${'A'.repeat(50)} now`],
+    ['approval rationale', `rationale: |\n  Fix needs ghp_${'B'.repeat(40)}`],
+    ['verification summary', `audit: 0 vulnerabilities, token=AKIA${'X'.repeat(16)}`],
+    ['git status line', `?? .env\n## main\nleak: github_pat_${'C'.repeat(70)}`],
+  ])('strips secret from %s', (_label, text) => {
+    const out = scrubSecretPatterns(text);
+    expect(out).toContain('[REDACTED:');
+    expect(out).not.toMatch(/sk-[A-Z]{50}|ghp_[A-Z]{40}|AKIA[A-Z]{16}|github_pat_[A-Z]{70}/);
+  });
+});

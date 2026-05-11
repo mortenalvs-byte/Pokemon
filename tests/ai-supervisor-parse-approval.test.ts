@@ -188,4 +188,47 @@ describe('parse-approval — isPathCoveredByApproval', () => {
     expect(r.approved).toBe(false);
     expect(r.note).toContain('outside repo root');
   });
+
+  it('matches recursive ** glob correctly (no placeholder corruption)', async () => {
+    const md = `---
+approval_id: appr-deep-glob
+task_id: task-deep
+status: active
+issued_at: 2026-05-11T14:00:00.000Z
+expires_at: ${futureIso(2)}
+operator: morten
+approved_paths:
+  - path: scripts/ai-supervisor/**
+    type: glob
+rationale: |
+  Recursive double-star must match arbitrarily-deep paths. Was buggy when
+  double-star got partially overwritten by the subsequent single-star pass.
+---`;
+    await writeFile(path.join(testDir, 'deep-glob.md'), md);
+    const { active } = await loadActiveApprovals(testDir);
+    expect(isPathCoveredByApproval('scripts/ai-supervisor/scope-guard.mjs', 'task-deep', active).approved).toBe(true);
+    expect(isPathCoveredByApproval('scripts/ai-supervisor/schemas/verdict.v1.json', 'task-deep', active).approved).toBe(true);
+    expect(isPathCoveredByApproval('scripts/ai-supervisor/templates/system-prompt.md', 'task-deep', active).approved).toBe(true);
+    expect(isPathCoveredByApproval('scripts/other-tool/file.mjs', 'task-deep', active).approved).toBe(false);
+  });
+
+  it('treats type=exact as literal (wildcard chars do NOT glob-match)', async () => {
+    const md = `---
+approval_id: appr-literal
+task_id: task-lit
+status: active
+issued_at: 2026-05-11T14:00:00.000Z
+expires_at: ${futureIso(2)}
+operator: morten
+approved_paths:
+  - path: scripts/ai-supervisor/scope-guard.mjs
+    type: exact
+rationale: |
+  Exact-type path matches only the literal name, not any glob interpretation.
+---`;
+    await writeFile(path.join(testDir, 'literal.md'), md);
+    const { active } = await loadActiveApprovals(testDir);
+    expect(isPathCoveredByApproval('scripts/ai-supervisor/scope-guard.mjs', 'task-lit', active).approved).toBe(true);
+    expect(isPathCoveredByApproval('scripts/ai-supervisor/redact.mjs', 'task-lit', active).approved).toBe(false);
+  });
 });

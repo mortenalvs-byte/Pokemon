@@ -7,7 +7,7 @@
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { redactDiff } from './redact.mjs';
+import { redactDiff, scrubSecretPatterns } from './redact.mjs';
 import { maybeStoreAsBlob } from './blob-store.mjs';
 
 const REVIEW_PACKETS_DIR_DEFAULT = path.join(process.cwd(), '.local', 'ai-supervisor', 'review-packets');
@@ -107,6 +107,15 @@ export async function buildPacket(input) {
   }
 
   let userContent = sections.join('\n');
+
+  // Defense-in-depth: pattern-redact the WHOLE packet body before it leaves
+  // the supervisor. `redactDiff` already path-strips sensitive files in the
+  // diff section, but task descriptions, approval rationale, verification
+  // summaries, and any other free-form section can still embed a leaked
+  // secret. Apply layer-1 (specific secret patterns) only — NOT layer-3
+  // (catch-all long-token) which would corrupt legitimate hashes/SHAs
+  // already in the packet (HEAD SHA, merge-base SHA, etc.).
+  userContent = scrubSecretPatterns(userContent);
 
   // -- Truncate if necessary
   if (userContent.length > PACKET_BYTE_BUDGET) {

@@ -31,34 +31,52 @@ async function main() {
     return;
   }
 
-  // Fire-and-forget: spawn vitest in background; do not wait
+  // Spawn vitest and AWAIT its close (with a hard timeout). The previous
+  // fire-and-forget approach used `detached + unref + process.exit(0)`, but
+  // that kills the parent before the `close` handler can run — failure logs
+  // never got written. PostToolUse hooks are allowed up to 30s; we cap at
+  // 25s so we never overrun the hook timeout.
   const isWindows = process.platform === 'win32';
   const child = spawn('npm', ['exec', '--', 'vitest', 'related', rel, '--run', '--reporter=json'], {
     cwd: REPO_ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: isWindows,
-    detached: true,
     env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
   });
 
-  // Capture output (still non-blocking — we exit immediately, child runs on its own)
   let stdout = '';
   child.stdout.on('data', d => stdout += d.toString());
-  child.on('close', async exitCode => {
-    if (exitCode !== 0) {
-      try {
-        await mkdir(path.dirname(LOG_PATH), { recursive: true });
-        const entry = {
-          at: new Date().toISOString(),
-          file: rel,
-          exit_code: exitCode,
-          output_tail: stdout.slice(-2000),
-        };
-        await appendFile(LOG_PATH, JSON.stringify(entry) + '\n', 'utf8');
-      } catch { /* best-effort */ }
-    }
+
+  const result = await new Promise(resolve => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      try { child.kill('SIGTERM'); } catch {}
+      setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 1000);
+      resolve({ code: -1, timedOut: true });
+    }, 25000);
+    child.on('close', code => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve({ code, timedOut: false });
+    });
   });
-  child.unref();
+
+  if (result.code !== 0) {
+    try {
+      await mkdir(path.dirname(LOG_PATH), { recursive: true });
+      const entry = {
+        at: new Date().toISOString(),
+        file: rel,
+        exit_code: result.code,
+        timed_out: result.timedOut,
+        output_tail: stdout.slice(-2000),
+      };
+      await appendFile(LOG_PATH, JSON.stringify(entry) + '\n', 'utf8');
+    } catch { /* best-effort */ }
+  }
 
   process.exit(0);
 }

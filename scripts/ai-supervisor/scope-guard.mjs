@@ -202,9 +202,18 @@ export async function runScopeGuard(input) {
         if (cov.approved) {
           // For requiresQuorum gates (supervisor self-mod), need TWO distinct approvals
           if (requiresQuorum) {
+            // Respect approved_paths[].type: exact paths must literal-match (no
+            // wildcard interpretation); glob paths run through matchGlobLocal.
+            // A wildcard-looking path declared `type: exact` MUST NOT contribute
+            // to quorum just because it superficially resembles a glob.
             const coveringApprovals = activeApprovals.filter(a =>
               a.approval.task_id === currentTask.id &&
-              a.approval.approved_paths.some(p => p.path === file || matchGlobLocal(file, p.path))
+              a.approval.approved_paths.some(p => {
+                const t = p.type ?? 'exact';
+                if (t === 'exact') return p.path === file;
+                if (t === 'glob') return matchGlobLocal(file, p.path);
+                return false;
+              })
             );
             const distinctOperators = new Set(coveringApprovals.map(a => a.approval.operator));
             if (distinctOperators.size >= 2) {
@@ -299,10 +308,15 @@ function splitDiffByFile(fullDiff) {
 }
 
 function matchGlobLocal(target, pattern) {
+  // Convert minimal glob to regex with a sentinel for ** so the later
+  // `*` -> `[^/]*` pass does not corrupt the recursive-wildcard semantics.
+  const DOUBLE_STAR_SENTINEL = ' DOUBLESTAR ';
   const re = '^' + pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*/g, '.*')
-    .replace(/\*/g, '[^/]*') + '$';
+    .replace(/\*\*/g, DOUBLE_STAR_SENTINEL)
+    .replace(/\*/g, '[^/]*')
+    .replace(new RegExp(DOUBLE_STAR_SENTINEL, 'g'), '.*')
+    + '$';
   return new RegExp(re).test(target);
 }
 
