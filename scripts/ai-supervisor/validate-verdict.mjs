@@ -120,21 +120,35 @@ export function validateVerdict(verdict, ctx = {}) {
         errors.push(`AUTO_READY but verification.${key}.status=${s} (must be PASS)`);
       }
     }
-    // Cross-check: model's verification claim must match supervisor's captured truth
-    if (ctx.capturedVerification) {
-      for (const key of ['typecheck', 'test', 'build', 'audit']) {
-        const claimed = ver[key]?.status;
-        const captured = ctx.capturedVerification[key]?.status;
-        if (captured && claimed !== captured) {
-          errors.push(`verification.${key} mismatch: model=${claimed}, supervisor captured=${captured}`);
-        }
-      }
+    // Scope guard must also be PASS (added per Layer 2 review finding)
+    if (verdict.scope_guard?.status !== 'PASS') {
+      errors.push(`AUTO_READY requires scope_guard.status=PASS, got ${verdict.scope_guard?.status}`);
     }
     // Roadmap task: behaviour_drift_check must be passed
     if (ctx.isRoadmapTask) {
       const drift = verdict.behaviour_drift_check ?? {};
       if (drift.passed !== true) {
         errors.push('AUTO_READY on roadmap task requires behaviour_drift_check.passed=true');
+      }
+    }
+  }
+
+  // -- SOURCE_REQUIRED: required_sources must be non-empty
+  if (v === 'SOURCE_REQUIRED') {
+    if (!Array.isArray(verdict.required_sources) || verdict.required_sources.length === 0) {
+      errors.push('SOURCE_REQUIRED requires non-empty required_sources[] array');
+    }
+  }
+
+  // -- Cross-validation of verification claims (applies to ALL verdicts, per Layer 2 review):
+  // if the model claims a step PASS but supervisor captured FAIL, it's hallucinating.
+  if (ctx.capturedVerification) {
+    const ver = verdict.verification ?? {};
+    for (const key of ['typecheck', 'test', 'build', 'audit']) {
+      const claimed = ver[key]?.status;
+      const captured = ctx.capturedVerification[key]?.status;
+      if (captured && claimed && claimed !== captured) {
+        errors.push(`verification.${key} mismatch: model=${claimed}, supervisor captured=${captured}`);
       }
     }
   }

@@ -23,7 +23,7 @@
         "type": "object",
         "required": ["status", "repairCount", "consecutiveBlocks", "errorSignatures", "iterations"],
         "properties": {
-          "status":            { "type": "string", "enum": ["pending", "in_progress", "auto_ready", "quarantined", "completed"] },
+          "status":            { "type": "string", "enum": ["pending", "in_progress", "auto_ready", "quarantined", "completed", "split", "rebuilt"] },
           "repairCount":       { "type": "integer", "minimum": 0 },
           "consecutiveBlocks": { "type": "integer", "minimum": 0 },
           "errorSignatures":   { "type": "array", "items": { "type": "string" } },

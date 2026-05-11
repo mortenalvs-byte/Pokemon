@@ -19,16 +19,27 @@ const SECRET_PATTERNS = [
 
 const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----/g;
 
+// Paths under `.local/` that ARE intended to be visible to the supervisor's
+// review packet (approval records prove operator intent; source-cache provides
+// authoritative API docs). Everything else under `.local/` is stripped.
+const LOCAL_ALLOWLIST_PREFIXES = [
+  '.local/ai-supervisor/approvals/',
+  '.local/ai-supervisor/source-cache/',
+];
+
 // Sensitive file paths whose CONTENT should be replaced entirely with a marker.
 const SENSITIVE_FILE_PATTERNS = [
   /(?:^|\/)\.env(?:\.[^/\s]*)?$/,         // .env, .env.local, etc.
-  /(?:^|\/)\.local\/.*$/,                  // .local/**
   /(?:^|\/)id_(?:rsa|ed25519|ecdsa|dsa)$/, // SSH keys
   /\.pem$/,
   /pokemon-tracker-backup-.*\.json$/,
   /pre-restore-backup-.*\.json$/,
   /.*\.fixture\.json$/,
 ];
+
+function isInsideLocalAllowlist(normalizedPath) {
+  return LOCAL_ALLOWLIST_PREFIXES.some(prefix => normalizedPath.startsWith(prefix) || normalizedPath.includes(`/${prefix}`));
+}
 
 // Files we KNOW are source code; long base64-looking runs in these are likely
 // legitimate (hex literals, embedded images, etc.) and should be left alone.
@@ -48,10 +59,19 @@ export function scrubSecretPatterns(text) {
 
 /**
  * Check if a path is sensitive (Layer 2 file-strip target).
+ *
+ * Granular `.local/` handling: paths under `.local/ai-supervisor/approvals/`
+ * and `.local/ai-supervisor/source-cache/` are NOT stripped (the supervisor's
+ * authority order requires those to be visible in the packet). Everything
+ * else under `.local/` IS stripped.
  */
 export function isSensitiveFile(filePath) {
   // Normalize to forward slashes for pattern matching
   const normalized = filePath.replace(/\\/g, '/');
+  // .local/** is sensitive UNLESS it's in the allowlist
+  if (normalized.includes('.local/') || normalized.startsWith('.local/')) {
+    return !isInsideLocalAllowlist(normalized);
+  }
   return SENSITIVE_FILE_PATTERNS.some(re => re.test(normalized));
 }
 
