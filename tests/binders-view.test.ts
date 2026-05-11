@@ -11,8 +11,25 @@ import { mountBindersView } from '../src/views/binders';
 import { _resetDbSingletonForTests, getDb } from '../src/db/database';
 import { initializeDataLayer } from '../src/db/init';
 import { createBinderService } from '../src/services/binder-service';
+import { createSetsRepo } from '../src/repositories/sets-repo';
 import { closeAndDelete } from './helpers/fresh-db';
 import type { PokemonTrackerDB } from '../src/db/database';
+import type { SetRecord } from '../src/domain/types';
+
+// PR A1: manual-binder creation requires a `sourceSetId`. The "Ny perm"
+// flow test pre-seeds a set in IndexedDB and selects it in the form so
+// the validator at submit accepts the input.
+const fixtureSet: SetRecord = {
+  id: 'base1',
+  name: 'Base Set',
+  series: 'Base',
+  printedTotal: 102,
+  total: 102,
+  releaseDate: '1999-01-09',
+  symbolUrl: null,
+  logoUrl: null,
+  updatedAt: '2026-05-11T00:00:00.000Z',
+};
 
 async function settle(ms = 80): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -78,6 +95,10 @@ describe('Binders list view', () => {
   });
 
   it('"Ny perm" button creates a binder and slots in a single transaction', async () => {
+    // PR A1: pre-seed a set so the form's required sourceSetId picker
+    // can be satisfied.
+    await createSetsRepo(db).upsert(fixtureSet);
+
     const root = document.getElementById('content');
     if (!root) throw new Error('test bootstrap failed');
     mountBindersView(root);
@@ -88,7 +109,8 @@ describe('Binders list view', () => {
     );
     expect(newBtn).not.toBeNull();
     newBtn?.click();
-    await settle();
+    // Wait long enough for the form's async set load to populate the picker.
+    await settle(120);
 
     const form = document.querySelector<HTMLFormElement>('form.binder-form');
     expect(form).not.toBeNull();
@@ -96,6 +118,12 @@ describe('Binders list view', () => {
       'input[name="name"]',
     );
     nameInput!.value = 'Min nye perm';
+    // PR A1: select the pre-seeded set.
+    const setSelect = form!.querySelector<HTMLSelectElement>(
+      'select[name="sourceSetId"]',
+    );
+    expect(setSelect).not.toBeNull();
+    setSelect!.value = 'base1';
     // Drive a small custom binder so the test stays cheap.
     const presetSelect = form!.querySelector<HTMLSelectElement>(
       'select[name="binderPreset"]',

@@ -8,6 +8,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR A1 — Manual-binder set picker required)
+
+The manual-binder creation form now requires the operator to pick a set
+(`sourceSetId`) before submit. Previously the form hardcoded
+`sourceSetId: null`, which let two manually-created binders both
+reference Base Set (or no set at all). After PR A1, every NEW binder is
+set-scoped at creation time — closing the "hver perm hører kun til
+hvert identiske sett" invariant at the UI layer.
+
+**v2-compatible — no schema change:**
+- `SCHEMA_VERSION` stays at 2.
+- `BACKUP_FORMAT.md` is unchanged.
+- Existing binders with `sourceSetId=null` (legacy) keep loading + rendering normally;
+  edit mode shows a "Ikke knyttet til sett (eldre perm)" hint and the field is locked.
+- The validator (`src/domain/validators.ts`) is untouched. Enforcement is form-level only.
+
+The schema-level guarantee (binders.setId NOT-NULL + migration) is
+deferred to PR A4, which is explicitly NOT auto-queueable and requires
+an operator-issued approval record per
+[docs/IMPROVEMENT_ROADMAP.md §6](docs/IMPROVEMENT_ROADMAP.md).
+
+**Files touched:**
+- `src/components/binder-form.ts` — set fieldset + async load + submit validation
+- `tests/binder-form.test.ts` (new) — 7 cases covering add/edit + empty-sets state
+
 ### Added (PR 30 — Repo-driven full technical audit)
 PR 30 is a repo-driven evidence-based audit after the merged PR #29
 (Phase G — "whole-system action audit for the other 10+ views" was

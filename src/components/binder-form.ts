@@ -29,10 +29,12 @@ import {
 import { ValidationError } from '../domain/validators';
 import { createBindersRepo } from '../repositories/binders-repo';
 import { createBinderService } from '../services/binder-service';
+import { createSetsRepo } from '../repositories/sets-repo';
 import type {
   BinderPreset,
   BinderRecord,
   CompletionMode,
+  SetRecord,
   SlotsPerPage,
 } from '../domain/types';
 import type { BinderInput } from '../domain/validators';
@@ -75,6 +77,16 @@ function mount(
   if (form === null) return;
   populateForm(form, options);
 
+  // Kick off async set load so the picker is ready when the user
+  // selects the "Permdetaljer" fieldset. In add mode this is required —
+  // the submit handler validates a real setId is chosen. In edit mode we
+  // render a read-only label (no fetch needed).
+  if (options.mode === 'add') {
+    void loadAndPopulateSets(form);
+  } else {
+    populateSetFieldEditMode(form, options.binder);
+  }
+
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     void handleSubmit(form, options, host);
@@ -112,6 +124,20 @@ function buildSkeleton(): HTMLElement {
           <span>Velg layout</span>
           <select name="binderPreset" data-region="preset-select"></select>
         </label>
+      </fieldset>
+
+      <fieldset class="binder-form__section" data-region="set-section">
+        <legend>Sett</legend>
+        <label class="binder-form__field binder-form__field--full">
+          <span>Hvilket sett er denne permen for?</span>
+          <select name="sourceSetId" data-region="set-select" required>
+            <option value="" disabled selected>Laster sett…</option>
+          </select>
+        </label>
+        <p class="binder-form__hint">
+          Hver perm hører til ett bestemt sett. Du må velge et sett før permen kan lagres.
+        </p>
+        <p class="binder-form__hint" data-region="set-readonly-hint" hidden></p>
       </fieldset>
 
       <fieldset class="binder-form__section">
@@ -214,6 +240,116 @@ function populateForm(form: HTMLFormElement, options: BinderFormOptions): void {
   }
 
   updateLayoutHint(form);
+}
+
+async function loadAndPopulateSets(form: HTMLFormElement): Promise<void> {
+  const select = form.querySelector<HTMLSelectElement>(
+    '[data-region="set-select"]',
+  );
+  if (select === null) return;
+
+  let sets: SetRecord[];
+  try {
+    sets = await createSetsRepo(getDb()).list();
+  } catch {
+    // DB read failed — keep the "Laster sett…" placeholder and rely on
+    // submit-time validation to refuse the form. The error region surfaces
+    // a clear message if the user tries to submit without sets loaded.
+    return;
+  }
+
+  // Sort: most recent release first; cards-wise, this surfaces the
+  // sets a collector most likely has open binders for.
+  sets.sort((a, b) => {
+    const dateA = a.releaseDate ?? '';
+    const dateB = b.releaseDate ?? '';
+    if (dateA !== dateB) return dateB.localeCompare(dateA);
+    return a.name.localeCompare(b.name, 'nb-NO');
+  });
+
+  select.replaceChildren();
+  if (sets.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.disabled = true;
+    opt.selected = true;
+    opt.textContent = 'Ingen sett synket ennå — gå til Dashboard og kjør sync';
+    select.appendChild(opt);
+    return;
+  }
+
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  placeholder.textContent = '— velg sett —';
+  select.appendChild(placeholder);
+  for (const set of sets) {
+    const opt = document.createElement('option');
+    opt.value = set.id;
+    opt.textContent = `${set.name} (${set.id})`;
+    select.appendChild(opt);
+  }
+}
+
+function populateSetFieldEditMode(
+  form: HTMLFormElement,
+  binder: BinderRecord,
+): void {
+  // Edit mode: source-set is immutable per existing form contract (layout
+  // fields are read-only in edit mode and sourceSetId is part of the
+  // "what this binder represents" identity). Render the select with a
+  // single locked option mirroring the current value so submit can still
+  // round-trip the value, and surface a hint label for the user.
+  const select = form.querySelector<HTMLSelectElement>(
+    '[data-region="set-select"]',
+  );
+  const hint = form.querySelector<HTMLElement>(
+    '[data-region="set-readonly-hint"]',
+  );
+  if (select === null) return;
+
+  select.replaceChildren();
+  const opt = document.createElement('option');
+  if (binder.sourceSetId !== null) {
+    opt.value = binder.sourceSetId;
+    opt.textContent = binder.sourceSetId;
+    opt.selected = true;
+    select.appendChild(opt);
+    if (hint !== null) {
+      hint.textContent = `Settet kan ikke endres etter at permen er opprettet. Lag en ny perm hvis du vil binde til et annet sett.`;
+      hint.hidden = false;
+    }
+    // Best-effort: fetch the set name so the locked option shows it.
+    void (async () => {
+      try {
+        const sets = await createSetsRepo(getDb()).list();
+        const match = sets.find((s) => s.id === binder.sourceSetId);
+        if (match) opt.textContent = `${match.name} (${match.id})`;
+      } catch {
+        /* keep id-only label */
+      }
+    })();
+  } else {
+    opt.value = '';
+    opt.textContent = 'Ikke knyttet til sett (eldre perm)';
+    opt.selected = true;
+    select.appendChild(opt);
+    if (hint !== null) {
+      hint.textContent =
+        'Denne permen ble opprettet før sett-binding ble obligatorisk. Eksisterende data forblir uendret.';
+      hint.hidden = false;
+    }
+  }
+  // Lock the field so edit can't accidentally change sourceSetId.
+  select.disabled = true;
+  // Hide the "Du må velge…" instruction in edit mode — it doesn't apply.
+  const generalHint = select.parentElement?.parentElement?.querySelector<HTMLElement>(
+    '.binder-form__hint:not([data-region="set-readonly-hint"])',
+  );
+  if (generalHint !== null && generalHint !== undefined) {
+    generalHint.hidden = true;
+  }
 }
 
 function populatePresetSelect(
@@ -511,6 +647,19 @@ function collectFormInput(
     }
   }
 
+  // PR A1: manual-binder creation requires a set. From-set wizard always
+  // populates sourceSetId; manual binders used to allow null. After this
+  // PR all NEW binders are set-scoped at creation time. Schema stays at
+  // v2 — existing null-sourceSetId binders are preserved (legacy mode).
+  const sourceSetIdRaw = formData.get('sourceSetId');
+  if (typeof sourceSetIdRaw !== 'string' || sourceSetIdRaw.trim().length === 0) {
+    throw new ValidationError(
+      'sourceSetId',
+      'Velg hvilket sett denne permen er for før du lagrer',
+    );
+  }
+  const sourceSetId = sourceSetIdRaw.trim();
+
   return {
     name,
     binderType: binderTypeRaw,
@@ -519,7 +668,7 @@ function collectFormInput(
     slotsPerPage,
     binderPreset: presetRaw,
     completionMode,
-    sourceSetId: null,
+    sourceSetId,
   };
 }
 
