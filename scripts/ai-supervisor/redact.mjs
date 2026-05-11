@@ -121,3 +121,50 @@ export function redactText(text) {
     .replace(/[a-fA-F0-9]{40,}/g, '[REDACTED:long-token]');
   return out;
 }
+
+/**
+ * Redact a multi-file diff blob by splitting it into per-file hunks and
+ * applying file-path-aware redaction. This is the right thing to send to
+ * OpenAI: sensitive files (.env, *.pem, backups, fixtures, .local/ outside
+ * the approvals/source-cache allowlist) get their content stripped entirely;
+ * everything else gets layer-1 pattern redaction.
+ *
+ * Hunks are split on `diff --git` markers. The leading prelude (anything
+ * before the first marker — e.g. our composite-diff section headers) is
+ * passed through with pattern-redaction only.
+ *
+ * @param {string} diffText
+ * @returns {string}
+ */
+export function redactDiff(diffText) {
+  if (!diffText) return diffText;
+  const FILE_MARKER = /^diff --git a\/(.+?) b\/.+$/m;
+  // Split into prelude + hunks. Use a non-consuming look-ahead so the marker
+  // stays at the start of each hunk after split.
+  const parts = diffText.split(/(?=^diff --git )/m);
+  const out = [];
+  for (const part of parts) {
+    const m = part.match(FILE_MARKER);
+    if (!m) {
+      // Prelude / non-diff text — pattern-redact only.
+      out.push(scrubSecretPatterns(part));
+      continue;
+    }
+    const filePath = m[1];
+    if (isSensitiveFile(filePath)) {
+      // Replace the hunk body with a single marker line. Preserve just the
+      // diff prologue (diff --git + index/mode + --- / +++ + first @@ line)
+      // so reviewers can see WHICH file was redacted without seeing its content.
+      const prologue =
+        part.match(/^diff --git[^\n]*\n(?:(?:index|new file mode|deleted file mode|similarity index|rename from|rename to|---|\+\+\+|Binary files)[^\n]*\n)*(?:@@[^\n]*\n)?/)?.[0]
+        ?? `diff --git a/${filePath} b/${filePath}\n`;
+      out.push(`${prologue}[REDACTED: sensitive file content stripped — ${filePath}]\n`);
+      continue;
+    }
+    // Non-sensitive file: layer-1 (pattern) plus layer-3 only for non-source files.
+    let redactedHunk = scrubSecretPatterns(part);
+    redactedHunk = scrubLongTokens(redactedHunk, filePath);
+    out.push(redactedHunk);
+  }
+  return out.join('');
+}

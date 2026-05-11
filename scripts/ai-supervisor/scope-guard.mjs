@@ -136,6 +136,15 @@ const CONTENT_CHECKS = [
     },
     detail: 'New external API hostnames in src/api/** require approval. Only pokemontcg.io is permitted by default.',
   },
+  // 4b. src-tauri/tauri.conf.json security.csp changes (gate #4 path-pattern covers capabilities/*.json;
+  // the CSP lives in tauri.conf.json and needs a content-pattern check to detect mutation).
+  {
+    gate: 'tauri-csp',
+    appliesTo: (filePath) => filePath === 'src-tauri/tauri.conf.json',
+    test: (diffText) => /^[+\-]\s*"csp"\s*:/m.test(diffText) ||
+                         /^[+\-].*"security"\s*:\s*\{[^}]*"csp"/m.test(diffText),
+    detail: 'src-tauri/tauri.conf.json security.csp must not change without explicit approval. The CSP pins what HTTP origins the desktop shell may contact.',
+  },
 ];
 
 // Backup-file 12-key invariant check — applied to diffs that touch src/db/backup.ts

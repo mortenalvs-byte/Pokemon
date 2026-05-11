@@ -105,6 +105,9 @@ export async function callOpenAI(input) {
         ok: false,
         kind: 'per-task-cap',
         error: `Per-task cost cap reached ($${perTaskUsedUsd.toFixed(2)} ≥ $${perTaskCapUsd.toFixed(2)}). Force QUARANTINE_AND_CONTINUE.`,
+        syntheticVerdict: makePerTaskCapQuarantineVerdict(
+          `Per-task cap $${perTaskCapUsd.toFixed(2)} reached (used $${perTaskUsedUsd.toFixed(2)}). The task has exceeded its individual budget; quarantining it and moving on to the next queued task.`
+        ),
       };
     }
   }
@@ -358,6 +361,25 @@ function makeBudgetHaltVerdict(reason) {
     allowed_next_actions: [],
     forbidden_next_actions: [],
     behaviour_drift_check: { passed: true, notes: 'n/a — budget halt' },
+  };
+}
+
+function makePerTaskCapQuarantineVerdict(reason) {
+  return {
+    schema_version: 1,
+    verdict: 'QUARANTINE_AND_CONTINUE',
+    risk_level: 'MEDIUM',
+    confidence: 1.0,
+    claude_next_prompt: null,
+    quarantine_reason: reason,
+    summary: `Supervisor synthesizing QUARANTINE_AND_CONTINUE: ${reason}`,
+    verification: emptyVerificationStub(),
+    scope_guard: { status: 'PASS', violations: [], approval_used: null },
+    required_sources: [],
+    blocking_findings: [],
+    allowed_next_actions: [],
+    forbidden_next_actions: [],
+    behaviour_drift_check: { passed: true, notes: 'n/a — per-task cap forced quarantine' },
   };
 }
 

@@ -31,6 +31,12 @@ async function emitFallbackBlockAndExit(reason, stack = '') {
       JSON.stringify({ at: new Date().toISOString(), reason, stack }, null, 2), 'utf8');
   } catch { /* even crash logging failed; soldier on */ }
 
+  // Best-effort lock release on crash (the main flow may have acquired it).
+  try {
+    const { releaseLock } = await import('./state.mjs');
+    await releaseLock(LOCAL_DIR);
+  } catch { /* nothing to release or unreachable; ignore */ }
+
   const out = {
     decision: 'block',
     reason: `Supervisor crashed unexpectedly. See .local/ai-supervisor/${crashId}.json. Do not stop until the operator (you) has reviewed.`,
@@ -40,9 +46,8 @@ async function emitFallbackBlockAndExit(reason, stack = '') {
   process.exit(0);
 }
 
-async function emitAndExit(out) {
+async function writeOutput(out) {
   await new Promise(r => process.stdout.write(JSON.stringify(out) + '\n', r));
-  process.exit(0);
 }
 
 // ---- Main ----
@@ -52,22 +57,25 @@ async function main() {
   const stdinJson = await readStdin();
   const hookInput = stdinJson ? JSON.parse(stdinJson) : {};
 
-  // 2. Special-case: sub-agent invocation — short-circuit
+  // 2. Special-case: sub-agent invocation — short-circuit (no lock held)
   if (hookInput.agent_id || hookInput.agent_type) {
     await mkdir(LOCAL_DIR, { recursive: true });
     await writeFile(path.join(LOCAL_DIR, 'sub-agent-skip.log'),
       `${new Date().toISOString()} skipped sub-agent ${hookInput.agent_id ?? hookInput.agent_type}\n`, 'utf8');
-    return await emitAndExit({}); // allow stop
+    await writeOutput({});
+    process.exit(0);
   }
 
-  // 3. Special-case: plan mode — short-circuit
+  // 3. Special-case: plan mode — short-circuit (no lock held)
   if (hookInput.permission_mode === 'plan') {
-    return await emitAndExit({}); // allow stop; plan mode is for human review
+    await writeOutput({});
+    process.exit(0);
   }
 
-  // 4. STOP sentinel — short-circuit
+  // 4. STOP sentinel — short-circuit (no lock held)
   if (await fileExists(STOP_SENTINEL_PATH)) {
-    return await emitAndExit({});
+    await writeOutput({});
+    process.exit(0);
   }
 
   // 5. Dynamic imports (after crash handlers are installed)
@@ -91,20 +99,33 @@ async function main() {
   const verdictSchema = JSON.parse(verdictSchemaRaw);
 
   // 7. Startup validations
-  // 7a. Reap zombies first
-  const zombies = await listZombieSupervisors({ knownLivePids: [process.pid] });
+  // 7a. Identify any sibling supervisor that holds state.lock BEFORE reaping
+  //     zombies — otherwise zombie-cleanup may kill the legitimate lock holder.
+  let lockHolderPid = null;
+  try {
+    const lockContent = await readFile(path.join(LOCAL_DIR, 'state.lock'), 'utf8');
+    const existing = JSON.parse(lockContent);
+    if (typeof existing.pid === 'number') lockHolderPid = existing.pid;
+  } catch { /* no lock or unreadable; that's fine — cleanup spares only self */ }
+
+  // 7b. Reap zombies, sparing both our own PID and the live lock holder.
+  const knownLive = [process.pid];
+  if (lockHolderPid && lockHolderPid !== process.pid) knownLive.push(lockHolderPid);
+  const zombies = await listZombieSupervisors({ knownLivePids: knownLive });
   if (zombies.length > 0) {
     await reapZombies(zombies);
   }
 
-  // 7b. Acquire lock
+  // 7c. Acquire lock
   const lock = await acquireLock(LOCAL_DIR);
   if (!lock.ok) {
-    // Another supervisor is running; exit silently
-    return await emitAndExit({});
+    // Another supervisor is running; exit silently (no lock held by us to release)
+    await writeOutput({});
+    process.exit(0);
   }
 
-  // Ensure lock released on any exit path
+  // Ensure lock released on any exit path. Lock release happens BEFORE
+  // process.exit, never after — process.exit doesn't wait for async finally.
   let releaseLockCalled = false;
   const release = async () => {
     if (releaseLockCalled) return;
@@ -114,14 +135,20 @@ async function main() {
   process.on('SIGTERM', () => { release().finally(() => process.exit(0)); });
   process.on('SIGINT',  () => { release().finally(() => process.exit(0)); });
 
+  // Output accumulator — set inside the try block and emitted after `finally`
+  // has released the lock. Defaults to a defensive block so a non-returning
+  // pipeline doesn't accidentally allow-stop.
+  let output = { decision: 'block', reason: 'Supervisor pipeline did not reach a verdict.' };
+
   try {
-    // 7c. Git evidence (includes main-branch + detached + rebase refusals)
+    // 7d. Git evidence (includes main-branch + detached + rebase refusals)
     const gitResult = await collectGitEvidence({ cwd: REPO_ROOT });
     if (!gitResult.ok) {
-      return await emitAndExit({
+      output = {
         decision: 'block',
         reason: `Git pre-check failed: ${gitResult.gate.reason} — ${gitResult.gate.detail}`,
-      });
+      };
+      return;
     }
 
     // 8. Load state + queue
@@ -129,22 +156,27 @@ async function main() {
     const queue = await loadQueue(LOCAL_DIR);
     const currentTask = queue.tasks?.[0] ?? null;
 
-    // 9. Run scope-guard
+    // 9. Run scope-guard against the FULL composite diff (committed + staged +
+    //    unstaged + untracked), not the packet-truncated one. Safety must not
+    //    rely on what fits in OpenAI's packet budget.
     const scopeGuardResult = await runScopeGuard({
       changedFiles: gitResult.evidence.changed_files,
-      fullDiff: gitResult.evidence.diff,
+      fullDiff: gitResult.evidence.full_diff ?? gitResult.evidence.diff,
       currentTask,
       approvalsDir: path.join(LOCAL_DIR, 'approvals'),
     });
 
     if (!scopeGuardResult.passed) {
       // Block immediately; no OpenAI call
-      const reason = `Scope-guard violation(s):\n${scopeGuardResult.violations.map(v => `- ${v.gate} (${v.severity}): ${v.file} — ${v.detail}`).join('\n')}\n\nRevert the listed files OR create an approval record at .local/ai-supervisor/approvals/<id>.md covering them.`;
-      return await emitAndExit({ decision: 'block', reason });
+      output = {
+        decision: 'block',
+        reason: `Scope-guard violation(s):\n${scopeGuardResult.violations.map(v => `- ${v.gate} (${v.severity}): ${v.file} — ${v.detail}`).join('\n')}\n\nRevert the listed files OR create an approval record at .local/ai-supervisor/approvals/<id>.md covering them.`,
+      };
+      return;
     }
 
     // 10. Run verification
-    const dirtyDiffHash = computeHash([gitResult.evidence.diff]);
+    const dirtyDiffHash = computeHash([gitResult.evidence.full_diff ?? gitResult.evidence.diff]);
     const verification = await runChecks({
       headSha: gitResult.evidence.head_sha,
       dirtyDiffHash,
@@ -170,10 +202,11 @@ async function main() {
           { kind: 'dedup-trigger', file: currentTask.allowedFiles?.[0] ?? '', signature: errorSig }
         );
         await saveState(newState, LOCAL_DIR);
-        return await emitAndExit({
+        output = {
           decision: 'block',
           reason: `${dedupCheck.reason}\n\nPicking next task from queue...`,
-        });
+        };
+        return;
       }
     }
 
@@ -205,23 +238,63 @@ async function main() {
       },
     });
 
-    // 13. Handle synthetic verdicts (BUDGET_HALT)
+    // 13. Handle synthetic verdicts (BUDGET_HALT terminal, QUARANTINE_AND_CONTINUE
+    //     per-task-cap). Both arrive as `{ ok:false, syntheticVerdict }` — but
+    //     BUDGET_HALT ends the loop while per-task-cap quarantines this task
+    //     and lets the next one continue via the normal verdict-router.
     if (!openaiResult.ok && openaiResult.syntheticVerdict) {
-      await mkdir(LOCAL_DIR, { recursive: true });
-      await writeFile(path.join(LOCAL_DIR, 'reports', `budget-halt-${Date.now()}.json`), JSON.stringify(openaiResult, null, 2), 'utf8').catch(async () => {
-        // reports/ may not exist yet
-        await mkdir(path.join(LOCAL_DIR, 'reports'), { recursive: true });
-        await writeFile(path.join(LOCAL_DIR, 'reports', `budget-halt-${Date.now()}.json`), JSON.stringify(openaiResult, null, 2), 'utf8');
-      });
-      return await emitAndExit({}); // allow stop
+      const sv = openaiResult.syntheticVerdict;
+      const reportsDir = path.join(LOCAL_DIR, 'reports');
+      await mkdir(reportsDir, { recursive: true });
+      if (sv.verdict === 'BUDGET_HALT') {
+        await writeFile(path.join(reportsDir, `budget-halt-${Date.now()}.json`), JSON.stringify(openaiResult, null, 2), 'utf8');
+        output = {}; // allow stop
+        return;
+      }
+      if (sv.verdict === 'QUARANTINE_AND_CONTINUE') {
+        // Fall through to the verdict-router path with this synthesized verdict
+        // so dequeue + next-task prompting works uniformly with model-emitted quarantines.
+        await writeFile(path.join(reportsDir, `per-task-cap-quarantine-${Date.now()}.json`), JSON.stringify(openaiResult, null, 2), 'utf8');
+        const routing = routeVerdict({
+          verdict: sv,
+          state,
+          queue,
+          currentTask,
+          discoveryCandidate: null,
+          options: {},
+        });
+        // Apply quarantine + dequeue side effects, then emit the router's decision.
+        let qState = state;
+        let qQueue = queue;
+        for (const eff of routing.sideEffects) {
+          if (eff.kind === 'record-quarantine-fingerprint') {
+            qState = recordQuarantineFingerprint(qState, { kind: 'per-task-cost-cap', file: currentTask?.allowedFiles?.[0] ?? '', signature: 'per-task-cap' });
+          } else if (eff.kind === 'dequeue-next-task') {
+            qQueue = { ...qQueue, tasks: qQueue.tasks.slice(1) };
+          } else if (eff.kind === 'write-quarantine-report') {
+            const qDir = path.join(LOCAL_DIR, 'quarantine');
+            await mkdir(qDir, { recursive: true });
+            const fname = eff.taskId ? `${eff.taskId}.md` : `per-task-cap-${Date.now()}.md`;
+            await writeFile(path.join(qDir, fname), JSON.stringify(eff, null, 2), 'utf8');
+          }
+        }
+        await saveState(qState, LOCAL_DIR);
+        await saveQueue(qQueue, LOCAL_DIR);
+        output = routing.action === 'block'
+          ? { decision: 'block', reason: routing.reason }
+          : {};
+        return;
+      }
+      // Other synthetic verdicts fall through to default block below
     }
 
     if (!openaiResult.ok) {
       // Network/timeout/HTTP error — block with details
-      return await emitAndExit({
+      output = {
         decision: 'block',
         reason: `OpenAI call failed: ${openaiResult.kind} — ${openaiResult.error}\n\nThis is likely transient. The supervisor will retry on the next Stop fire. If it persists, check OpenAI status + your API key + network.`,
-      });
+      };
+      return;
     }
 
     // 14. Parse + validate verdict
@@ -234,10 +307,11 @@ async function main() {
     });
 
     if (!validated.ok) {
-      return await emitAndExit({
+      output = {
         decision: 'block',
         reason: `Verdict validation failed (${validated.kind}): ${validated.error}\n${validated.errors?.map(e => `- ${e}`).join('\n') ?? ''}\n\nSupervisor will retry next Stop with feedback.`,
-      });
+      };
+      return;
     }
 
     // 15. Update state: cost, iteration
@@ -306,18 +380,21 @@ async function main() {
     await saveState(modifiedState, LOCAL_DIR);
     await saveQueue(modifiedQueue, LOCAL_DIR);
 
-    // 18. Emit hook output
+    // 18. Compute hook output (emitted after `finally` releases the lock)
     if (routing.action === 'block') {
-      return await emitAndExit({ decision: 'block', reason: routing.reason });
+      output = { decision: 'block', reason: routing.reason };
+    } else if (routing.action === 'force-continue-no-output') {
+      output = { continue: false, reason: routing.reason };
+    } else {
+      // allow-stop
+      output = {};
     }
-    if (routing.action === 'force-continue-no-output') {
-      return await emitAndExit({ continue: false, reason: routing.reason });
-    }
-    // allow-stop
-    return await emitAndExit({});
   } finally {
     await release();
   }
+  // Lock is released; safe to emit and exit
+  await writeOutput(output);
+  process.exit(0);
 }
 
 // ---- Helpers ----

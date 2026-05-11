@@ -7,7 +7,7 @@
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { redactText } from './redact.mjs';
+import { redactDiff } from './redact.mjs';
 import { maybeStoreAsBlob } from './blob-store.mjs';
 
 const REVIEW_PACKETS_DIR_DEFAULT = path.join(process.cwd(), '.local', 'ai-supervisor', 'review-packets');
@@ -61,10 +61,13 @@ export async function buildPacket(input) {
   sections.push('```');
   sections.push('');
 
-  // Diff (already redacted at git-evidence + truncated)
-  sections.push(`### Diff`);
+  // Diff: use the packet_diff (truncated; safety already ran against full_diff)
+  // and apply file-path-aware redaction so sensitive files (.env, *.pem, backups,
+  // fixtures, .local/ outside the approval/source-cache allowlist) are stripped
+  // by path, not just by pattern. The full_diff stays out of the packet entirely.
+  sections.push(`### Diff (sensitive files stripped, packet-truncated; safety checks ran on full diff)`);
   sections.push('```diff');
-  sections.push(redactText(gitEvidence.diff));
+  sections.push(redactDiff(gitEvidence.packet_diff ?? gitEvidence.diff ?? ''));
   sections.push('```');
   if (gitEvidence.diff_truncated) {
     sections.push(`\n_(Diff was truncated at ${PACKET_BYTE_BUDGET} bytes — original size larger)_`);

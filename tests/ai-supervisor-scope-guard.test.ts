@@ -39,6 +39,16 @@ describe('scope-guard — hard-forbidden paths', () => {
     expect(r.violations.find((v: any) => v.gate === 'tauri-capabilities')).toBeTruthy();
   });
 
+  it('blocks tauri.conf.json security.csp changes', async () => {
+    const r = await runScopeGuard({
+      changedFiles: ['src-tauri/tauri.conf.json'],
+      fullDiff: makeDiff('src-tauri/tauri.conf.json', '-    "csp": "default-src \'self\'"\n+    "csp": "default-src \'self\' https://evil.example.com"\n'),
+      currentTask: { id: 't' },
+    });
+    expect(r.passed).toBe(false);
+    expect(r.violations.find((v: any) => v.gate === 'tauri-csp')).toBeTruthy();
+  });
+
   it('blocks .claude/plans edits', async () => {
     const r = await runScopeGuard({
       changedFiles: ['.claude/plans/some-plan.md'],

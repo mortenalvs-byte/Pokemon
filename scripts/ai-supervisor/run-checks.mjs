@@ -97,11 +97,31 @@ function composeSteps(changedFiles) {
     steps.push({ name: 'qa:browser', script: 'qa:browser' });
   }
 
+  // banned_strings_dist: always re-run after build so dev/QA strings can't sneak into prod bundle
+  // (mirrors tests/qa-route-prod-gating.test.ts; the assertion is part of the regular test suite,
+  // but we surface it as a separate verification entry for the verdict schema).
+  steps.push({ name: 'banned_strings_dist', script: undefined, scanDist: true });
+
+  // backup_tests: full backup-restore family when diff touches src/db/** or BACKUP_FORMAT.md
+  const touchesBackup = changedFiles.some(f =>
+    f.startsWith('src/db/') || f === 'BACKUP_FORMAT.md');
+  if (touchesBackup) {
+    steps.push({ name: 'backup_tests', script: undefined, vitestFilter: 'backup-|restore-' });
+  }
+
+  // binder_tests: when diff touches binder views/services or src/db/**
+  const touchesBinder = changedFiles.some(f =>
+    f.startsWith('src/views/binder') ||
+    f.startsWith('src/services/binder') ||
+    f.startsWith('src/db/'));
+  if (touchesBinder) {
+    steps.push({ name: 'binder_tests', script: undefined, vitestFilter: 'binder-' });
+  }
+
   const touchesTauri = changedFiles.some(f =>
     f.startsWith('src-tauri/') ||
     f === 'src-tauri/tauri.conf.json' ||
-    f.startsWith('scripts/desktop') ||
-    f === 'package.json' && false /* desktop build is heavy; only on Tauri-specific changes */
+    f.startsWith('scripts/desktop')
   );
   if (touchesTauri) {
     steps.push({ name: 'desktop:build', script: 'desktop:build' });
@@ -114,10 +134,29 @@ async function runOne(step, cwd) {
   const started = Date.now();
   const timeout = PER_STEP_TIMEOUT_MS[step.name] ?? 120000;
 
+  // banned_strings_dist runs as an in-process scan, not a spawn — fast and side-effect-free.
+  if (step.scanDist) {
+    const result = await scanDistForBannedStrings(cwd);
+    return {
+      name: step.name,
+      command: 'in-process: scan dist/ for banned dev/QA strings',
+      status: result.bannedFound > 0 ? 'FAIL' : (result.distExists ? 'PASS' : 'SKIP'),
+      summary: result.distExists
+        ? (result.bannedFound > 0 ? `${result.bannedFound} banned string(s) in dist/: ${result.hits.slice(0, 3).join(', ')}` : '0 banned strings in dist/')
+        : 'dist/ does not exist (build did not produce output, or hasn\'t run yet)',
+      duration_ms: Date.now() - started,
+      exit_code: result.bannedFound > 0 ? 1 : 0,
+    };
+  }
+
   let cmd, args;
   if (step.audit) {
     cmd = 'npm';
     args = ['audit', '--json'];
+  } else if (step.vitestFilter) {
+    // Run a subset of tests by file-name substring (vitest 4.x positional filter).
+    cmd = 'npx';
+    args = ['vitest', 'run', step.vitestFilter];
   } else {
     cmd = 'npm';
     args = ['run', step.script];
@@ -229,4 +268,47 @@ async function writeCache(cacheKey, summary) {
   try {
     await writeFile(cacheFile, JSON.stringify(summary, null, 2), 'utf8');
   } catch { /* non-fatal */ }
+}
+
+// ---- banned_strings_dist scan ----
+// Mirrors tests/qa-route-prod-gating.test.ts: dist/ must contain zero references to
+// dev-only globals or QA harness identifiers. Catches dev/QA leakage into the prod
+// bundle independent of whether tests/qa-route-prod-gating.test.ts ran.
+const BANNED_DIST_STRINGS = [
+  'devAuto',          // pokemon.devAuto* dev-only API surface
+  '__pokemonQA',      // QA harness global
+  'POKEMON_DEV',      // dev-only feature flag
+  'process.env.NODE_ENV === \'development\'',
+  'console.audit',    // dev-only audit hook
+];
+
+async function scanDistForBannedStrings(cwd) {
+  const distDir = path.join(cwd, 'dist');
+  let distExists = false;
+  try {
+    await stat(distDir);
+    distExists = true;
+  } catch { /* dist not built */ }
+  if (!distExists) return { distExists: false, bannedFound: 0, hits: [] };
+
+  // Walk dist/ recursively, scan each text-like file.
+  const { readdir, readFile: rf } = await import('node:fs/promises');
+  const hits = [];
+  async function walk(dir) {
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { await walk(p); continue; }
+      if (!/\.(html|js|mjs|cjs|css|json|map|txt)$/i.test(e.name)) continue;
+      try {
+        const content = await rf(p, 'utf8');
+        for (const banned of BANNED_DIST_STRINGS) {
+          if (content.includes(banned)) hits.push(`${path.relative(cwd, p)}::${banned}`);
+        }
+      } catch { /* binary or unreadable; skip */ }
+    }
+  }
+  await walk(distDir);
+  return { distExists: true, bannedFound: hits.length, hits };
 }

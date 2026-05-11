@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 
 // @ts-ignore
-import { scrubSecretPatterns, isSensitiveFile, scrubLongTokens, redactFile, redactText } from '../scripts/ai-supervisor/redact.mjs';
+import { scrubSecretPatterns, isSensitiveFile, scrubLongTokens, redactFile, redactText, redactDiff } from '../scripts/ai-supervisor/redact.mjs';
 
 describe('redact.mjs — scrubSecretPatterns', () => {
   it.each([
@@ -94,5 +94,62 @@ describe('redact.mjs — redactText', () => {
   it('handles raw text without filename', () => {
     const text = 'log line with sk-' + 'X'.repeat(50);
     expect(redactText(text)).toContain('[REDACTED:openai-key]');
+  });
+});
+
+describe('redact.mjs — redactDiff (file-path-aware)', () => {
+  function diffFor(file: string, body: string): string {
+    return `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -1,3 +1,3 @@\n${body}`;
+  }
+
+  it('strips entire hunks for sensitive files (.env)', () => {
+    const diff = diffFor('.env', '+OPENAI_API_KEY=sk-' + 'A'.repeat(50) + '\n');
+    const out = redactDiff(diff);
+    expect(out).toContain('[REDACTED: sensitive file content stripped');
+    expect(out).not.toContain('OPENAI_API_KEY=sk-');
+  });
+
+  it('strips fixture JSON hunks entirely', () => {
+    const diff = diffFor('tests/fixtures/test.fixture.json', '+{"secret": "embedded"}\n');
+    expect(redactDiff(diff)).toContain('[REDACTED: sensitive file content stripped');
+  });
+
+  it('strips backup JSONs entirely', () => {
+    const diff = diffFor('pokemon-tracker-backup-2026-05-11.json', '+{"some":"backup"}\n');
+    expect(redactDiff(diff)).toContain('[REDACTED: sensitive file content stripped');
+  });
+
+  it('strips .local/** outside the approvals/source-cache allowlist', () => {
+    const diff = diffFor('.local/ai-supervisor/state.json', '+{"cost":{"total":100}}\n');
+    expect(redactDiff(diff)).toContain('[REDACTED: sensitive file content stripped');
+  });
+
+  it('preserves .local/ai-supervisor/approvals/* content (allowlisted)', () => {
+    const diff = diffFor('.local/ai-supervisor/approvals/appr-x.md', '+approved_paths: []\n');
+    const out = redactDiff(diff);
+    expect(out).not.toContain('[REDACTED: sensitive file content stripped');
+    expect(out).toContain('approved_paths: []');
+  });
+
+  it('applies pattern-redaction to non-sensitive files', () => {
+    const diff = diffFor('src/some.ts', '+const KEY = "sk-' + 'A'.repeat(50) + '";\n');
+    const out = redactDiff(diff);
+    expect(out).toContain('[REDACTED:openai-key]');
+    expect(out).not.toContain('sk-' + 'A'.repeat(50));
+  });
+
+  it('handles multi-file diff with mixed sensitivity', () => {
+    const diff = diffFor('src/foo.ts', '+const x = 1;\n') + diffFor('.env', '+SECRET=abc\n');
+    const out = redactDiff(diff);
+    expect(out).toContain('src/foo.ts');
+    expect(out).toContain('const x = 1;');
+    expect(out).toContain('[REDACTED: sensitive file content stripped — .env]');
+  });
+
+  it('passes through non-diff prelude with pattern-redaction', () => {
+    const diff = `### Composite header with sk-${'A'.repeat(50)}\n` + diffFor('src/x.ts', '+ok\n');
+    const out = redactDiff(diff);
+    expect(out).toContain('### Composite header');
+    expect(out).toContain('[REDACTED:openai-key]');
   });
 });

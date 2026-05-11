@@ -71,21 +71,62 @@ export async function collectGitEvidence(opts = {}) {
   }
 
   // ---- Collect evidence
-  const [statusR, headShaR, mergeBaseR, changedFilesR, diffR, diffStatR, aheadR] = await Promise.all([
+  // We need to see the FULL worktree state: committed diff origin/main..HEAD
+  // PLUS staged + unstaged changes + untracked files. The Stop hook fires
+  // AFTER Claude's last action; that action almost always leaves uncommitted
+  // work that scope-guard MUST see. Reviewing only origin/main..HEAD is a
+  // critical bypass.
+  const [statusR, headShaR, mergeBaseR,
+         committedFilesR, committedDiffR, diffStatR,
+         stagedFilesR, stagedDiffR,
+         unstagedFilesR, unstagedDiffR,
+         untrackedR, aheadR] = await Promise.all([
     runGit(['status', '--porcelain', '--branch'], { cwd }),
     runGit(['rev-parse', 'HEAD'], { cwd }),
     runGit(['merge-base', 'HEAD', 'origin/main'], { cwd }),
     runGit(['diff', '--name-only', 'origin/main...HEAD', '--', '.', ...EXCLUDE_PATHS], { cwd }),
     runGit(['diff', '--no-color', '--unified=3', 'origin/main...HEAD', '--', '.', ...EXCLUDE_PATHS], { cwd }),
     runGit(['diff', '--stat', 'origin/main...HEAD', '--', '.', ...EXCLUDE_PATHS], { cwd }),
+    runGit(['diff', '--name-only', '--cached', '--', '.', ...EXCLUDE_PATHS], { cwd }),
+    runGit(['diff', '--no-color', '--unified=3', '--cached', '--', '.', ...EXCLUDE_PATHS], { cwd }),
+    runGit(['diff', '--name-only', '--', '.', ...EXCLUDE_PATHS], { cwd }),
+    runGit(['diff', '--no-color', '--unified=3', '--', '.', ...EXCLUDE_PATHS], { cwd }),
+    runGit(['ls-files', '--others', '--exclude-standard', '--', '.', ...EXCLUDE_PATHS], { cwd }),
     runGit(['rev-list', '--count', 'HEAD', '^origin/main'], { cwd }),
   ]);
 
-  const changedFiles = (changedFilesR.stdout ?? '').split('\n').filter(Boolean);
-  const aheadCount = parseInt((aheadR.stdout ?? '0').trim(), 10);
+  const committedFiles = (committedFilesR.stdout ?? '').split('\n').filter(Boolean);
+  const stagedFiles    = (stagedFilesR.stdout    ?? '').split('\n').filter(Boolean);
+  const unstagedFiles  = (unstagedFilesR.stdout  ?? '').split('\n').filter(Boolean);
+  const untrackedFiles = (untrackedR.stdout      ?? '').split('\n').filter(Boolean);
+  const changedFiles   = Array.from(new Set([...committedFiles, ...stagedFiles, ...unstagedFiles, ...untrackedFiles])).sort();
+  const aheadCount     = parseInt((aheadR.stdout ?? '0').trim(), 10);
 
-  // Strip binary diffs and substitute name+size
-  const diffSanitized = await sanitizeDiff(diffR.stdout ?? '', changedFiles, cwd);
+  // Build the FULL composite diff (no truncation) — scope-guard runs against this.
+  const fullDiffParts = [];
+  if (committedDiffR.stdout && committedDiffR.stdout.length > 0) {
+    fullDiffParts.push(`### Committed (origin/main..HEAD)\n${committedDiffR.stdout}`);
+  }
+  if (stagedDiffR.stdout && stagedDiffR.stdout.length > 0) {
+    fullDiffParts.push(`### Staged (uncommitted, in index)\n${stagedDiffR.stdout}`);
+  }
+  if (unstagedDiffR.stdout && unstagedDiffR.stdout.length > 0) {
+    fullDiffParts.push(`### Unstaged (working tree)\n${unstagedDiffR.stdout}`);
+  }
+  // Untracked files: synthesize a pseudo-diff so scope-guard sees their content.
+  for (const f of untrackedFiles) {
+    const ext = path.extname(f).toLowerCase();
+    if (BINARY_EXTENSIONS.has(ext)) continue;
+    try {
+      const content = await readFile(path.join(cwd, f), 'utf8');
+      const numbered = content.split('\n').map(line => `+${line}`).join('\n');
+      fullDiffParts.push(`### Untracked: ${f}\ndiff --git a/${f} b/${f}\nnew file mode 100644\n--- /dev/null\n+++ b/${f}\n${numbered}`);
+    } catch { /* unreadable; skip */ }
+  }
+  const fullDiff = fullDiffParts.join('\n\n');
+
+  // Sanitize + truncate for the OpenAI packet only (safety uses fullDiff).
+  const packetDiffSanitized = await sanitizeDiff(fullDiff, changedFiles, cwd);
 
   return {
     ok: true,
@@ -95,11 +136,17 @@ export async function collectGitEvidence(opts = {}) {
       merge_base: (mergeBaseR.stdout ?? '').trim(),
       ahead_of_main: aheadCount,
       changed_files: changedFiles,
-      diff: diffSanitized.diff,
-      diff_truncated: diffSanitized.truncated,
+      committed_files: committedFiles,
+      staged_files: stagedFiles,
+      unstaged_files: unstagedFiles,
+      untracked_files: untrackedFiles,
+      full_diff: fullDiff,
+      packet_diff: packetDiffSanitized.diff,
+      diff: packetDiffSanitized.diff,  // legacy alias for callers expecting `diff`
+      diff_truncated: packetDiffSanitized.truncated,
       diff_stat: (diffStatR.stdout ?? '').trim(),
       status: (statusR.stdout ?? '').trim(),
-      binary_files: diffSanitized.binaryFiles,
+      binary_files: packetDiffSanitized.binaryFiles,
     },
   };
 }
