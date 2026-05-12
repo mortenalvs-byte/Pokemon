@@ -233,4 +233,82 @@ describe('buildBinderForm — edit mode preserves legacy binders (PR A1)', () =>
     expect(hint?.hidden).toBe(false);
     expect(hint?.textContent ?? '').toMatch(/eldre|legacy|uendret/i);
   });
+
+  it('edit-submit preserves sourceSetId="base1" for a set-scoped binder', async () => {
+    // Persist a set-scoped binder so update() has something to mutate.
+    // BindersRepo.create takes BinderInput (no id/timestamps) and generates
+    // its own ids/timestamps; we pass the input shape minus those fields.
+    const repo = createBindersRepo(db);
+    const input = makeBinder({
+      name: 'Original name',
+      sourceSetId: 'base1',
+    });
+    const { id: _ignoreId, createdAt: _ic, updatedAt: _iu, deletedAt: _id, ...createInput } = input;
+    void _ignoreId; void _ic; void _iu; void _id;
+    const persisted = await repo.create(createInput);
+
+    void openDialog(buildBinderForm({ mode: 'edit', binder: persisted }));
+    await tick(80);
+
+    const form = getDialogForm();
+    const nameInput = form.elements.namedItem('name') as HTMLInputElement;
+    expect(nameInput.value).toBe('Original name');
+    nameInput.value = 'Renamed in edit';
+
+    // The sourceSetId select must be disabled in edit mode → FormData
+    // will not include it → collectFormInput must preserve the original
+    // value from options.binder.sourceSetId rather than rejecting submit.
+    const setSelect = form.elements.namedItem('sourceSetId') as HTMLSelectElement;
+    expect(setSelect.disabled).toBe(true);
+
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    await tick(120);
+
+    const updated = await repo.get(persisted.id);
+    expect(updated).not.toBeUndefined();
+    expect(updated!.name).toBe('Renamed in edit');
+    expect(updated!.sourceSetId).toBe('base1');
+    // No new ValidationError on the form.
+    const errorRegion = form.querySelector<HTMLElement>(
+      '[data-region="form-error"]',
+    );
+    expect(errorRegion?.textContent ?? '').toBe('');
+  });
+
+  it('edit-submit preserves sourceSetId=null for a legacy binder', async () => {
+    const repo = createBindersRepo(db);
+    const input = makeBinder({
+      name: 'Legacy binder',
+      sourceSetId: null,
+    });
+    const { id: _ignoreId, createdAt: _ic, updatedAt: _iu, deletedAt: _id, ...createInput } = input;
+    void _ignoreId; void _ic; void _iu; void _id;
+    const persisted = await repo.create(createInput);
+
+    void openDialog(buildBinderForm({ mode: 'edit', binder: persisted }));
+    await tick(80);
+
+    const form = getDialogForm();
+    const nameInput = form.elements.namedItem('name') as HTMLInputElement;
+    nameInput.value = 'Renamed legacy';
+
+    // The disabled select carries an empty value ("") for legacy binders.
+    // collectFormInput's edit-mode early return must use the persisted
+    // null value, NOT trip the add-mode sourceSetId validator.
+    const setSelect = form.elements.namedItem('sourceSetId') as HTMLSelectElement;
+    expect(setSelect.disabled).toBe(true);
+    expect(setSelect.value).toBe('');
+
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    await tick(120);
+
+    const updated = await repo.get(persisted.id);
+    expect(updated).not.toBeUndefined();
+    expect(updated!.name).toBe('Renamed legacy');
+    expect(updated!.sourceSetId).toBeNull();
+    const errorRegion = form.querySelector<HTMLElement>(
+      '[data-region="form-error"]',
+    );
+    expect(errorRegion?.textContent ?? '').toBe('');
+  });
 });

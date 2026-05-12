@@ -591,6 +591,14 @@ function collectFormInput(
   ) as CompletionMode;
 
   if (options.mode === 'edit') {
+    // PR A1: edit mode preserves the existing binder's `sourceSetId`
+    // verbatim, INCLUDING null for legacy binders. The sourceSetId
+    // validation BELOW (in the add-mode branch) is deliberately
+    // unreachable in edit mode because the disabled <select> for
+    // sourceSetId is omitted from FormData — preserving the source
+    // record is the only correct behaviour. Tests in
+    // tests/binder-form.test.ts assert this for both a set-scoped
+    // binder and a legacy null-sourceSetId binder.
     return {
       name,
       binderType: binderTypeRaw,
