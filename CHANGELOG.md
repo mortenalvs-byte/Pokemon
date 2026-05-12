@@ -8,6 +8,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR B1 — Lot bulk-import via paste/CSV) — operator requirement #7
+
+Adds a "Importer mange" button to lot-detail that opens a two-step
+dialog: paste a list of `cardId,quantity[,finish[,edition[,condition]]]`
+lines (or load a `.csv` / `.txt` file), preview the resolved-vs-error
+summary, then write all resolved items to the lot in one operation.
+Closes the operator pain-point of "200 cards in a lot = 200 dialog
+clicks" — now: paste once, confirm, done.
+
+**Pure parsing service** [src/services/lot-bulk-import-service.ts](src/services/lot-bulk-import-service.ts):
+- Per-line parser with sane defaults (`quantity=1`, `finish=normal`,
+  `edition=unlimited`, `condition=NM`, `conditionType=raw`).
+- Skips blank lines and `#`-comments without reporting them as errors.
+- Per-line error reporting with line number + reason (unknown cardId,
+  invalid quantity/finish/edition/condition).
+- Card-existence check via `cardsRepo.get(cardId)`; result cached so
+  repeated cardIds (same card with multiple finishes) only hit the DB once.
+- Handles CRLF line endings (Windows paste).
+- 12 service-level tests covering happy path, all error paths, CRLF,
+  cache hit, lotId attachment, line numbering.
+
+**Two-step dialog** [src/components/lot-bulk-import-dialog.ts](src/components/lot-bulk-import-dialog.ts):
+- Step 1 (input): textarea + file picker + "Forhåndsvis" button.
+- Step 2 (summary): "N kort klare for import. M feil. K tomme/kommentar-linjer
+  hoppet over." + per-line error list + "Importer N kort" / "Tilbake".
+- On confirm: writes each item via existing
+  `lotItemsRepo.create(...)` (PR 22's audit + soft-delete + allocation
+  paths stay intact); appends ONE `lot_bulk_import` audit row
+  summarizing the operation (append-only contract, DATA_MODEL §4).
+
+**v2-compatible — no schema change:**
+- `SCHEMA_VERSION` stays at 2.
+- `BACKUP_FORMAT.md` unchanged.
+- `LotItemRecord` shape unchanged; bulk-import writes through the
+  existing `lot-items-repo`.
+- PR 18 checkbox-materialize UX unchanged.
+- PR 22 wishlist-receive-after-materialize unchanged.
+- B1 imports as `conditionType: 'raw'` only; graded items still use
+  the per-item form (rare enough that the slow path is fine).
+
+**Files touched:**
+- `src/services/lot-bulk-import-service.ts` (new, pure parser)
+- `src/components/lot-bulk-import-dialog.ts` (new, two-step dialog)
+- `src/views/lot-detail.ts` (new "Importer mange" button next to "Legg til item")
+- `tests/lot-bulk-import-service.test.ts` (new, 12 tests)
+
 ### Refactored (PR 35 — CSS modular cleanup)
 
 Stacked on the binder set-scoping foundation (A1+A2+A3). Split
