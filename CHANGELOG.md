@@ -32,7 +32,7 @@ Closes the gap surfaced in the Phase-2 audit: when an upstream card disappears b
 - `B: ignores soft-deleted user-data rows when detecting orphans` — soft-deleted holding's cardId is NOT counted even when its card goes missing.
 - `B: a failing sync leaves no orphan snapshot (best-effort runs only on success path)` — orphan detection is gated on the sync committing successfully.
 
-**Verification:** typecheck clean, 1399 tests pass (was 1394 on `origin/main`, +5), build green (CSS 73.17 KB / JS 484.52 KB; +0.93 KB delta for the new helper — well under any sensible budget), audit clean. PR 24 binder-detail-action-audit (16 cases) + the full backup + restore test family (`backup-*`, `restore-deep-validation`) all green. No user-data semantic changes; no schema bump; sacred stores untouched.
+**Verification:** typecheck clean, 1399 tests pass (was 1394 on `origin/main`, +5), build green (CSS 73.17 KB / JS 484.52 KB; +0.93 KB delta for the new helper — well under any sensible budget), audit clean. PR 24 binder-detail-action-audit (16 cases) green. No user-data semantic changes; no schema bump; sacred stores untouched. The dedicated supervisor `backup_tests` gate is currently not captured as PASS on this branch; release-readiness still pending that gate.
 
 ### Added (PR B1 — Lot bulk-import via paste/CSV) — operator requirement #7
 
