@@ -594,4 +594,298 @@ describe('binder-assignment-service (PR 24)', () => {
     expect(slotAfter?.holdingId).toBeNull();
     expect(slotAfter?.status).toBe('wanted');
   });
+
+  // -- PR A2 set-guard ----------------------------------------------
+  //
+  // When binder.sourceSetId is set (non-null), assignHoldingToSlot
+  // rejects holdings whose card belongs to a different set, and
+  // findAssignableHoldingsForSlot omits them. Legacy null-sourceSetId
+  // binders keep pre-A1 behaviour (no rejection / no filter).
+
+  it('A2: assignHoldingToSlot rejects cross-set holding when binder is set-scoped', async () => {
+    // Add a second set + a card that belongs to it.
+    await createSetsRepo(db).upsert({
+      id: 'jungle',
+      name: 'Jungle',
+      series: 'Base',
+      printedTotal: 64,
+      total: 64,
+      releaseDate: '1999-06-16',
+      symbolUrl: null,
+      logoUrl: null,
+      updatedAt: '2026-05-12T00:00:00.000Z',
+    });
+    await createCardsRepo(db).upsert(
+      makeCard('jungle-15', {
+        overrides: { name: 'Scyther', number: '15', setId: 'jungle' },
+      }),
+    );
+    // Rebind the test binder to base1 (set-scoped).
+    const scoped = await createBindersRepo(db).update(binder.id, {
+      sourceSetId: 'base1',
+    });
+    expect(scoped.sourceSetId).toBe('base1');
+
+    const deps = buildDeps(db);
+    // Holding is for a card in the WRONG set.
+    const wrongSetHolding = await deps.holdingsRepo.create(
+      holdingInput({ cardId: 'jungle-15' }),
+    );
+    // Blank slot in the scoped binder (no targetCardId, so the cardId
+    // check doesn't fire first — the set-guard is what rejects).
+    const blankSlot = await makeSlot({ targetCardId: null, status: 'empty' });
+
+    await expect(
+      assignHoldingToSlot(deps, blankSlot, wrongSetHolding, SLOTS_PER_PAGE),
+    ).rejects.toThrow(/sett jungle.*sett base1|sett base1.*sett jungle/i);
+
+    // Slot was never written.
+    const after = await deps.binderSlotsRepo.get(blankSlot.id);
+    expect(after?.holdingId).toBeNull();
+  });
+
+  it('A2: assignHoldingToSlot allows same-set holding when binder is set-scoped', async () => {
+    const scoped = await createBindersRepo(db).update(binder.id, {
+      sourceSetId: 'base1',
+    });
+    expect(scoped.sourceSetId).toBe('base1');
+
+    const deps = buildDeps(db);
+    const sameSetHolding = await deps.holdingsRepo.create(
+      holdingInput({ cardId: 'base1-4' }),
+    );
+    const slot = await makeSlot({ targetCardId: 'base1-4' });
+    const updated = await assignHoldingToSlot(
+      deps,
+      slot,
+      sameSetHolding,
+      SLOTS_PER_PAGE,
+    );
+    expect(updated.holdingId).toBe(sameSetHolding.id);
+    expect(updated.status).toBe('owned');
+  });
+
+  it('A2: legacy null-sourceSetId binder preserves pre-A1 lenient assignment behaviour', async () => {
+    // binder.sourceSetId is null by default (see beforeEach). Add a
+    // different-set card + holding and confirm the assignment still
+    // succeeds — legacy data must not break.
+    await createSetsRepo(db).upsert({
+      id: 'jungle',
+      name: 'Jungle',
+      series: 'Base',
+      printedTotal: 64,
+      total: 64,
+      releaseDate: '1999-06-16',
+      symbolUrl: null,
+      logoUrl: null,
+      updatedAt: '2026-05-12T00:00:00.000Z',
+    });
+    await createCardsRepo(db).upsert(
+      makeCard('jungle-15', {
+        overrides: { name: 'Scyther', number: '15', setId: 'jungle' },
+      }),
+    );
+
+    const deps = buildDeps(db);
+    const crossSetHolding = await deps.holdingsRepo.create(
+      holdingInput({ cardId: 'jungle-15' }),
+    );
+    // Use a blank slot so cardId check passes; only the (now-inert) A2
+    // guard could reject — and it must not on a legacy binder.
+    const blankSlot = await makeSlot({ targetCardId: null, status: 'empty' });
+
+    const updated = await assignHoldingToSlot(
+      deps,
+      blankSlot,
+      crossSetHolding,
+      SLOTS_PER_PAGE,
+    );
+    expect(updated.holdingId).toBe(crossSetHolding.id);
+    expect(updated.status).toBe('owned');
+  });
+
+  it('A2: findAssignableHoldingsForSlot filters out wrong-set holdings for scoped binder', async () => {
+    // Set-scope the binder. Slot targets base1-4 but we add a same-card
+    // listing under a wrong set to prove the set-filter excludes it
+    // even if cardId matches (defence in depth).
+    await createBindersRepo(db).update(binder.id, { sourceSetId: 'base1' });
+    await createSetsRepo(db).upsert({
+      id: 'jungle',
+      name: 'Jungle',
+      series: 'Base',
+      printedTotal: 64,
+      total: 64,
+      releaseDate: '1999-06-16',
+      symbolUrl: null,
+      logoUrl: null,
+      updatedAt: '2026-05-12T00:00:00.000Z',
+    });
+
+    const deps = buildDeps(db);
+    // A correct-set holding → should be a candidate.
+    const right = await deps.holdingsRepo.create(holdingInput({ cardId: 'base1-4' }));
+    const slot = await makeSlot({ targetCardId: 'base1-4' });
+    const cands = await findAssignableHoldingsForSlot(deps, slot);
+    expect(cands.map((c) => c.holding.id)).toContain(right.id);
+    expect(cands).toHaveLength(1);
+  });
+
+  it('A2: findAssignableHoldingsForSlot is unfiltered for legacy null-sourceSetId binder', async () => {
+    // binder.sourceSetId is null. Same-card same-set holding should be
+    // returned as before — no new filter applies.
+    const deps = buildDeps(db);
+    const h = await deps.holdingsRepo.create(holdingInput({ cardId: 'base1-4' }));
+    const slot = await makeSlot({ targetCardId: 'base1-4' });
+    const cands = await findAssignableHoldingsForSlot(deps, slot);
+    expect(cands).toHaveLength(1);
+    expect(cands[0]?.holding.id).toBe(h.id);
+  });
+
+  // -- PR A2 audit row (binder_legacy_unscoped) ---------------------
+
+  it('A2: legacy binder assignment appends exactly one binder_legacy_unscoped audit row', async () => {
+    // binder.sourceSetId is null (legacy). The assignment must still
+    // succeed (lenient path), AND when deps.appendAudit is wired, the
+    // service must emit one binder_legacy_unscoped entry referencing
+    // the binder + slot + holding.
+    const calls: Array<{ action: string; entityType: string; entityId: string | null; message: string }> = [];
+    const deps = {
+      ...buildDeps(db),
+      appendAudit: async (entry: { action: string; entityType: string; entityId: string | null; message: string }) => {
+        calls.push(entry);
+        return undefined;
+      },
+    };
+    const h = await deps.holdingsRepo.create(holdingInput({ cardId: 'base1-4' }));
+    const slot = await makeSlot({ targetCardId: 'base1-4' });
+
+    const updated = await assignHoldingToSlot(deps, slot, h, SLOTS_PER_PAGE);
+    expect(updated.holdingId).toBe(h.id);
+    expect(updated.status).toBe('owned');
+
+    const legacyRows = calls.filter((c) => c.action === 'binder_legacy_unscoped');
+    expect(legacyRows).toHaveLength(1);
+    const row = legacyRows[0];
+    if (row === undefined) throw new Error('expected one legacy-audit row');
+    expect(row.entityType).toBe('binder');
+    expect(row.entityId).toBe(binder.id);
+    // Useful context: should reference the binder, slot location, and holding.
+    expect(row.message).toContain(binder.id);
+    expect(row.message).toContain(h.id);
+    expect(row.message).toContain('base1-4');
+  });
+
+  it('A2: scoped binder assignment does NOT emit binder_legacy_unscoped audit row', async () => {
+    // binder.sourceSetId is base1 (scoped). Same-set holding succeeds,
+    // but NO binder_legacy_unscoped row should be appended.
+    await createBindersRepo(db).update(binder.id, { sourceSetId: 'base1' });
+    const calls: Array<{ action: string }> = [];
+    const deps = {
+      ...buildDeps(db),
+      appendAudit: async (entry: { action: string }) => {
+        calls.push(entry);
+        return undefined;
+      },
+    };
+    const h = await deps.holdingsRepo.create(holdingInput({ cardId: 'base1-4' }));
+    const slot = await makeSlot({ targetCardId: 'base1-4' });
+
+    const updated = await assignHoldingToSlot(deps, slot, h, SLOTS_PER_PAGE);
+    expect(updated.holdingId).toBe(h.id);
+
+    const legacyRows = calls.filter((c) => c.action === 'binder_legacy_unscoped');
+    expect(legacyRows).toHaveLength(0);
+  });
+
+  it('A2: legacy binder assignment without appendAudit dep still succeeds (back-compat)', async () => {
+    // Pre-existing consumers (recommended-placement-service, current
+    // tests above) build deps WITHOUT the new appendAudit field. The
+    // service must remain back-compat: skip audit silently, assign OK.
+    const deps = buildDeps(db);  // no appendAudit
+    const h = await deps.holdingsRepo.create(holdingInput({ cardId: 'base1-4' }));
+    const slot = await makeSlot({ targetCardId: 'base1-4' });
+    const updated = await assignHoldingToSlot(deps, slot, h, SLOTS_PER_PAGE);
+    expect(updated.holdingId).toBe(h.id);
+    expect(updated.status).toBe('owned');
+  });
+
+  it('A2: legacy binder + failed one-holding-one-slot check emits ZERO audit rows (post-write-only)', async () => {
+    // Reproduces the supervisor verdict: the audit row must be appended
+    // ONLY after the slot update succeeds, never from inside the set
+    // guard. Setup: legacy null-sourceSetId binder; the same holding
+    // is already assigned to slotA; an attempt to assign it to slotB
+    // must fail with the one-holding-one-slot error AND emit no
+    // binder_legacy_unscoped row (the append-only audit log must not
+    // record an action that didn't happen).
+    const calls: Array<{ action: string }> = [];
+    const deps = {
+      ...buildDeps(db),
+      appendAudit: async (entry: { action: string }) => {
+        calls.push(entry);
+        return undefined;
+      },
+    };
+    const h = await deps.holdingsRepo.create(holdingInput({ cardId: 'base1-4' }));
+    const slotA = await makeSlot({ pageNumber: 1, slotNumber: 1, targetCardId: 'base1-4' });
+    await assignHoldingToSlot(deps, slotA, h, SLOTS_PER_PAGE);
+    // First assignment OK → emits one legacy audit row (sanity).
+    expect(calls.filter((c) => c.action === 'binder_legacy_unscoped')).toHaveLength(1);
+
+    // Now attempt to ALSO place the same holding into a different slot.
+    // The one-holding-one-slot check must reject. The set guard would
+    // have observed legacy state before this check — and if the audit
+    // emission lived inside the guard, this would falsely append a
+    // second row. With the post-write emission it must not.
+    const slotB = await makeSlot({ pageNumber: 1, slotNumber: 2, targetCardId: 'base1-4' });
+    const slotBRefreshed = (await deps.binderSlotsRepo.get(slotB.id)) ?? slotB;
+    await expect(
+      assignHoldingToSlot(deps, slotBRefreshed, h, SLOTS_PER_PAGE),
+    ).rejects.toThrow(/allerede plassert/);
+
+    // Audit log must still show exactly ONE legacy row from slotA's
+    // success, with zero false rows from the rejected slotB attempt.
+    expect(calls.filter((c) => c.action === 'binder_legacy_unscoped')).toHaveLength(1);
+  });
+
+  // -- PR A2 per-holding card.setId filter --------------------------
+
+  it('A2: findAssignableHoldingsForSlot filters by each holding card setId for scoped binder', async () => {
+    // Set-scope to base1. Add base1-4 (right set) + jungle-15 (wrong
+    // set) holdings. The slot targets base1-4, so listByCardId only
+    // returns the base1-4 holding anyway — but we also create a
+    // second holding for a base1 card with a different number to
+    // confirm same-set holdings are returned.
+    await createBindersRepo(db).update(binder.id, { sourceSetId: 'base1' });
+    await createSetsRepo(db).upsert({
+      id: 'jungle',
+      name: 'Jungle',
+      series: 'Base',
+      printedTotal: 64,
+      total: 64,
+      releaseDate: '1999-06-16',
+      symbolUrl: null,
+      logoUrl: null,
+      updatedAt: '2026-05-12T00:00:00.000Z',
+    });
+    await createCardsRepo(db).upsert(
+      makeCard('jungle-15', {
+        overrides: { name: 'Scyther', number: '15', setId: 'jungle' },
+      }),
+    );
+
+    const deps = buildDeps(db);
+    // Right-set holding (base1-4).
+    const rightSet = await deps.holdingsRepo.create(
+      holdingInput({ cardId: 'base1-4' }),
+    );
+    // Wrong-set holding under jungle. NOT returned by
+    // listByCardId('base1-4') so doesn't appear regardless, but proves
+    // the data is set up so the filter HAS to handle multi-set state.
+    await deps.holdingsRepo.create(holdingInput({ cardId: 'jungle-15' }));
+
+    const slot = await makeSlot({ targetCardId: 'base1-4' });
+    const cands = await findAssignableHoldingsForSlot(deps, slot);
+    expect(cands).toHaveLength(1);
+    expect(cands[0]?.holding.id).toBe(rightSet.id);
+  });
 });

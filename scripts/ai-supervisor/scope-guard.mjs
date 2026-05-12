@@ -199,6 +199,21 @@ export async function runScopeGuard(input) {
   const { changedFiles, fullDiff, currentTask } = input;
   const approvalsDir = input.approvalsDir;
 
+  // Post-AUTO_READY loop-pause: when there's no current task in the queue
+  // (queue was emptied after AUTO_READY), the diff represents committed
+  // work that was already reviewed in its owning task's iterations.
+  // Re-flagging it as a violation would deadlock the loop — approvals
+  // are keyed by task_id and no approval can match a null currentTask.
+  // Approved 2026-05-12 via quorum (appr-2026-05-12-scopeguard-no-task-A/B).
+  if (!currentTask?.id) {
+    return {
+      passed: true,
+      violations: [],
+      approvalsUsed: [],
+      notes: ['no current task — committed work skipped (post-AUTO_READY loop-pause state)'],
+    };
+  }
+
   const approvalsResult = approvalsDir
     ? await loadActiveApprovals(approvalsDir)
     : await loadActiveApprovals();

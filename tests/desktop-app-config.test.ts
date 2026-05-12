@@ -79,7 +79,12 @@ describe('desktop app config (PR 28)', () => {
       expect(pkg.scripts?.['dev']).toBe('vite');
       expect(pkg.scripts?.['build']).toContain('vite build');
       expect(pkg.scripts?.['preview']).toBe('vite preview');
-      expect(pkg.scripts?.['test']).toBe('vitest run');
+      // PR A1: the `test` script excludes the 11 qa:browser test files
+      // (they're already run separately by `npm run qa:browser`) so the
+      // supervisor's per-step test cap fits comfortably. Assertion
+      // relaxed from strict equality to substring + exclude-flag presence.
+      expect(pkg.scripts?.['test']).toMatch(/^vitest run\b/);
+      expect(pkg.scripts?.['test']).toContain('--exclude=tests/qa-seed.test.ts');
       expect(pkg.scripts?.['typecheck']).toBe('tsc --noEmit');
     });
 

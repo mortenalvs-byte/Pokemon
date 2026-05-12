@@ -41,6 +41,7 @@ import type {
 import type {
   HoldingInput,
 } from '../domain/validators';
+import type { AuditInput } from '../db/audit';
 import type { BindersRepo } from '../repositories/binders-repo';
 import type { BinderSlotsRepo } from '../repositories/binder-slots-repo';
 import type { CardsRepo } from '../repositories/cards-repo';
@@ -72,6 +73,17 @@ export interface BinderAssignmentDeps {
   readonly binderSlotsRepo: BinderSlotsRepo;
   readonly holdingsRepo: HoldingsRepo;
   readonly cardsRepo: CardsRepo;
+  /**
+   * PR A2 — Optional audit emitter. When provided, the service
+   * appends a `binder_legacy_unscoped` row each time
+   * `assignHoldingToSlot` succeeds against a binder whose
+   * `sourceSetId` is null. Consumers that don't provide it
+   * (existing tests, `recommended-placement-service`, any other
+   * legacy caller) skip the audit silently — the assignment itself
+   * still runs unchanged. This is append-only: never updates or
+   * deletes audit rows (DATA_MODEL §4).
+   */
+  readonly appendAudit?: (entry: AuditInput) => Promise<unknown>;
 }
 
 export class SlotAssignmentError extends Error {
@@ -112,11 +124,35 @@ export async function findAssignableHoldingsForSlot(
   const reverseTemplate = isReverseHoloTemplateSlot(slot.note);
   const assignedHoldingIds = await getAssignedHoldingIds(deps, slot.id);
 
+  // PR A2: when the binder is set-scoped (sourceSetId !== null),
+  // additionally exclude any holdings whose card belongs to a different
+  // set. The check is performed PER HOLDING (not just on the slot's
+  // targetCardId) so it remains correct even if data integrity drifts
+  // (e.g. a holding whose card was retroactively re-classified to a
+  // different set). Defence in depth on top of slot.targetCardId
+  // matching — the typical case where holding.cardId === slot.targetCardId
+  // resolves to the same answer.
+  const binder = await deps.bindersRepo.get(slot.binderId);
+  const requiredSetId =
+    binder !== undefined && binder.sourceSetId !== null
+      ? binder.sourceSetId
+      : null;
+
   const out: AssignableHolding[] = [];
   for (const holding of holdings) {
     if (holding.deletedAt !== null) continue;
     if (assignedHoldingIds.has(holding.id)) continue;
     if (reverseTemplate && holding.finish !== 'reverse_holo') continue;
+    if (requiredSetId !== null) {
+      // Look up the holding's OWN card.setId, not the slot's target.
+      const holdingCard =
+        holding.cardId === slot.targetCardId
+          ? card
+          : (await deps.cardsRepo.get(holding.cardId)) ?? null;
+      if (holdingCard === null || holdingCard.setId !== requiredSetId) {
+        continue;
+      }
+    }
     out.push({
       holding,
       card,
@@ -125,6 +161,58 @@ export async function findAssignableHoldingsForSlot(
     });
   }
   return out;
+}
+
+/**
+ * PR A2 — Cross-set guard for assignHoldingToSlot. **Pure validation
+ * with NO side-effects.** Returns whether the binder is in the legacy
+ * unscoped state so the caller can decide what to do AFTER the write
+ * succeeds (the audit emission has to wait until after the slot
+ * update — emitting it from inside this guard would leave a false
+ * audit row when a later validation, like one-holding-one-slot,
+ * rejects the assignment).
+ *
+ * Throws SlotAssignmentError when the holding's card belongs to a
+ * different set than the binder it's being placed into — but ONLY
+ * when the binder has a non-null `sourceSetId`. Legacy binders
+ * (`sourceSetId === null`, pre-A1) keep their previous lenient
+ * behaviour to preserve existing user data.
+ *
+ * Resolution failures (binder gone, card not in cache) fall through
+ * silently as "can't verify, allow" rather than blocking the user
+ * for a defensive read; the cardId-match check above already catches
+ * the common wrong-card case. This is consistent with PR 24's "single
+ * writer" being the authority on assignment correctness.
+ *
+ * Returns: `{ legacyBinderId }` — the binder id when it's a legacy
+ * null-sourceSetId binder (the caller emits `binder_legacy_unscoped`
+ * after the write); `null` for scoped binders, unknown binders, and
+ * unresolvable card lookups.
+ */
+async function assertSetMatchForAssignment(
+  deps: BinderAssignmentDeps,
+  slot: BinderSlotRecord,
+  holding: HoldingRecord,
+): Promise<{ legacyBinderId: string | null }> {
+  const binder = await deps.bindersRepo.get(slot.binderId);
+  if (binder === undefined) return { legacyBinderId: null };
+  if (binder.sourceSetId === null) {
+    // Legacy binder — preserve pre-A1 lenient assignment. Report the
+    // legacy state to the caller; do NOT emit the audit row here
+    // because later checks (one-holding-one-slot, repo.update
+    // failure) may still reject the assignment, and the audit log is
+    // append-only — a falsely-emitted row cannot be retracted.
+    return { legacyBinderId: binder.id };
+  }
+
+  const card = await deps.cardsRepo.get(holding.cardId);
+  if (card === undefined) return { legacyBinderId: null };  // unknown card — defer to cardId match
+  if (card.setId === binder.sourceSetId) return { legacyBinderId: null };  // happy path
+
+  throw new SlotAssignmentError(
+    `Holdingen er fra sett ${card.setId}, men permen er bundet til sett ${binder.sourceSetId}. ` +
+    `Velg en holding fra riktig sett, eller plasser kortet i en annen perm.`,
+  );
 }
 
 /**
@@ -187,6 +275,20 @@ export async function assignHoldingToSlot(
       `Reverse-holo template-slot tar bare reverse_holo-finish (holding er ${holding.finish}).`,
     );
   }
+  // PR A2: cross-set assignment guard. When the binder is bound to a
+  // specific set (binder.sourceSetId !== null), reject any holding
+  // whose card belongs to a different set. Legacy binders with
+  // sourceSetId === null preserve their pre-A1 behaviour (no rejection)
+  // — the v1->v2 schema kept the field optional and existing user data
+  // must keep loading without forcing migration.
+  //
+  // The guard is PURE: it returns the legacy-binder context so the
+  // `binder_legacy_unscoped` audit row can be appended AFTER all later
+  // validations + the slot update succeed. Emitting from inside the
+  // guard would leak a false audit row if a subsequent check (e.g. the
+  // one-holding-one-slot check below) rejects the assignment — the
+  // audit log is append-only (DATA_MODEL §4) and cannot retract.
+  const setGuard = await assertSetMatchForAssignment(deps, slot, holding);
   // One-holding-one-slot enforcement. Pass `slot.id` as the exclude so
   // reassigning the same holding to its current slot stays a legal
   // no-op-style update (matches the existing assign-modal "Bytt
@@ -197,7 +299,7 @@ export async function assignHoldingToSlot(
       'Holdingen er allerede plassert i en annen slot.',
     );
   }
-  return deps.binderSlotsRepo.update(
+  const updated = await deps.binderSlotsRepo.update(
     slot.id,
     {
       holdingId: holding.id,
@@ -209,6 +311,31 @@ export async function assignHoldingToSlot(
     },
     slotsPerPage,
   );
+
+  // PR A2: post-write audit emission for legacy null-sourceSetId
+  // binders. The update succeeded, so the audit row now accurately
+  // records the touch. If `appendAudit` itself throws (which would be
+  // a rare audit-store failure), the slot is already updated — we
+  // swallow the audit error rather than re-throwing because rolling
+  // back the slot update without `binder_slot_unassigned` semantics
+  // would muddy the action history. The operator-facing failure mode
+  // is "assignment succeeded but audit was lost", which is preferable
+  // to "slot update succeeded then partial rollback."
+  if (setGuard.legacyBinderId !== null && deps.appendAudit !== undefined) {
+    try {
+      await deps.appendAudit({
+        action: 'binder_legacy_unscoped',
+        entityType: 'binder',
+        entityId: setGuard.legacyBinderId,
+        message:
+          `legacy unscoped binder ${setGuard.legacyBinderId} ` +
+          `(page ${slot.pageNumber}/slot ${slot.slotNumber}) ` +
+          `received holding ${holding.id} (card ${holding.cardId})`,
+      });
+    } catch { /* best-effort; slot update already succeeded */ }
+  }
+
+  return updated;
 }
 
 // ---------------------------------------------------------------------

@@ -38,6 +38,26 @@ export interface SlotForCard {
   readonly matchedBy: 'target' | 'assigned';
 }
 
+/**
+ * PR A3 — Open slot in a set-scoped binder for a specific card.
+ *
+ * Returned by `findOpenSlotsForCardInSetBinder`: a slot that is
+ * available to assign for the given cardId, in a binder bound to
+ * the card's set. Legacy null-sourceSetId binders are excluded.
+ */
+export interface OpenSlotForCard {
+  readonly binder: BinderRecord;
+  readonly slot: BinderSlotRecord;
+  /**
+   * Why this slot is considered "open":
+   *  - 'targeted-empty': slot.targetCardId === cardId AND status !== 'owned' AND holdingId is null.
+   *  - 'blank-untargeted': slot.targetCardId === null AND status !== 'owned' AND holdingId is null.
+   *    The user can backfill this slot with the holding. Defence-in-depth:
+   *    we only emit this when the binder is scoped to the same set as the card.
+   */
+  readonly openReason: 'targeted-empty' | 'blank-untargeted';
+}
+
 export interface BinderSlotService {
   /** All live binders, each with its completion stats. */
   listSummaries(): Promise<BinderSummary[]>;
@@ -49,6 +69,23 @@ export interface BinderSlotService {
    * the Card Detail view's "Binder-lokasjoner" section.
    */
   slotsForCardId(cardId: string): Promise<SlotForCard[]>;
+  /**
+   * PR A3 — open slots for a card across binders bound to that card's set.
+   *
+   * Returns slots in any LIVE binder where `binder.sourceSetId === card.setId`
+   * AND the slot is currently open (status not 'owned', holdingId is null,
+   * not soft-deleted) AND the slot either explicitly targets this cardId or
+   * is blank/untargeted. Legacy null-sourceSetId binders are deliberately
+   * excluded — this lookup is the supervised "where can I put this card in
+   * MY set's binder?" UX answer (operator requirement #9), and legacy
+   * unscoped binders are not part of that semantic.
+   *
+   * Returns `[]` when:
+   *   - the cardId is unknown
+   *   - the card's set has no set-scoped binders
+   *   - all such binders' relevant slots are already owned
+   */
+  findOpenSlotsForCardInSetBinder(cardId: string): Promise<OpenSlotForCard[]>;
 }
 
 export function createBinderSlotService(
@@ -171,6 +208,61 @@ export function createBinderSlotService(
         return a.slot.slotNumber - b.slot.slotNumber;
       });
       return matches;
+    },
+
+    async findOpenSlotsForCardInSetBinder(cardId) {
+      // Look up the card's set first; without it we can't match binders.
+      const card = await cardsRepo.get(cardId);
+      if (card === undefined) return [];
+      const targetSetId = card.setId;
+
+      // Filter to live binders that are explicitly scoped to this set.
+      // Legacy null-sourceSetId binders are excluded — operator
+      // requirement #9 is specifically about a card's "own set" binder.
+      const liveBinders = await bindersRepo.listLive();
+      const setScoped = liveBinders.filter(
+        (b) => b.sourceSetId === targetSetId,
+      );
+      if (setScoped.length === 0) return [];
+
+      const setScopedIds = new Set(setScoped.map((b) => b.id));
+      const allLiveSlots = await slotsRepo.listLive();
+
+      const open: OpenSlotForCard[] = [];
+      for (const slot of allLiveSlots) {
+        if (!setScopedIds.has(slot.binderId)) continue;
+        // "Open" = not currently owned AND no holding assigned.
+        if (slot.status === 'owned') continue;
+        if (slot.holdingId !== null) continue;
+        // Targeting check: explicit target match OR blank slot the user
+        // can backfill. Wanted/missing/duplicate slots with another
+        // targetCardId aren't "open for this card" — that'd be visual
+        // noise; skip them.
+        let openReason: OpenSlotForCard['openReason'];
+        if (slot.targetCardId === cardId) {
+          openReason = 'targeted-empty';
+        } else if (slot.targetCardId === null) {
+          openReason = 'blank-untargeted';
+        } else {
+          continue;
+        }
+
+        const binder = setScoped.find((b) => b.id === slot.binderId);
+        if (binder === undefined) continue;
+        open.push({ binder, slot, openReason });
+      }
+
+      // Stable order: by binder name then page/slot — same ordering
+      // convention as slotsForCardId so the UI feels consistent.
+      open.sort((a, b) => {
+        const nameCmp = a.binder.name.localeCompare(b.binder.name);
+        if (nameCmp !== 0) return nameCmp;
+        if (a.slot.pageNumber !== b.slot.pageNumber) {
+          return a.slot.pageNumber - b.slot.pageNumber;
+        }
+        return a.slot.slotNumber - b.slot.slotNumber;
+      });
+      return open;
     },
   };
 }

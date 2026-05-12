@@ -1,0 +1,532 @@
+/*
+ * PR 35 — split section: workspace-and-polish
+ * Carved from src/styles.css (lines 4047-4572 of the pre-split file).
+ * Imported by src/styles.css in order; no class names or selectors changed.
+ */
+
+/* ========================================================== */
+/* PR 26 — Desktop workspace shell                              */
+/* ========================================================== */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.topbar__brand {
+  color: inherit;
+  text-decoration: none;
+}
+
+.topbar__brand:hover {
+  text-decoration: underline;
+}
+
+@media (min-width: 1200px) {
+  .layout {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: sticky;
+    top: var(--topbar-height, 48px);
+    align-self: start;
+    max-height: calc(100vh - var(--topbar-height, 48px));
+    overflow: auto;
+  }
+
+  .content {
+    min-width: 0;
+  }
+}
+
+/* ========================================================== */
+/* PR 26 — Dashboard workspace polish                           */
+/* ========================================================== */
+
+.dashboard-view__workspace {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  color: var(--color-fg-muted);
+  background: var(--color-surface);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-1);
+}
+
+.dashboard-card__next-action {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-fg);
+  background: var(--color-bg);
+  border-radius: var(--radius-1);
+}
+
+@media (min-width: 1200px) {
+  .dashboard-view__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  .dashboard-view__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .dashboard-view__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ========================================================== */
+/* PR 26 — Master gap desktop polish                            */
+/* ========================================================== */
+
+.master-gap-view__table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  position: sticky;
+  top: var(--topbar-height, 48px);
+  z-index: 1;
+}
+
+.master-gap-view__toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.master-gap-view__density-toggle,
+.master-gap-view__toggle {
+  padding: 6px 12px;
+  font-size: 13px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  color: var(--color-fg);
+}
+
+.master-gap-view__density-toggle:hover,
+.master-gap-view__toggle:hover {
+  background: var(--color-bg);
+}
+
+.master-gap-view__toggle--active {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border-color: var(--color-accent);
+}
+
+@media (min-width: 900px) {
+  .master-gap-table thead th {
+    position: sticky;
+    /* Stack below the topbar AND below the table-toolbar so neither
+       overlaps the column headers when the user scrolls. */
+    top: calc(var(--topbar-height, 48px) + 56px);
+    z-index: 2;
+    background: var(--color-surface);
+  }
+}
+
+.master-gap-table--compact th,
+.master-gap-table--compact td {
+  padding-block: 0.35rem;
+  padding-inline: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.master-gap-table--comfortable th,
+.master-gap-table--comfortable td {
+  padding-block: 0.65rem;
+  padding-inline: 0.75rem;
+}
+
+.master-gap-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+/* ========================================================== */
+/* PR 26 — Binder detail workspace polish                       */
+/* ========================================================== */
+
+.binder-detail-view__toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.binder-detail-view__toolbar-group--actions {
+  margin-left: auto;
+}
+
+@media (max-width: 767px) {
+  .binder-detail-view__toolbar-group--actions {
+    margin-left: 0;
+  }
+}
+
+/* ========================================================== */
+/* PR 27 — Personal command center                              */
+/* ========================================================== */
+
+.dashboard-view__workspace + .dashboard-strip {
+  margin-top: var(--space-2);
+}
+
+.dashboard-command-center {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+}
+
+.dashboard-command-center__heading {
+  margin: 0 0 var(--space-1);
+  font-size: 18px;
+}
+
+.dashboard-command-center__subtitle {
+  margin: 0 0 var(--space-3);
+  font-size: 13px;
+  color: var(--color-fg-muted);
+}
+
+.dashboard-command-center__loading,
+.dashboard-command-center__empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-fg-muted);
+  font-style: italic;
+}
+
+.dashboard-command-center__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.dashboard-command-center__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+}
+
+.dashboard-command-center__item--critical {
+  border-left: 3px solid var(--color-danger, #b00020);
+}
+
+.dashboard-command-center__item--warning {
+  border-left: 3px solid var(--color-accent);
+}
+
+.dashboard-command-center__item--info {
+  border-left: 3px solid var(--color-fg-muted);
+}
+
+.dashboard-command-center__item--success {
+  border-left: 3px solid var(--color-success, #007a4d);
+}
+
+.dashboard-command-center__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dashboard-command-center__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.dashboard-command-center__message {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-fg-muted);
+}
+
+.dashboard-command-center__action {
+  padding: 6px 12px;
+  font-size: 13px;
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border: none;
+  border-radius: var(--radius-1);
+  cursor: pointer;
+}
+
+.dashboard-command-center__action:hover {
+  filter: brightness(1.05);
+}
+
+/* Personal workspace summary */
+
+.personal-workspace-summary {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+}
+
+.personal-workspace-summary__heading {
+  margin: 0 0 var(--space-2);
+  font-size: 16px;
+}
+
+.personal-workspace-summary__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-2);
+}
+
+.personal-workspace-summary__stats dt {
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  margin: 0;
+}
+
+.personal-workspace-summary__stats dd {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.personal-workspace-summary__next {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-fg);
+}
+
+/* Master-gap preferences feedback */
+
+.master-gap-view__feedback {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.master-gap-view__feedback--error {
+  color: var(--color-danger, #b00020);
+}
+
+/* Settings — Personlig app */
+
+.settings-view__field--inline {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-view__field--inline input[type="checkbox"] {
+  margin: 0;
+}
+
+/* Topbar shortcut-help button */
+
+.topbar__shortcut-help {
+  padding: 4px 10px;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  color: var(--color-fg);
+}
+
+.topbar__shortcut-help:hover {
+  background: var(--color-surface);
+}
+
+/* Shortcuts help dialog body */
+
+.shortcuts-help h2 {
+  margin: 0 0 var(--space-3);
+  font-size: 18px;
+}
+
+.shortcuts-help__list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.shortcuts-help__list dt {
+  margin: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+}
+
+.shortcuts-help__list dd {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-fg);
+}
+
+/* ========================================================== */
+/* PR 28 — Desktop app shell                                    */
+/* ========================================================== */
+
+.topbar__runtime-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  margin-left: var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border-radius: var(--radius-1);
+  user-select: none;
+}
+
+/* ========================================================== */
+/* PR 28 — Best-copy recommendations                            */
+/* ========================================================== */
+
+.master-gap-row__recommendation {
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: var(--color-bg);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-1);
+}
+
+.master-gap-row__recommendation--manual,
+.master-gap-row__recommendation--no-candidates,
+.master-gap-row__recommendation--missing {
+  border-left-color: var(--color-fg-muted);
+  color: var(--color-fg-muted);
+  font-style: italic;
+}
+
+.master-gap-row__recommendation-heading {
+  margin: 0 0 4px;
+  font-weight: 600;
+  color: var(--color-fg);
+}
+
+.master-gap-row__recommendation-reasons {
+  list-style: disc inside;
+  margin: 0;
+  padding: 0;
+  color: var(--color-fg-muted);
+}
+
+.master-gap-row__recommendation-reasons li {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* ========================================================== */
+/* PR 28 — Recommended placement actions                        */
+/* ========================================================== */
+
+.master-gap-view__bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
+}
+
+.master-gap-view__bulk-recommended {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border: none;
+  border-radius: var(--radius-1);
+  cursor: pointer;
+}
+
+.master-gap-view__bulk-recommended:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.master-gap-view__bulk-recommended:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.master-gap-view__bulk-summary-line {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.master-gap-bulk-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 320px;
+}
+
+.master-gap-bulk-confirm h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.master-gap-bulk-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.master-gap-bulk-confirm__actions button {
+  padding: 6px 14px;
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  background: var(--color-surface);
+  color: var(--color-fg);
+}
+
+.master-gap-bulk-confirm__confirm {
+  background: var(--color-accent) !important;
+  color: var(--color-accent-fg) !important;
+  border-color: var(--color-accent) !important;
+}
+
+.master-gap-row__action--primary[data-action="place-recommended"] {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border-color: var(--color-accent);
+}
+

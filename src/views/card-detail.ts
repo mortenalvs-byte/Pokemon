@@ -28,6 +28,7 @@ import { createSetsRepo } from '../repositories/sets-repo';
 import { createWishlistRepo } from '../repositories/wishlist-repo';
 import {
   createBinderSlotService,
+  type OpenSlotForCard,
   type SlotForCard,
 } from '../services/binder-slot-service';
 import {
@@ -516,6 +517,17 @@ async function buildBindersSection(cardId: string): Promise<HTMLElement> {
     createHoldingsRepo(db),
     createCardsRepo(db),
   );
+
+  // PR A3 — Per-card open-slot dropdown (operator requirement #9).
+  // Surfaces open slots in any set-scoped binder whose sourceSetId
+  // matches this card's setId. Legacy null-sourceSetId binders are
+  // intentionally excluded from this lookup (their "where can this
+  // card go" semantics are handled by the table further down).
+  const openSlots = await service.findOpenSlotsForCardInSetBinder(cardId);
+  if (openSlots.length > 0) {
+    section.appendChild(buildOpenSlotsDropdown(openSlots));
+  }
+
   const matches = await service.slotsForCardId(cardId);
 
   if (matches.length === 0) {
@@ -550,6 +562,53 @@ async function buildBindersSection(cardId: string): Promise<HTMLElement> {
   }
   section.appendChild(table);
   return section;
+}
+
+// PR A3 — open-slot dropdown for this card's set-scoped binders.
+// Renders a <select> listing open slots (status not 'owned', no holding
+// assigned) in any LIVE binder whose sourceSetId matches the card's
+// setId. Selecting an option and clicking "Gå til valgt slot"
+// deep-links to the binder + slot. Legacy null-sourceSetId binders
+// are deliberately excluded from this lookup (see
+// findOpenSlotsForCardInSetBinder in binder-slot-service.ts).
+function buildOpenSlotsDropdown(openSlots: readonly OpenSlotForCard[]): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'card-detail-view__open-slots';
+  wrap.dataset['region'] = 'open-slots-dropdown';
+
+  const label = document.createElement('label');
+  label.className = 'card-detail-view__open-slots-label';
+  label.textContent = `Ledige plasser i sett-perm (${openSlots.length}):`;
+
+  const select = document.createElement('select');
+  select.className = 'card-detail-view__open-slots-select';
+  select.dataset['region'] = 'open-slots-select';
+  for (const o of openSlots) {
+    const opt = document.createElement('option');
+    opt.value = `${o.binder.id}::${o.slot.id}`;
+    const reasonSuffix = o.openReason === 'targeted-empty' ? '' : ' (blank)';
+    opt.textContent = `${o.binder.name} — side ${o.slot.pageNumber}, slot ${o.slot.slotNumber}${reasonSuffix}`;
+    select.appendChild(opt);
+  }
+  label.appendChild(select);
+  wrap.appendChild(label);
+
+  const goBtn = document.createElement('button');
+  goBtn.type = 'button';
+  goBtn.className = 'card-detail-view__open-slots-go';
+  goBtn.dataset['action'] = 'go-to-open-slot';
+  goBtn.textContent = 'Gå til valgt slot';
+  goBtn.addEventListener('click', () => {
+    const value = select.value;
+    if (!value) return;
+    const sep = value.indexOf('::');
+    if (sep < 0) return;
+    const binderId = value.slice(0, sep);
+    const slotId = value.slice(sep + 2);
+    navigateToBinderSlot(binderId, slotId);
+  });
+  wrap.appendChild(goBtn);
+  return wrap;
 }
 
 function buildBinderRow(match: SlotForCard): HTMLTableRowElement {

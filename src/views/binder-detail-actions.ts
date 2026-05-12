@@ -21,6 +21,7 @@ import { buildAssignHoldingModal } from '../components/assign-holding-modal';
 import { buildSlotActionMenu } from '../components/slot-action-menu';
 import { buildSlotDirectAddForm } from '../components/slot-direct-add-form';
 import { openWishlistReceivePrompt } from '../components/wishlist-receive-prompt';
+import { appendAudit } from '../db/audit';
 import { getDb } from '../db/database';
 import type { MasterGapBinderSummary } from '../domain/master-set-gap';
 import { navigateToMasterGapBinder } from '../router';
@@ -174,6 +175,10 @@ export async function handlePlaceEligible(
         binderSlotsRepo: createBinderSlotsRepo(db),
         holdingsRepo,
         cardsRepo: createCardsRepo(db),
+        // PR A2 — wire the audit emitter so production assignments
+        // through this handler append `binder_legacy_unscoped` rows
+        // when touching null-sourceSetId binders.
+        appendAudit: (entry) => appendAudit(db, entry),
       },
       slot,
       holding,

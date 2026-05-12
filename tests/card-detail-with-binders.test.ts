@@ -165,6 +165,67 @@ describe('Card Detail "Binder-lokasjoner" section', () => {
     );
   });
 
+  it('A3: shows open-slots dropdown when a set-scoped binder has open slots for the card', async () => {
+    // Create a binder scoped to base1 with all-blank slots; the card
+    // base1-1 is in base1 → all 9 slots should appear in the
+    // open-slots dropdown.
+    await createBinderService(db).createManualBinder({
+      name: 'Base Set binder',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 9,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: 'base1',
+    });
+
+    window.location.hash = 'card/base1-1';
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCardDetailView(root);
+    await settle();
+
+    const dropdown = root.querySelector<HTMLElement>(
+      '[data-region="open-slots-dropdown"]',
+    );
+    expect(dropdown).not.toBeNull();
+    const select = root.querySelector<HTMLSelectElement>(
+      '[data-region="open-slots-select"]',
+    );
+    expect(select).not.toBeNull();
+    expect(select!.options.length).toBe(9);
+    // Label should include the count.
+    const label = dropdown!.querySelector('label');
+    expect(label?.textContent ?? '').toMatch(/9/);
+  });
+
+  it('A3: does NOT show open-slots dropdown when only legacy null-sourceSetId binders exist', async () => {
+    // Legacy binder; not set-scoped. Even though it has blank slots,
+    // findOpenSlotsForCardInSetBinder excludes legacy binders.
+    await createBinderService(db).createManualBinder({
+      name: 'Legacy binder',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 9,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: null,
+    });
+
+    window.location.hash = 'card/base1-1';
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCardDetailView(root);
+    await settle();
+
+    const dropdown = root.querySelector<HTMLElement>(
+      '[data-region="open-slots-dropdown"]',
+    );
+    expect(dropdown).toBeNull();
+  });
+
   it('does not include slots from soft-deleted binders', async () => {
     const created = await createBinderService(db).createManualBinder({
       name: 'Deleted binder',

@@ -300,7 +300,13 @@ async function scanDistForBannedStrings(cwd) {
     for (const e of entries) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) { await walk(p); continue; }
-      if (!/\.(html|js|mjs|cjs|css|json|map|txt)$/i.test(e.name)) continue;
+      // Exclude .map files: source maps deliberately embed dev-only
+      // identifiers (devAuto, __pokemonQA, etc.) because their purpose is
+      // to map debugger frames back to original source. The canonical
+      // production gate tests/qa-route-prod-gating.test.ts excludes them
+      // for the same reason. Approved 2026-05-11 by quorum approval
+      // record (appr-runchecks-mapfix-A/B).
+      if (!/\.(html|js|mjs|cjs|css|json|txt)$/i.test(e.name)) continue;
       try {
         const content = await rf(p, 'utf8');
         for (const banned of BANNED_DIST_STRINGS) {

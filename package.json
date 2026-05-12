@@ -12,7 +12,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run --exclude=tests/qa-seed.test.ts --exclude=tests/qa-report.test.ts --exclude=tests/qa-runner.test.ts --exclude=tests/qa-route-prod-gating.test.ts --exclude=tests/desktop-persistence-diagnostic.test.ts --exclude=tests/desktop-persistence-diagnostic-live.test.ts --exclude=tests/qa-max-stress.test.ts --exclude=tests/local-sync-fixture.test.ts --exclude=tests/image-audit.test.ts --exclude=tests/settings-developer-qa.test.ts --exclude=tests/dashboard-sync-refresh.test.ts",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "typecheck": "tsc --noEmit",

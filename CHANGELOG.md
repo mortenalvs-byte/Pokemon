@@ -8,6 +8,166 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Refactored (PR 35 — CSS modular cleanup)
+
+Stacked on the binder set-scoping foundation (A1+A2+A3). Split
+`src/styles.css` (4571 lines / 97 115 bytes) into six per-section
+files under `src/styles/`. The root `src/styles.css` is now a
+thin `@import` chain that Vite inlines at build time, producing
+byte-identical dist output:
+
+```
+src/styles/
+  tokens.css                — :root variables (1.5 kB)
+  layout.css                — topbar, sidebar, layout grid, content (7.9 kB)
+  chips-and-views.css       — status chips, backup, settings, browse, card detail, collection (22.3 kB)
+  forms-and-binders.css     — dialog wrapper, holding form, wishlist, binders, binder-detail (29.1 kB)
+  lots-and-dashboard.css    — lots, lot-detail, lot-form, dashboard, master gap (24.0 kB)
+  workspace-and-polish.css  — PR 26/27/28 desktop workspace + personal command center (12.2 kB)
+```
+
+**Acceptance criteria (all met):**
+- ✅ `dist/assets/index-*.css` size unchanged: 73.17 kB pre and
+  post-split (file hash `index-CoBL_SCm.css` is BYTE-IDENTICAL —
+  the chained `@import`s produce the exact same minified bundle).
+- ✅ Zero class-name changes (just file relocations).
+- ✅ Zero `data-region` selector changes.
+- ✅ Visual layout unchanged (no rule body modifications; only
+  rule grouping).
+- ✅ `vite.config.ts` unchanged (Vite's default `@import` handling
+  in CSS source is sufficient).
+
+**Why split:** The pre-split 73 kB file made ownership unclear and
+encouraged merge conflicts on any cross-cutting change. Splitting
+by feature lets future PRs touch one section without affecting
+the others — same goal the PR30 audit identified.
+
+### Added (PR A3 — Per-card open-slot dropdown in card-detail)
+
+Closes operator requirement #9 from
+[docs/IMPROVEMENT_ROADMAP.md](docs/IMPROVEMENT_ROADMAP.md):
+each card now surfaces a list of open slots in any binder bound
+to that card's set, so the user can directly answer "where can
+I put this card in MY set's binder?" without scrolling through
+every binder.
+
+**New service function** `findOpenSlotsForCardInSetBinder(cardId)`
+in [src/services/binder-slot-service.ts](src/services/binder-slot-service.ts):
+returns open slots (status not `'owned'` AND no holdingId
+assigned) in any LIVE binder whose `sourceSetId === card.setId`.
+Returns each match with an `openReason` of `'targeted-empty'`
+(slot explicitly waited for this card) or `'blank-untargeted'`
+(blank slot the user can backfill). Legacy null-sourceSetId
+binders are deliberately excluded — they are not part of the
+"per-card → MY set's binder" UX.
+
+**New dropdown** in [src/views/card-detail.ts](src/views/card-detail.ts):
+when the card has open set-scoped slots, the "Binder-lokasjoner"
+section now opens with a "Ledige plasser i sett-perm (N)"
+select + "Gå til valgt slot" button. Selecting + clicking deep-links
+to the binder + slot via the existing `navigateToBinderSlot` helper.
+Hidden entirely when no open slots are found (no UI noise for
+operators without set-scoped binders).
+
+**v2-compatible — no schema change:**
+- `SCHEMA_VERSION` stays at 2.
+- `BACKUP_FORMAT.md` is unchanged.
+- Existing `slotsForCardId(cardId)` behaviour preserved verbatim
+  (the table further down still shows ALL slot references for the
+  card, with no set filter).
+- PR 24 single-writer invariant intact.
+- PR 29 16-case binder-detail-action-audit test stays green.
+
+**Files touched:**
+- `src/services/binder-slot-service.ts` — new method
+  `findOpenSlotsForCardInSetBinder`; `OpenSlotForCard` type
+  exported.
+- `src/views/card-detail.ts` — new `buildOpenSlotsDropdown(...)`
+  helper called from `buildBindersSection`.
+- `tests/binder-slot-service.test.ts` — 7 new cases covering
+  scoped happy path, legacy exclusion, wrong-set exclusion,
+  owned/assigned slot exclusion, unknown cardId, empty result,
+  sort stability.
+- `tests/card-detail-with-binders.test.ts` — 2 new cases
+  proving the dropdown renders when set-scoped binders have
+  open slots and is hidden when only legacy binders exist.
+
+### Added (PR A2 — Assignment-service set-guard, v2-compatible)
+
+Stacks on top of A1: `assignHoldingToSlot` now rejects cross-set
+assignment **when the binder has a non-null `sourceSetId`**. Legacy
+binders with `sourceSetId === null` keep their pre-A1 lenient
+behaviour so existing user data continues to load + behave normally
+without any migration.
+
+`findAssignableHoldingsForSlot` mirrors the same conditional filter
+so the assign-holding modal does not surface wrong-set candidates
+for a set-scoped binder. The cardId-match check (PR 24 §3) still
+fires first; A2 is defence-in-depth on top of it.
+
+**v2-compatible — no schema change:**
+- `SCHEMA_VERSION` stays at 2.
+- `BACKUP_FORMAT.md` is unchanged.
+- `BinderAssignmentDeps` interface unchanged (preserves
+  `recommended-placement-service` and other consumers).
+- PR 24 single-writer invariant intact (`binderSlotsRepo.update`
+  still only called from this service).
+- PR 29 16-case action-audit test stays green.
+
+**Files touched:**
+- `src/services/binder-assignment-service.ts` — new
+  `assertSetMatchForAssignment` helper called in
+  `assignHoldingToSlot`; conditional set-filter added to
+  `findAssignableHoldingsForSlot`.
+- `tests/binder-assignment-service.test.ts` — 5 new cases covering
+  cross-set rejection (scoped binder), same-set happy path (scoped),
+  legacy null binder still lenient, findAssignable filter for
+  scoped, findAssignable unfiltered for legacy.
+
+**Audit row `binder_legacy_unscoped`:** when `assignHoldingToSlot`
+touches a binder whose `sourceSetId === null`, the service appends
+one `binder_legacy_unscoped` audit entry referencing the binder,
+slot location, holding, and cardId. Wired via a new OPTIONAL
+`appendAudit` field on `BinderAssignmentDeps` — production callers
+in `src/views/binder-detail-actions.ts` provide it; existing
+consumers like `recommended-placement-service.ts` and the
+binder-assignment-service test fixtures that build deps without it
+continue to work unchanged (audit emission silently skipped). The
+operator can later grep `auditLog` for these rows to identify
+which legacy binders should be back-filled with a sourceSetId in
+PR A4.
+
+`findAssignableHoldingsForSlot` performs the set-filter PER HOLDING
+(not just against the slot's targetCardId card) — fetches each
+holding's own card and rejects mismatched setIds. Defence-in-depth
+that survives data-integrity drift; the typical case where
+`holding.cardId === slot.targetCardId` resolves to the same answer.
+
+### Added (PR A1 — Manual-binder set picker required)
+
+The manual-binder creation form now requires the operator to pick a set
+(`sourceSetId`) before submit. Previously the form hardcoded
+`sourceSetId: null`, which let two manually-created binders both
+reference Base Set (or no set at all). After PR A1, every NEW binder is
+set-scoped at creation time — closing the "hver perm hører kun til
+hvert identiske sett" invariant at the UI layer.
+
+**v2-compatible — no schema change:**
+- `SCHEMA_VERSION` stays at 2.
+- `BACKUP_FORMAT.md` is unchanged.
+- Existing binders with `sourceSetId=null` (legacy) keep loading + rendering normally;
+  edit mode shows a "Ikke knyttet til sett (eldre perm)" hint and the field is locked.
+- The validator (`src/domain/validators.ts`) is untouched. Enforcement is form-level only.
+
+The schema-level guarantee (binders.setId NOT-NULL + migration) is
+deferred to PR A4, which is explicitly NOT auto-queueable and requires
+an operator-issued approval record per
+[docs/IMPROVEMENT_ROADMAP.md §6](docs/IMPROVEMENT_ROADMAP.md).
+
+**Files touched:**
+- `src/components/binder-form.ts` — set fieldset + async load + submit validation
+- `tests/binder-form.test.ts` (new) — 7 cases covering add/edit + empty-sets state
+
 ### Added (PR 30 — Repo-driven full technical audit)
 PR 30 is a repo-driven evidence-based audit after the merged PR #29
 (Phase G — "whole-system action audit for the other 10+ views" was
