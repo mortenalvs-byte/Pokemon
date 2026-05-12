@@ -590,6 +590,115 @@ describe('placeRecommendedForReport (PR 28)', () => {
     expect(result.failed[0]?.reason).toMatch(/allerede plassert i en annen slot/);
   });
 
+  // PR 38a (revised) — Regression: if pre-existing data is already
+  // corrupt (two live slots binding the same holdingId), a context
+  // path that uses presence-only would silently allow re-assigning to
+  // either of those slots since slot.holdingId === holding.id. The
+  // count-based context must still reject because count − selfContribution
+  // ≥ 1: the OTHER duplicate slot's contribution counts as "elsewhere".
+  it('PR 38a: corrupt pre-existing duplicate (H on two live slots) still rejected when re-assigning H to either', async () => {
+    await createSetsRepo(db).upsert({
+      id: 'base1',
+      name: 'Base',
+      series: 'Base',
+      printedTotal: 102,
+      total: 102,
+      releaseDate: '1999-01-09',
+      symbolUrl: null,
+      logoUrl: null,
+      updatedAt: '2026-05-06T00:00:00.000Z',
+    });
+    await createCardsRepo(db).upsert(makeCard('base1-4'));
+    const binder = await createBindersRepo(db).create({
+      name: 'Corrupt',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: SLOTS_PER_PAGE,
+      binderPreset: 'custom',
+      completionMode: 'master',
+      sourceSetId: null,
+    });
+    const slotsRepo = createBinderSlotsRepo(db);
+    const holdingsRepo = createHoldingsRepo(db);
+    const holding = await holdingsRepo.create(holdingInput({ rawCondition: 'NM' }));
+    // Seed the corrupt state directly via the repo: both slots already
+    // bind the same holding. The placement-service path treats this
+    // as data it might encounter in the wild (e.g. legacy import
+    // before PR 24 landed).
+    const slot1 = await slotsRepo.create(
+      {
+        binderId: binder.id,
+        pageNumber: 1,
+        slotNumber: 1,
+        targetCardId: 'base1-4',
+        holdingId: holding.id,
+        status: 'owned',
+        note: null,
+      },
+      SLOTS_PER_PAGE,
+    );
+    const slot2 = await slotsRepo.create(
+      {
+        binderId: binder.id,
+        pageNumber: 1,
+        slotNumber: 2,
+        targetCardId: 'base1-4',
+        holdingId: holding.id,
+        status: 'owned',
+        note: null,
+      },
+      SLOTS_PER_PAGE,
+    );
+
+    // Try to re-assign the holding (same H) back to slot1 via the
+    // context path. A presence-only Set check would short-circuit
+    // ("slot.holdingId === holding.id → not elsewhere") and silently
+    // pass. The count-based check must reject because slot2 also
+    // carries H.
+    const deps = buildDeps(db);
+    const snapshot = await binderAssignment.loadAssignedHoldingIdsSnapshot(deps);
+    // Snapshot must record 2 live bindings for the holding id.
+    expect(snapshot.get(holding.id)).toBe(2);
+
+    const slotFresh = await slotsRepo.get(slot1.id);
+    expect(slotFresh).not.toBeUndefined();
+    await expect(
+      binderAssignment.assignHoldingToSlot(
+        deps,
+        slotFresh!,
+        holding,
+        SLOTS_PER_PAGE,
+        { assignedHoldingCounts: snapshot },
+      ),
+    ).rejects.toThrow(/allerede plassert i en annen slot/);
+
+    // The legacy context-less path must produce the same rejection
+    // — proof that the new context branch is byte-equivalent.
+    await expect(
+      binderAssignment.assignHoldingToSlot(
+        deps,
+        slotFresh!,
+        holding,
+        SLOTS_PER_PAGE,
+      ),
+    ).rejects.toThrow(/allerede plassert i en annen slot/);
+
+    // And the same applies for slot2: re-assigning H back to slot2
+    // must also reject because slot1 still carries H.
+    const slot2Fresh = await slotsRepo.get(slot2.id);
+    expect(slot2Fresh).not.toBeUndefined();
+    await expect(
+      binderAssignment.assignHoldingToSlot(
+        deps,
+        slot2Fresh!,
+        holding,
+        SLOTS_PER_PAGE,
+        { assignedHoldingCounts: snapshot },
+      ),
+    ).rejects.toThrow(/allerede plassert i en annen slot/);
+  });
+
   // PR 38a — `binderSlotsRepo.listLive` is called once for the
   // pre-loaded snapshot regardless of how many rows the batch
   // processes. Pre-PR 38a it was called twice per placement

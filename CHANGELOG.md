@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Changed (PR 38a — Pre-loaded assigned-holdings snapshot for bulk placement)
+### Changed (PR 38a — Pre-loaded assigned-holdings count snapshot for bulk placement)
 
 Closes audit finding F-PERF-LISTLIVE-N-PLUS-1 from
 [docs/PR30_FULL_TECHNICAL_AUDIT.md](docs/PR30_FULL_TECHNICAL_AUDIT.md):
@@ -19,31 +19,48 @@ where N is the number of recommended rows and slots is the total
 number of live binder slots across the user's collection.
 
 **Service-layer contract** [src/services/binder-assignment-service.ts](src/services/binder-assignment-service.ts):
-- New exported `loadAssignedHoldingIdsSnapshot(deps)` returns the
-  full set of holdingIds currently bound to live slots in one
-  `listLive()` round-trip.
-- New optional `context.assignedHoldingIds` parameter on
-  `assignHoldingToSlot(...)`. When provided, the function uses the
-  snapshot for the one-holding-one-slot check in O(1) and skips its
-  own `listLive()`. Re-assigning the same holding to its current
-  slot is still allowed (`slot.holdingId === holding.id` short-circuit).
+- New exported `loadAssignedHoldingIdsSnapshot(deps)` returns a
+  `Map<string, number>` of `holdingId → number of live slots` it is
+  bound to, built in one `listLive()` round-trip. **Counts are
+  required** (not just a presence `Set`) so the new path can preserve
+  the legacy `getAssignedHoldingIds(deps, slot.id)` exclude-slot
+  semantics even when pre-existing data already duplicates a
+  holdingId across two live slots — a presence-only set would
+  short-circuit a same-slot re-assignment and silently mask the
+  corruption.
+- New optional `context.assignedHoldingCounts` parameter on
+  `assignHoldingToSlot(...)`. When provided, the function computes
+  "is this holding bound to a slot other than the target?" as
+  `(count[holding.id] ?? 0) − selfContribution > 0`, where
+  `selfContribution = 1` when the target slot already has this holding
+  (otherwise 0). The check is byte-equivalent to the legacy excluded
+  `listLive()` walk for every state — clean, single-bound, AND
+  duplicated.
 - Default (context-less) call path is byte-identical to PR 24: the
   per-call `listLive()` runs and the exclude-slot-id semantics
   remain intact for the single-slot UI flow.
 
 **Bulk caller** [src/services/recommended-placement-service.ts](src/services/recommended-placement-service.ts):
-- Loads the snapshot once at the start of `placeRecommendedForReport`.
+- Loads the count snapshot once at the start of `placeRecommendedForReport`.
 - Passes it to every `assignHoldingToSlot` call.
-- Maintains it post-call (removes the slot's previous holdingId
-  when replaced; always adds the new one) so a second placement of
-  the same holding within the same batch is blocked exactly as it
-  would have been in the per-call path.
+- Maintains the counts post-call:
+  - If the slot replaced a different previous holding, decrement
+    that holding's count (delete the key at 0).
+  - If the slot's previous holding equals the new holding (same-H
+    re-assignment), the count stays unchanged.
+  - Otherwise increment the new holding's count.
 
 **Tests** [tests/recommended-placement-service.test.ts](tests/recommended-placement-service.test.ts):
 - New: "pre-loaded set blocks the same holding from landing in two
   slots in one batch" — hand-crafted report with two ambiguous rows
   both recommending the only holding; result has `placed=1` and
   `failed=1` with the "allerede plassert i en annen slot" reason.
+- New: "corrupt pre-existing duplicate (H on two live slots) still
+  rejected when re-assigning H to either" — regression for the
+  Set→Map fix: seed two live slots already bound to the same H,
+  assert `loadAssignedHoldingIdsSnapshot` records count = 2, then
+  assert both the context path and the legacy `listLive` path reject
+  a re-assignment to either of the duplicate slots.
 - New: "binderSlotsRepo.listLive is called once per batch (not once
   per placement)" — spies on the repo's `listLive` and asserts the
   total invocation count is exactly 1 across a mixed-scenario batch.

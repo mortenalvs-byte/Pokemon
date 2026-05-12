@@ -238,36 +238,55 @@ async function getAssignedHoldingIds(
 }
 
 /**
- * PR 38a — Pre-load a snapshot of every holdingId currently bound to a
- * live binder slot. Callers running a bulk loop of `assignHoldingToSlot`
- * (e.g. `placeRecommendedForReport`) pass this snapshot via the
- * `context.assignedHoldingIds` argument so each call skips its own
- * `binderSlotsRepo.listLive()` round-trip. The caller is responsible
- * for keeping the snapshot current after each successful assignment:
- * remove the slot's previous holdingId (if any, and not equal to the
- * new one), then add the new holdingId. The one-holding-one-slot
- * invariant from PR 24 stays enforced — the snapshot just moves the
- * O(slots) walk from per-call to per-batch.
+ * PR 38a (revised) — Pre-load a count snapshot of holding → number of
+ * live slots that bind it. Callers running a bulk loop of
+ * `assignHoldingToSlot` (e.g. `placeRecommendedForReport`) pass this
+ * snapshot via the `context.assignedHoldingCounts` argument so each
+ * call skips its own `binderSlotsRepo.listLive()` round-trip.
+ *
+ * Counts (not just presence) are required so the function can preserve
+ * the legacy `getAssignedHoldingIds(deps, slot.id)` semantics even when
+ * the underlying data is already corrupt — i.e. when two live slots
+ * already hold the same `holdingId`. A presence-only `Set<string>`
+ * cannot distinguish "this holding is bound only to the target slot"
+ * (re-assign OK) from "this holding is bound to the target slot AND
+ * another slot" (must still reject).
+ *
+ * The caller is responsible for keeping the snapshot current after each
+ * successful assignment: decrement (or delete at 0) the previous
+ * `slot.holdingId`'s count, and increment the new holding's count.
  */
 export async function loadAssignedHoldingIdsSnapshot(
   deps: BinderAssignmentDeps,
-): Promise<Set<string>> {
-  return getAssignedHoldingIds(deps, null);
+): Promise<Map<string, number>> {
+  const liveSlots = await deps.binderSlotsRepo.listLive();
+  const counts = new Map<string, number>();
+  for (const s of liveSlots) {
+    if (s.holdingId === null) continue;
+    counts.set(s.holdingId, (counts.get(s.holdingId) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /**
- * PR 38a — Optional context for `assignHoldingToSlot`. When provided
- * with a pre-loaded `assignedHoldingIds` snapshot, the function skips
- * its own `listLive()` call and trusts the snapshot for the
- * one-holding-one-slot check. See `loadAssignedHoldingIdsSnapshot`.
+ * PR 38a (revised) — Optional context for `assignHoldingToSlot`. When
+ * provided with a pre-loaded `assignedHoldingCounts` snapshot, the
+ * function skips its own `listLive()` call and answers "is this
+ * holding bound to a slot other than the target" in O(1) from the
+ * counts — without losing the legacy exclude-slot semantics when
+ * existing data already duplicates a holding across two live slots.
+ * See `loadAssignedHoldingIdsSnapshot`.
  */
 export interface AssignHoldingContext {
   /**
-   * FULL set of holdingIds bound to live slots (no slot-id exclusion).
-   * The function adapts the check to allow re-assigning the same
-   * holding back to its current slot.
+   * holdingId → number of live slots currently bound to it. The
+   * function reads this to compute "elsewhere": the number of OTHER
+   * slots (excluding the target) with the candidate holding. A target
+   * slot whose `holdingId === holding.id` already contributes 1 to
+   * the count, so "elsewhere" = count − 1; otherwise "elsewhere" =
+   * count.
    */
-  readonly assignedHoldingIds: Set<string>;
+  readonly assignedHoldingCounts: Map<string, number>;
 }
 
 // ---------------------------------------------------------------------
@@ -323,19 +342,25 @@ export async function assignHoldingToSlot(
   // one-holding-one-slot check below) rejects the assignment — the
   // audit log is append-only (DATA_MODEL §4) and cannot retract.
   const setGuard = await assertSetMatchForAssignment(deps, slot, holding);
-  // One-holding-one-slot enforcement. PR 38a: when the caller passes a
-  // pre-loaded `context.assignedHoldingIds` snapshot, skip the
-  // `listLive()` round-trip and check the snapshot in O(1). The
-  // snapshot is the FULL set (no slot-id exclusion), so a re-assignment
-  // of the same holding to its current slot — `slot.holdingId ===
-  // holding.id` — must still be allowed: in that case the holdingId is
-  // in the set, but it's not "elsewhere". Without context, the original
-  // per-call listLive() path (excluding slot.id) is preserved verbatim.
+  // One-holding-one-slot enforcement. PR 38a (revised): when the caller
+  // passes a pre-loaded `context.assignedHoldingCounts` Map, skip the
+  // `listLive()` round-trip and answer "is this holding bound to any
+  // slot OTHER than the target?" in O(1) from the counts.
+  //
+  // The count semantics preserve the legacy
+  // `getAssignedHoldingIds(deps, slot.id)` behaviour exactly — including
+  // for already-corrupt data where two live slots happen to bind the
+  // same holdingId. If the target slot already has `holding.id`, it
+  // contributes 1 to the count and "elsewhere" = count − 1; otherwise
+  // "elsewhere" = count. In both cases, "elsewhere ≥ 1" means another
+  // live slot has the same holding and the assignment must be rejected.
+  // Without context, the original per-call listLive() path (with
+  // exclude-slot-id) is preserved verbatim.
   let isAssignedElsewhere: boolean;
   if (context !== undefined) {
-    isAssignedElsewhere =
-      context.assignedHoldingIds.has(holding.id) &&
-      slot.holdingId !== holding.id;
+    const totalCount = context.assignedHoldingCounts.get(holding.id) ?? 0;
+    const selfContribution = slot.holdingId === holding.id ? 1 : 0;
+    isAssignedElsewhere = totalCount - selfContribution > 0;
   } else {
     const otherAssignedHoldingIds = await getAssignedHoldingIds(deps, slot.id);
     isAssignedElsewhere = otherAssignedHoldingIds.has(holding.id);

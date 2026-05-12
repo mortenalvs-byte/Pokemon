@@ -66,16 +66,19 @@ export async function placeRecommendedForReport(
   // every row in the same binder.
   const slotsPerPageByBinder = new Map<string, SlotsPerPage>();
 
-  // PR 38a — Pre-load the assigned-holdings snapshot ONCE. Each
-  // assignHoldingToSlot call below trusts this set via the
-  // `context.assignedHoldingIds` argument so it can skip its own
-  // `binderSlotsRepo.listLive()`. We maintain the set after each
-  // successful placement (replace previous slot.holdingId with the
-  // new holdingId) so the one-holding-one-slot invariant from PR 24
-  // stays correctly enforced inside the batch. Closes
+  // PR 38a (revised) — Pre-load the assigned-holdings count snapshot
+  // ONCE. Each assignHoldingToSlot call below trusts this map via the
+  // `context.assignedHoldingCounts` argument so it can skip its own
+  // `binderSlotsRepo.listLive()`. We maintain the counts after each
+  // successful placement (decrement the previous slot.holdingId,
+  // increment the new holdingId) so the one-holding-one-slot
+  // invariant from PR 24 stays correctly enforced inside the batch.
+  // Counts (not just a presence Set) are required to preserve the
+  // legacy exclude-slot semantics when pre-existing data already
+  // duplicates a holdingId across two live slots. Closes
   // F-PERF-LISTLIVE-N-PLUS-1: bulk path drops from O(N · slots) to
   // O(N + slots).
-  const assignedHoldingIds = await loadAssignedHoldingIdsSnapshot(input.deps);
+  const assignedHoldingCounts = await loadAssignedHoldingIdsSnapshot(input.deps);
 
   for (const row of input.report.rows) {
     const decision = classifyRowForBulk(row);
@@ -130,16 +133,28 @@ export async function placeRecommendedForReport(
         slotsPerPageByBinder.set(slot.binderId, slotsPerPage);
       }
       await assignHoldingToSlot(input.deps, slot, holding, slotsPerPage, {
-        assignedHoldingIds,
+        assignedHoldingCounts,
       });
-      // PR 38a — maintain the snapshot for the next iteration. If the
-      // slot already held a different holding, that holding is now
-      // free; if the slot was blank, nothing to remove. Always add the
-      // new holdingId.
+      // PR 38a (revised) — maintain the counts for the next iteration.
+      // If the slot held a previous (different) holding, decrement
+      // its count (and drop the key at 0); always increment the new
+      // holdingId. A blank slot (slot.holdingId === null) contributes
+      // nothing to decrement.
       if (slot.holdingId !== null && slot.holdingId !== holdingId) {
-        assignedHoldingIds.delete(slot.holdingId);
+        const prev = assignedHoldingCounts.get(slot.holdingId) ?? 0;
+        if (prev <= 1) {
+          assignedHoldingCounts.delete(slot.holdingId);
+        } else {
+          assignedHoldingCounts.set(slot.holdingId, prev - 1);
+        }
       }
-      assignedHoldingIds.add(holdingId);
+      // For a same-holding re-assignment (slot.holdingId === holdingId)
+      // the count stays at its current value — the slot still holds
+      // exactly one copy after the no-op-style write.
+      if (slot.holdingId !== holdingId) {
+        const cur = assignedHoldingCounts.get(holdingId) ?? 0;
+        assignedHoldingCounts.set(holdingId, cur + 1);
+      }
       placed.push({ slotId: row.slotId, holdingId });
     } catch (caught) {
       const message =
