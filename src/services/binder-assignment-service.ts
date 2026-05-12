@@ -41,6 +41,7 @@ import type {
 import type {
   HoldingInput,
 } from '../domain/validators';
+import type { AuditInput } from '../db/audit';
 import type { BindersRepo } from '../repositories/binders-repo';
 import type { BinderSlotsRepo } from '../repositories/binder-slots-repo';
 import type { CardsRepo } from '../repositories/cards-repo';
@@ -72,6 +73,17 @@ export interface BinderAssignmentDeps {
   readonly binderSlotsRepo: BinderSlotsRepo;
   readonly holdingsRepo: HoldingsRepo;
   readonly cardsRepo: CardsRepo;
+  /**
+   * PR A2 — Optional audit emitter. When provided, the service
+   * appends a `binder_legacy_unscoped` row each time
+   * `assignHoldingToSlot` succeeds against a binder whose
+   * `sourceSetId` is null. Consumers that don't provide it
+   * (existing tests, `recommended-placement-service`, any other
+   * legacy caller) skip the audit silently — the assignment itself
+   * still runs unchanged. This is append-only: never updates or
+   * deletes audit rows (DATA_MODEL §4).
+   */
+  readonly appendAudit?: (entry: AuditInput) => Promise<unknown>;
 }
 
 export class SlotAssignmentError extends Error {
@@ -114,11 +126,12 @@ export async function findAssignableHoldingsForSlot(
 
   // PR A2: when the binder is set-scoped (sourceSetId !== null),
   // additionally exclude any holdings whose card belongs to a different
-  // set. Defence in depth on top of slot.targetCardId matching — a
-  // slot's targetCardId always belongs to one set, so card.setId will
-  // typically agree with the binder's sourceSetId anyway. The explicit
-  // filter here is what stops the assign-modal from surfacing a wrong-
-  // set holding when the binder's set has been re-bound or migrated.
+  // set. The check is performed PER HOLDING (not just on the slot's
+  // targetCardId) so it remains correct even if data integrity drifts
+  // (e.g. a holding whose card was retroactively re-classified to a
+  // different set). Defence in depth on top of slot.targetCardId
+  // matching — the typical case where holding.cardId === slot.targetCardId
+  // resolves to the same answer.
   const binder = await deps.bindersRepo.get(slot.binderId);
   const requiredSetId =
     binder !== undefined && binder.sourceSetId !== null
@@ -130,7 +143,16 @@ export async function findAssignableHoldingsForSlot(
     if (holding.deletedAt !== null) continue;
     if (assignedHoldingIds.has(holding.id)) continue;
     if (reverseTemplate && holding.finish !== 'reverse_holo') continue;
-    if (requiredSetId !== null && card !== null && card.setId !== requiredSetId) continue;
+    if (requiredSetId !== null) {
+      // Look up the holding's OWN card.setId, not the slot's target.
+      const holdingCard =
+        holding.cardId === slot.targetCardId
+          ? card
+          : (await deps.cardsRepo.get(holding.cardId)) ?? null;
+      if (holdingCard === null || holdingCard.setId !== requiredSetId) {
+        continue;
+      }
+    }
     out.push({
       holding,
       card,
@@ -163,7 +185,26 @@ async function assertSetMatchForAssignment(
 ): Promise<void> {
   const binder = await deps.bindersRepo.get(slot.binderId);
   if (binder === undefined) return;
-  if (binder.sourceSetId === null) return;  // legacy binder — pre-A1 semantics
+  if (binder.sourceSetId === null) {
+    // Legacy binder — preserve pre-A1 lenient assignment. We still
+    // append a `binder_legacy_unscoped` audit row when an audit
+    // emitter is wired (production callers) so the operator can
+    // later identify which binders should be back-filled with a
+    // sourceSetId. Tests that build deps without `appendAudit` skip
+    // this silently.
+    if (deps.appendAudit !== undefined) {
+      await deps.appendAudit({
+        action: 'binder_legacy_unscoped',
+        entityType: 'binder',
+        entityId: binder.id,
+        message:
+          `legacy unscoped binder ${binder.id} ` +
+          `(page ${slot.pageNumber}/slot ${slot.slotNumber}) ` +
+          `received holding ${holding.id} (card ${holding.cardId})`,
+      });
+    }
+    return;
+  }
 
   const card = await deps.cardsRepo.get(holding.cardId);
   if (card === undefined) return;            // unknown card — defer to cardId match

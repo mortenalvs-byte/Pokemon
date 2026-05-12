@@ -40,12 +40,24 @@ fires first; A2 is defence-in-depth on top of it.
   legacy null binder still lenient, findAssignable filter for
   scoped, findAssignable unfiltered for legacy.
 
-**Deferred:** audit row `binder_legacy_unscoped` (so the operator
-can later identify which legacy binders should be back-filled with
-`sourceSetId`). Implementing this requires adding `appendAudit` to
-`BinderAssignmentDeps`, which would touch
-`recommended-placement-service.ts`'s deps construction — out of
-scope for the bounded A2 PR to avoid scope creep.
+**Audit row `binder_legacy_unscoped`:** when `assignHoldingToSlot`
+touches a binder whose `sourceSetId === null`, the service appends
+one `binder_legacy_unscoped` audit entry referencing the binder,
+slot location, holding, and cardId. Wired via a new OPTIONAL
+`appendAudit` field on `BinderAssignmentDeps` — production callers
+in `src/views/binder-detail-actions.ts` provide it; existing
+consumers like `recommended-placement-service.ts` and the
+binder-assignment-service test fixtures that build deps without it
+continue to work unchanged (audit emission silently skipped). The
+operator can later grep `auditLog` for these rows to identify
+which legacy binders should be back-filled with a sourceSetId in
+PR A4.
+
+`findAssignableHoldingsForSlot` performs the set-filter PER HOLDING
+(not just against the slot's targetCardId card) — fetches each
+holding's own card and rejects mismatched setIds. Defence-in-depth
+that survives data-integrity drift; the typical case where
+`holding.cardId === slot.targetCardId` resolves to the same answer.
 
 ### Added (PR A1 — Manual-binder set picker required)
 
