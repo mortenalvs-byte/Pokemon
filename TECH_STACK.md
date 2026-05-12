@@ -98,7 +98,7 @@ Pokemon/
 │   ├── domain/            # types, pricing, bulk, completion, validators
 │   ├── ui/                # one file per view + components/
 │   ├── seed/              # demo seed data
-│   └── utils/             # ids, dates, money, validation
+│   └── utils/             # ids, dates, validation
 └── tests/
     ├── setup.ts
     ├── schema.test.ts

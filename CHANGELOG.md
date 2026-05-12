@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Removed (Phase-2 Plan A — dead `src/utils/money.ts` cleanup)
+
+Removes [`src/utils/money.ts`](src/utils/money.ts) (19 lines exporting `SUPPORTED_CURRENCIES` + `isCurrencyCode`) which had no production import path. The Phase-2 import-graph audit ([docs/IMPROVEMENT_ROADMAP_PHASE2.md](docs/IMPROVEMENT_ROADMAP_PHASE2.md)) flagged it as the single truly dead file in `src/`.
+
+`isCurrencyCode` is still used in [`src/db/restore.ts`](src/db/restore.ts), but it's defined locally there as `isOneOf(['NOK', 'USD', 'EUR', 'PHP'])` and never imported from `src/utils/money.ts` — so the deletion is byte-equivalent for restore validation. The `CurrencyCode` literal-union type lives in [`src/domain/types.ts`](src/domain/types.ts) and is the actual contract every consumer uses.
+
+**Files changed:**
+- `src/utils/money.ts` — deleted
+- `docs/PR30_FULL_TECHNICAL_AUDIT.md` — stale "money" mention dropped from the directory tree (2 lines)
+- `TECH_STACK.md` — stale "money" mention dropped from the directory tree (1 line)
+- `CHANGELOG.md` — this entry
+
+**Verification:** typecheck clean, 1394 tests pass, build green (CSS 73.17 KB, JS 483.59 KB — unchanged). No source/test logic touched.
+
 ### Added (PR B1 — Lot bulk-import via paste/CSV) — operator requirement #7
 
 Adds a "Importer mange" button to lot-detail that opens a two-step

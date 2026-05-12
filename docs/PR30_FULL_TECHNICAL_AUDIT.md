@@ -76,7 +76,7 @@ src/
                   best-copy, recommended-placement, command-center,
                   global-search, quick-add, wishlist-receive,
                   lot-service, csv exporters, dashboard, …)           (~22 files)
-  utils/          csv, dates, download, ids, lazy-image, money, tags  (~7 files)
+  utils/          csv, dates, download, ids, lazy-image, tags          (~6 files)
   views/          13 routes — backup, binder-detail, binders,
                   browse, card-detail, collection, dashboard,
                   lot-detail, lots, master-gap, qa, settings,
@@ -489,7 +489,7 @@ repositories/ Dexie shims; only place writes happen.
 domain/       pure rules: validators, classifiers, presets.
 db/           initialise + backup + restore + sync + cache.
 qa/           dev-only: seed, runner, report, audit, fixture.
-utils/        platform-neutral helpers: csv, dates, ids, money.
+utils/        platform-neutral helpers: csv, dates, ids.
 ```
 
 **Verified contracts:**
