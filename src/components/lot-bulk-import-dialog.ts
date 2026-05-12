@@ -143,7 +143,13 @@ function renderInputStep(form: HTMLFormElement): void {
   setHidden(form, '[data-region="summary-step"]', true);
   setHidden(form, '[data-action="back"]', true);
   const submit = form.querySelector<HTMLButtonElement>('[data-region="submit-btn"]');
-  if (submit !== null) submit.textContent = 'Forhåndsvis';
+  if (submit !== null) {
+    submit.textContent = 'Forhåndsvis';
+    // Re-enable: a previous summary step with 0 resolved items would have
+    // set submit.disabled = true; coming back to input must always allow
+    // the user to re-trigger preview after editing the textarea.
+    submit.disabled = false;
+  }
 }
 
 function renderSummaryStep(form: HTMLFormElement, summary: ParseSummary): void {

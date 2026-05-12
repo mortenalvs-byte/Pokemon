@@ -92,12 +92,52 @@ base1-58,2
     expect(r.errors[0]?.reason).toMatch(/ikke i kort-databasen/i);
   });
 
-  it('reports per-line error for invalid quantity', async () => {
+  it('reports per-line error for invalid quantity (not-a-number)', async () => {
     const repo = createCardsRepo(db);
     const r = await parseAndResolveBulkImport('lot-1', 'base1-4,not-a-number\n', repo);
     expect(r.resolved).toHaveLength(0);
     expect(r.errors).toHaveLength(1);
     expect(r.errors[0]?.reason).toMatch(/ugyldig quantity/i);
+  });
+
+  it.each([
+    ['decimal value', 'base1-4,1.5\n'],
+    ['comma decimal',  'base1-4,1.0\n'],
+    ['trailing junk',  'base1-4,2x\n'],
+    ['leading sign',   'base1-4,+3\n'],
+    ['negative',       'base1-4,-1\n'],
+    ['zero',           'base1-4,0\n'],
+    ['leading zero',   'base1-4,01\n'],
+    ['exponent',       'base1-4,1e2\n'],
+    ['hex prefix',     'base1-4,0x10\n'],
+  ])('rejects quantity %s (strict base-10 positive integer only)', async (_label, text) => {
+    const repo = createCardsRepo(db);
+    const r = await parseAndResolveBulkImport('lot-1', text, repo);
+    expect(r.resolved).toHaveLength(0);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]?.reason).toMatch(/ugyldig quantity/i);
+  });
+
+  it('keeps default quantity = 1 when the column is omitted or blank', async () => {
+    const repo = createCardsRepo(db);
+    // omitted (no comma)
+    const r1 = await parseAndResolveBulkImport('lot-1', 'base1-4\n', repo);
+    expect(r1.resolved[0]?.input.quantity).toBe(1);
+    // explicit empty value (column present but empty between commas)
+    const r2 = await parseAndResolveBulkImport('lot-1', 'base1-4,,normal\n', repo);
+    expect(r2.resolved).toHaveLength(1);
+    expect(r2.resolved[0]?.input.quantity).toBe(1);
+  });
+
+  it('accepts a range of valid base-10 positive integers', async () => {
+    const repo = createCardsRepo(db);
+    const r = await parseAndResolveBulkImport(
+      'lot-1',
+      'base1-4,1\nbase1-4,4\nbase1-4,25\nbase1-4,999\n',
+      repo,
+    );
+    expect(r.errors).toHaveLength(0);
+    expect(r.resolved.map((p) => p.input.quantity)).toEqual([1, 4, 25, 999]);
   });
 
   it('reports per-line error for invalid finish', async () => {

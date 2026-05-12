@@ -132,15 +132,24 @@ export async function parseAndResolveBulkImport(
       continue;
     }
 
-    // quantity default 1
+    // quantity default 1. Strict base-10 positive integer only: rejects
+    // decimals ("1.5"), trailing junk ("2x"), leading +/- signs, zero,
+    // and anything Number.parseInt would lenient-parse. The blank/missing
+    // case still gets the default of 1.
     let quantity = 1;
     if (parts.length >= 2 && parts[1] !== undefined && parts[1].length > 0) {
-      const parsed = Number.parseInt(parts[1], 10);
-      if (!Number.isFinite(parsed) || parsed < 1) {
-        errors.push({ line: lineNo, raw, reason: `ugyldig quantity "${parts[1]}" (må være heltall ≥ 1)` });
+      const qStr = parts[1];
+      if (!/^[1-9][0-9]*$/.test(qStr)) {
+        errors.push({
+          line: lineNo,
+          raw,
+          reason:
+            `ugyldig quantity "${qStr}" (må være positivt heltall i base-10, ` +
+            `f.eks. 1, 4, 25 — desimaler, tegn eller etterfølgende tekst er ikke tillatt)`,
+        });
         continue;
       }
-      quantity = parsed;
+      quantity = Number.parseInt(qStr, 10);
     }
 
     // finish default 'normal'
