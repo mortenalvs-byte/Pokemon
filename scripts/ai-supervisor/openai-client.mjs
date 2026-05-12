@@ -16,6 +16,7 @@
 // - Refusal-pattern detection (handled by validate-verdict.mjs).
 
 import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
 const ALLOWED_HOST = 'api.openai.com';
@@ -50,8 +51,29 @@ async function loadConfig() {
 // ---- API key ----
 
 function getApiKey() {
-  const raw = process.env.OPENAI_API_KEY ?? '';
-  const trimmed = raw.trim();
+  let raw = process.env.OPENAI_API_KEY ?? '';
+  let trimmed = raw.trim();
+
+  // Windows-only fallback: Claude Code does not propagate User-level
+  // environment variables to subprocesses. If OPENAI_API_KEY is empty
+  // in the env, try reading it from the Windows registry (HKCU\Environment).
+  // This is the same mechanism manual review scripts have used reliably
+  // throughout the session. Approved 2026-05-12 via quorum
+  // (appr-2026-05-12-openai-key-fallback-A/B).
+  if (!trimmed && process.platform === 'win32') {
+    try {
+      const out = execFileSync(
+        'reg',
+        ['query', 'HKCU\\Environment', '/v', 'OPENAI_API_KEY'],
+        { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] },
+      );
+      const m = out.match(/REG_SZ\s+(.+?)\s*$/m);
+      if (m && m[1]) trimmed = m[1].trim();
+    } catch {
+      /* registry lookup failed; fall through to no-key error below */
+    }
+  }
+
   if (!trimmed) {
     return { ok: false, error: 'OPENAI_API_KEY env var is not set' };
   }
