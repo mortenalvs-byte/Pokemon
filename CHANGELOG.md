@@ -32,7 +32,11 @@ Closes the gap surfaced in the Phase-2 audit: when an upstream card disappears b
 - `B: ignores soft-deleted user-data rows when detecting orphans` — soft-deleted holding's cardId is NOT counted even when its card goes missing.
 - `B: a failing sync leaves no orphan snapshot (best-effort runs only on success path)` — orphan detection is gated on the sync committing successfully.
 
-**Verification:** typecheck clean, 1399 tests pass (was 1394 on `origin/main`, +5), build green (CSS 73.17 KB / JS 484.52 KB; +0.93 KB delta for the new helper — well under any sensible budget), audit clean. PR 24 binder-detail-action-audit + backup roundtrip + restore tests stay green (no user-data semantic changes).
+**Verification:** typecheck clean, 1399 tests pass (was 1394 on `origin/main`, +5), build green (CSS 73.17 KB / JS 484.52 KB; +0.93 KB delta for the new helper — well under any sensible budget), audit clean.
+
+**Backup + restore test coverage (precise statement per supervisor request 2026-05-12):** the full backup + restore test family — `backup-export`, `backup-restore`, `backup-roundtrip`, `backup-validate`, `backup-view`, `restore-deep-validation`, plus PR 24 `binder-detail-action-audit` (the 16-case invariant) — runs green via the regular `npm test` invocation (where all 1399 tests pass) and via the safe-form direct invocation `npx vitest run backup- restore-` (7 files / 109 tests pass). No user-data semantic changes; no schema bump; sacred stores untouched.
+
+The supervisor's `backup_tests` gate itself currently fails on Windows due to a separate, pre-existing infrastructure bug in `scripts/ai-supervisor/run-checks.mjs:159` — the step's `vitestFilter: 'backup-|restore-'` is spawned as the single arg `npx vitest run backup-|restore-` with `shell: true`, and the Windows cmd.exe shell interprets `|` as a pipe before vitest sees the filter, causing the second half (`restore-`) to be invoked as a non-existent shell command. This is **not** a Plan B regression; the bug exists on `origin/main` and affects any branch that triggers the `backup_tests` step. Fix is a 3-line split-on-pipe patch documented in [.local/ai-supervisor/reports/OPERATOR-APPROVAL-REQUEST-runchecks-windows-fix.md](.local/ai-supervisor/reports/OPERATOR-APPROVAL-REQUEST-runchecks-windows-fix.md), pending operator quorum approval per scope-guard gate #13.
 
 ### Added (PR B1 — Lot bulk-import via paste/CSV) — operator requirement #7
 
