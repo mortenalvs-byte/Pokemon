@@ -8,6 +8,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR A3 — Per-card open-slot dropdown in card-detail)
+
+Closes operator requirement #9 from
+[docs/IMPROVEMENT_ROADMAP.md](docs/IMPROVEMENT_ROADMAP.md):
+each card now surfaces a list of open slots in any binder bound
+to that card's set, so the user can directly answer "where can
+I put this card in MY set's binder?" without scrolling through
+every binder.
+
+**New service function** `findOpenSlotsForCardInSetBinder(cardId)`
+in [src/services/binder-slot-service.ts](src/services/binder-slot-service.ts):
+returns open slots (status not `'owned'` AND no holdingId
+assigned) in any LIVE binder whose `sourceSetId === card.setId`.
+Returns each match with an `openReason` of `'targeted-empty'`
+(slot explicitly waited for this card) or `'blank-untargeted'`
+(blank slot the user can backfill). Legacy null-sourceSetId
+binders are deliberately excluded — they are not part of the
+"per-card → MY set's binder" UX.
+
+**New dropdown** in [src/views/card-detail.ts](src/views/card-detail.ts):
+when the card has open set-scoped slots, the "Binder-lokasjoner"
+section now opens with a "Ledige plasser i sett-perm (N)"
+select + "Gå til valgt slot" button. Selecting + clicking deep-links
+to the binder + slot via the existing `navigateToBinderSlot` helper.
+Hidden entirely when no open slots are found (no UI noise for
+operators without set-scoped binders).
+
+**v2-compatible — no schema change:**
+- `SCHEMA_VERSION` stays at 2.
+- `BACKUP_FORMAT.md` is unchanged.
+- Existing `slotsForCardId(cardId)` behaviour preserved verbatim
+  (the table further down still shows ALL slot references for the
+  card, with no set filter).
+- PR 24 single-writer invariant intact.
+- PR 29 16-case binder-detail-action-audit test stays green.
+
+**Files touched:**
+- `src/services/binder-slot-service.ts` — new method
+  `findOpenSlotsForCardInSetBinder`; `OpenSlotForCard` type
+  exported.
+- `src/views/card-detail.ts` — new `buildOpenSlotsDropdown(...)`
+  helper called from `buildBindersSection`.
+- `tests/binder-slot-service.test.ts` — 7 new cases covering
+  scoped happy path, legacy exclusion, wrong-set exclusion,
+  owned/assigned slot exclusion, unknown cardId, empty result,
+  sort stability.
+- `tests/card-detail-with-binders.test.ts` — 2 new cases
+  proving the dropdown renders when set-scoped binders have
+  open slots and is hidden when only legacy binders exist.
+
 ### Added (PR A2 — Assignment-service set-guard, v2-compatible)
 
 Stacks on top of A1: `assignHoldingToSlot` now rejects cross-set

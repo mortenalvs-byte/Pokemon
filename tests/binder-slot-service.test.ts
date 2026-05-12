@@ -341,4 +341,268 @@ describe('binder-slot-service', () => {
     const matches = await slotService.slotsForCardId('base1-1');
     expect(matches).toEqual([]);
   });
+
+  // -- PR A3: findOpenSlotsForCardInSetBinder ---------------------------
+  //
+  // New service: given a cardId, find OPEN slots (status !== 'owned',
+  // holdingId === null) in any LIVE binder whose sourceSetId === card.setId.
+  // Excludes legacy null-sourceSetId binders. Powers the new per-card
+  // open-slot dropdown in card-detail (operator requirement #9).
+
+  it('A3: returns an open targeted slot among the other blank slots in a set-scoped binder', async () => {
+    await createCardsRepo(db).upsert(makeCard(1));
+    // Create a binder scoped to base1 with a slot targeting base1-1.
+    // Remaining slots are blank — they ALSO qualify as 'blank-untargeted'
+    // open slots for the card since the binder is scoped to its set.
+    const result = await createBinderService(db).createManualBinder({
+      name: 'Base Set Binder',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 9,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: 'base1',
+    });
+    const slot = result.slots[0];
+    if (slot === undefined) throw new Error('test bootstrap failed');
+    const slotsRepo = createBinderSlotsRepo(db);
+    await slotsRepo.update(
+      slot.id,
+      { targetCardId: 'base1-1', status: 'wanted' },
+      9,
+    );
+
+    const slotService = createBinderSlotService(
+      createBindersRepo(db),
+      slotsRepo,
+      createHoldingsRepo(db),
+      createCardsRepo(db),
+    );
+    const open = await slotService.findOpenSlotsForCardInSetBinder('base1-1');
+    // 1 targeted-empty + 8 blank-untargeted = 9 open slots total.
+    expect(open).toHaveLength(9);
+    // The targeted slot must appear with openReason 'targeted-empty';
+    // the rest are blank-untargeted.
+    const targeted = open.filter((o) => o.openReason === 'targeted-empty');
+    const blanks = open.filter((o) => o.openReason === 'blank-untargeted');
+    expect(targeted).toHaveLength(1);
+    expect(blanks).toHaveLength(8);
+    expect(targeted[0]?.binder.sourceSetId).toBe('base1');
+  });
+
+  it('A3: returns blank-untargeted slots when binder is set-scoped to card.setId', async () => {
+    await createCardsRepo(db).upsert(makeCard(1));
+    // Create a binder scoped to base1; all slots stay blank (default).
+    await createBinderService(db).createManualBinder({
+      name: 'Base Set Binder',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 4,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: 'base1',
+    });
+
+    const slotService = createBinderSlotService(
+      createBindersRepo(db),
+      createBinderSlotsRepo(db),
+      createHoldingsRepo(db),
+      createCardsRepo(db),
+    );
+    const open = await slotService.findOpenSlotsForCardInSetBinder('base1-1');
+    expect(open).toHaveLength(4);
+    for (const o of open) {
+      expect(o.openReason).toBe('blank-untargeted');
+      expect(o.binder.sourceSetId).toBe('base1');
+    }
+  });
+
+  it('A3: EXCLUDES legacy null-sourceSetId binders even if they target the card', async () => {
+    await createCardsRepo(db).upsert(makeCard(1));
+    // Legacy binder (sourceSetId = null) with a slot targeting base1-1.
+    const legacy = await createBinderService(db).createManualBinder({
+      name: 'Legacy unscoped binder',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 4,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: null,
+    });
+    const slot = legacy.slots[0];
+    if (slot === undefined) throw new Error('test bootstrap failed');
+    const slotsRepo = createBinderSlotsRepo(db);
+    await slotsRepo.update(
+      slot.id,
+      { targetCardId: 'base1-1', status: 'wanted' },
+      4,
+    );
+
+    const slotService = createBinderSlotService(
+      createBindersRepo(db),
+      slotsRepo,
+      createHoldingsRepo(db),
+      createCardsRepo(db),
+    );
+    const open = await slotService.findOpenSlotsForCardInSetBinder('base1-1');
+    expect(open).toEqual([]);
+  });
+
+  it('A3: EXCLUDES wrong-set binders even if their slot targets this card', async () => {
+    await createCardsRepo(db).upsert(makeCard(1));
+    await createSetsRepo(db).upsert({
+      id: 'jungle',
+      name: 'Jungle',
+      series: 'Base',
+      printedTotal: 64,
+      total: 64,
+      releaseDate: '1999-06-16',
+      symbolUrl: null,
+      logoUrl: null,
+      updatedAt: '2026-05-12T00:00:00.000Z',
+    });
+    // Binder scoped to jungle, but slot targets base1-1 (data drift).
+    const wrong = await createBinderService(db).createManualBinder({
+      name: 'Jungle binder',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 4,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: 'jungle',
+    });
+    const slot = wrong.slots[0];
+    if (slot === undefined) throw new Error('test bootstrap failed');
+    const slotsRepo = createBinderSlotsRepo(db);
+    await slotsRepo.update(
+      slot.id,
+      { targetCardId: 'base1-1', status: 'wanted' },
+      4,
+    );
+
+    const slotService = createBinderSlotService(
+      createBindersRepo(db),
+      slotsRepo,
+      createHoldingsRepo(db),
+      createCardsRepo(db),
+    );
+    const open = await slotService.findOpenSlotsForCardInSetBinder('base1-1');
+    expect(open).toEqual([]);
+  });
+
+  it('A3: EXCLUDES owned and assigned slots (only "open" counts)', async () => {
+    await createCardsRepo(db).upsert(makeCard(1));
+    const binder = await createBinderService(db).createManualBinder({
+      name: 'Base Set Binder',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 4,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: 'base1',
+    });
+    const slotsRepo = createBinderSlotsRepo(db);
+    // Make one slot owned (has holding + status owned)
+    const ownedSlot = binder.slots[0];
+    const otherSlot = binder.slots[1];
+    if (ownedSlot === undefined || otherSlot === undefined) throw new Error('bootstrap');
+    const holdingsRepo = createHoldingsRepo(db);
+    const h = await holdingsRepo.create({ ...baseHoldingInput, cardId: 'base1-1' });
+    await slotsRepo.update(
+      ownedSlot.id,
+      { targetCardId: 'base1-1', holdingId: h.id, status: 'owned' },
+      4,
+    );
+    // Leave otherSlot blank; expect only blank ones in the open list.
+
+    const slotService = createBinderSlotService(
+      createBindersRepo(db),
+      slotsRepo,
+      createHoldingsRepo(db),
+      createCardsRepo(db),
+    );
+    const open = await slotService.findOpenSlotsForCardInSetBinder('base1-1');
+    // 4 slots total, 1 owned → 3 blank-untargeted remain open.
+    expect(open).toHaveLength(3);
+    for (const o of open) {
+      expect(o.slot.status).not.toBe('owned');
+      expect(o.slot.holdingId).toBeNull();
+    }
+  });
+
+  it('A3: returns [] for unknown cardId', async () => {
+    const slotService = createBinderSlotService(
+      createBindersRepo(db),
+      createBinderSlotsRepo(db),
+      createHoldingsRepo(db),
+      createCardsRepo(db),
+    );
+    const open = await slotService.findOpenSlotsForCardInSetBinder('does-not-exist');
+    expect(open).toEqual([]);
+  });
+
+  it('A3: returns [] when no binder is scoped to the card\'s set', async () => {
+    await createCardsRepo(db).upsert(makeCard(1));
+    // Only a legacy binder exists; no set-scoped binder for base1.
+    await createBinderService(db).createManualBinder({
+      name: 'Legacy',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 4,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: null,
+    });
+    const slotService = createBinderSlotService(
+      createBindersRepo(db),
+      createBinderSlotsRepo(db),
+      createHoldingsRepo(db),
+      createCardsRepo(db),
+    );
+    const open = await slotService.findOpenSlotsForCardInSetBinder('base1-1');
+    expect(open).toEqual([]);
+  });
+
+  it('A3: sorts results by binder name then page/slot (stable)', async () => {
+    await createCardsRepo(db).upsert(makeCard(1));
+    await createBinderService(db).createManualBinder({
+      name: 'Zebra binder',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 4,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: 'base1',
+    });
+    await createBinderService(db).createManualBinder({
+      name: 'Apple binder',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 4,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: 'base1',
+    });
+    const slotService = createBinderSlotService(
+      createBindersRepo(db),
+      createBinderSlotsRepo(db),
+      createHoldingsRepo(db),
+      createCardsRepo(db),
+    );
+    const open = await slotService.findOpenSlotsForCardInSetBinder('base1-1');
+    // 4 slots per binder × 2 binders = 8; Apple first (alphabetical), then Zebra.
+    expect(open.length).toBe(8);
+    const firstName = open[0]?.binder.name;
+    const lastName = open[open.length - 1]?.binder.name;
+    expect(firstName).toBe('Apple binder');
+    expect(lastName).toBe('Zebra binder');
+  });
 });
