@@ -12,11 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Adds a hand-rolled windowed renderer for the Browse view's `<tbody>` so
 the operator can scroll smoothly through thousands of filtered cards
-instead of paging at 50/100. The renderer holds ~30 rows in the DOM
-regardless of dataset size once a new **"Alle"** page-size option is
-selected; small page sizes (25/50/100) keep rendering every row in the
-slice so the existing pagination + bulk-mode UX and every PR 19 / PR 22
-test continues to pass unchanged.
+instead of paging at 50/100. The new **"Alle"** page-size option is now
+the **default**, so virtualization is active out of the box — the
+renderer holds ~30 rows in the DOM regardless of dataset size once a
+filter result exceeds the `renderAllThreshold` (100). Smaller datasets
+or explicit small page sizes (25/50/100) keep rendering every row in
+the slice, preserving existing pagination + bulk-mode UX and every
+PR 19 / PR 22 test unchanged.
 
 **Windowed list helper** [src/components/virtual-scroll.ts](src/components/virtual-scroll.ts):
 - Generic `createVirtualScroll<T>(opts)` with `setItems`, `refresh`,
@@ -32,9 +34,11 @@ test continues to pass unchanged.
 - Hand-rolled with zero new dependencies. ~190 lines including comments.
 
 **Browse view integration** [src/views/browse.ts](src/views/browse.ts):
-- New "Alle" option (`value="100000"`) on the page-size select; chosen
-  values are cast to `BrowsePageSize` since the service slices a
-  preloaded in-memory array regardless of declared upper bound.
+- New "Alle" option (`value="100000"`) is the default selected entry
+  on the page-size select; chosen values are cast to `BrowsePageSize`
+  since the service slices a preloaded in-memory array regardless of
+  declared upper bound. Pagination machinery is preserved for users
+  who explicitly opt back into 25/50/100 per page.
 - `state.lastResultRows` snapshots the service result on every
   rerender so bulk-mode's "select all visible" + filter-change-prunes
   selection logic operates on the full filtered set even though only

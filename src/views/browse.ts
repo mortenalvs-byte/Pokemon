@@ -183,9 +183,9 @@ export function mountBrowseView(
           <span>Per side</span>
           <select data-region="page-size">
             <option value="25">25</option>
-            <option value="50" selected>50</option>
+            <option value="50">50</option>
             <option value="100">100</option>
-            <option value="100000">Alle</option>
+            <option value="100000" selected>Alle</option>
           </select>
         </label>
         <button type="button" class="browse-view__bulk-toggle" data-action="toggle-bulk-mode" data-region="bulk-toggle" aria-pressed="false">
@@ -239,7 +239,12 @@ export function mountBrowseView(
     sort: 'set-release',
     sortDirection: 'desc',
     page: 0,
-    pageSize: 50,
+    // PR C1 — default to the windowed "Alle" mode so the user
+    // doesn't have to opt in to scroll smoothly through thousands of
+    // cards. 100000 is a sentinel larger than any plausible card
+    // count; cast to BrowsePageSize because the service slices an
+    // in-memory array and accepts any number at runtime.
+    pageSize: 100000 as BrowsePageSize,
     quickAddFeedback: new Map(),
     bulkMode: false,
     selectedCardIds: new Set(),

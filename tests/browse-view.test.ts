@@ -93,7 +93,7 @@ describe('Browse view', () => {
     expect(window.location.hash).toBe('#settings');
   });
 
-  it('renders the toolbar and a paginated table when the cache has cards', async () => {
+  it('renders the toolbar and the table when the cache has cards', async () => {
     await seedManyCards(db, 60);
 
     const root = document.getElementById('content');
@@ -102,19 +102,39 @@ describe('Browse view', () => {
     await settle();
 
     expect(root.querySelector('[data-region="toolbar"]')?.hasAttribute('hidden')).toBe(false);
+    // PR C1 — default page-size is now "Alle" (100000), so all 60
+    // cards render in the same page; with 60 ≤ renderAllThreshold
+    // (100), every row stays in the DOM rather than virtualizing.
     const rows = root.querySelectorAll<HTMLTableRowElement>('.browse-table__row');
-    expect(rows.length).toBe(50); // default pageSize
+    expect(rows.length).toBe(60);
     expect(
       root.querySelector('[data-region="page-summary"]')?.textContent ?? '',
-    ).toMatch(/Side 1 av 2/);
+    ).toMatch(/Side 1 av 1 — 60 kort/);
   });
 
-  it('next-page button shows the remaining 10 rows on page 2 (60 cards total)', async () => {
+  it('switching to page-size 50 paginates: page 2 shows the remaining 10 rows', async () => {
     await seedManyCards(db, 60);
     const root = document.getElementById('content');
     if (!root) throw new Error('test bootstrap failed');
     mountBrowseView(root);
     await settle();
+
+    // PR C1 — explicitly opt into the 50-per-page paging mode (the
+    // default is now "Alle"). Pagination machinery is preserved for
+    // users who prefer the page-at-a-time view.
+    const pageSizeSel = root.querySelector<HTMLSelectElement>(
+      '[data-region="page-size"]',
+    );
+    pageSizeSel!.value = '50';
+    pageSizeSel!.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    expect(
+      root.querySelector<HTMLTableRowElement>('.browse-table__row'),
+    ).not.toBeNull();
+    expect(
+      root.querySelectorAll<HTMLTableRowElement>('.browse-table__row').length,
+    ).toBe(50);
 
     (root.querySelector<HTMLButtonElement>('[data-action="next-page"]') as HTMLButtonElement).click();
     await settle();
@@ -201,13 +221,23 @@ describe('Browse view', () => {
     expect(window.location.hash.startsWith('#card/')).toBe(true);
   });
 
-  it('renders no more than pageSize rows in the DOM even with many cards', async () => {
-    // 200 cards, default pageSize 50 → only 50 <tr> elements.
+  it('explicit page-size 50 caps DOM rows at 50 even with 200 cards in cache', async () => {
+    // PR C1 — default is now "Alle"; this test pins the older
+    // paginated behaviour via an explicit select to confirm
+    // pagination semantics are preserved for users who want them.
     await seedManyCards(db, 200);
     const root = document.getElementById('content');
     if (!root) throw new Error('test bootstrap failed');
     mountBrowseView(root);
     await settle();
+
+    const pageSizeSel = root.querySelector<HTMLSelectElement>(
+      '[data-region="page-size"]',
+    );
+    pageSizeSel!.value = '50';
+    pageSizeSel!.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
     const rows = root.querySelectorAll<HTMLTableRowElement>('.browse-table__row');
     expect(rows.length).toBe(50);
   });
@@ -219,20 +249,19 @@ describe('Browse view', () => {
   // ~30 rows in the DOM regardless of dataset size (renderAllThreshold
   // = 100), plus two aria-hidden spacer rows that absorb the scroll
   // height for rows above/below the visible window.
-  it('C1: "Alle" page-size keeps DOM row count well below dataset size', async () => {
+  it('C1: default "Alle" page-size keeps DOM row count well below dataset size', async () => {
     await seedManyCards(db, 1000);
     const root = document.getElementById('content');
     if (!root) throw new Error('test bootstrap failed');
     mountBrowseView(root);
     await settle();
 
+    // PR C1 — default is "Alle" so virtualization is active out of
+    // the box. No explicit page-size change is required.
     const pageSizeSel = root.querySelector<HTMLSelectElement>(
       '[data-region="page-size"]',
     );
-    expect(pageSizeSel).not.toBeNull();
-    pageSizeSel!.value = '100000';
-    pageSizeSel!.dispatchEvent(new Event('change', { bubbles: true }));
-    await settle();
+    expect(pageSizeSel?.value).toBe('100000');
 
     const rows = root.querySelectorAll<HTMLTableRowElement>('.browse-table__row');
     // Window: jsdom innerHeight ≈ 768, rowHeight 52 ⇒ ~15 rows + 12
@@ -253,13 +282,7 @@ describe('Browse view', () => {
     mountBrowseView(root);
     await settle();
 
-    const pageSizeSel = root.querySelector<HTMLSelectElement>(
-      '[data-region="page-size"]',
-    );
-    pageSizeSel!.value = '100000';
-    pageSizeSel!.dispatchEvent(new Event('change', { bubbles: true }));
-    await settle();
-
+    // Default "Alle" already active — no select change needed.
     const firstRowsBefore = Array.from(
       root.querySelectorAll<HTMLTableRowElement>('.browse-table__row'),
     ).map((r) => r.dataset['cardId']);
@@ -305,13 +328,7 @@ describe('Browse view', () => {
     mountBrowseView(root);
     await settle();
 
-    const pageSizeSel = root.querySelector<HTMLSelectElement>(
-      '[data-region="page-size"]',
-    );
-    pageSizeSel!.value = '100000';
-    pageSizeSel!.dispatchEvent(new Event('change', { bubbles: true }));
-    await settle();
-
+    // Default "Alle" — virtualization is active for 300-card dataset.
     const topSpacer = root.querySelector<HTMLElement>(
       '[data-region="vs-top-spacer"]',
     );
