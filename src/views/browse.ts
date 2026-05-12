@@ -10,6 +10,7 @@ import { onUserDataChanged, USER_DATA_CHANGED_EVENT } from '../components/events
 import { buildHoldingForm } from '../components/holding-form';
 import { buildWishlistForm } from '../components/wishlist-form';
 import { decideQuickAdd, type QuickAddDefault } from '../components/quick-add';
+import { createVirtualScroll, type VirtualScrollHandle } from '../components/virtual-scroll';
 import { openWishlistReceivePrompt } from '../components/wishlist-receive-prompt';
 import { getDb } from '../db/database';
 import { ValidationError } from '../domain/validators';
@@ -101,6 +102,21 @@ interface BrowseState {
    * until the user dismisses it or navigates away.
    */
   bulkSummary: BulkSummary | null;
+  /**
+   * PR C1 — last result snapshot from the browse service. The bulk-mode
+   * "select visible" semantics derive from this list (not from the DOM)
+   * so virtualization can render only a ~30-row window without
+   * narrowing what the user perceives as "visible". Filter / sort /
+   * page-size changes update this list and prune stale selections —
+   * scrolling does not.
+   */
+  lastResultRows: readonly BrowseCardRow[];
+  /**
+   * PR C1 — windowed renderer for the rows region. Created once per
+   * mount; takes setItems(rows) on each rerender. Returns to null in
+   * tests / pre-mount paths.
+   */
+  virtualScroll: VirtualScrollHandle<BrowseCardRow> | null;
 }
 
 const SEARCH_DEBOUNCE_MS = 150;
@@ -169,6 +185,7 @@ export function mountBrowseView(
             <option value="25">25</option>
             <option value="50" selected>50</option>
             <option value="100">100</option>
+            <option value="100000">Alle</option>
           </select>
         </label>
         <button type="button" class="browse-view__bulk-toggle" data-action="toggle-bulk-mode" data-region="bulk-toggle" aria-pressed="false">
@@ -227,7 +244,38 @@ export function mountBrowseView(
     bulkMode: false,
     selectedCardIds: new Set(),
     bulkSummary: null,
+    lastResultRows: [],
+    virtualScroll: null,
   };
+
+  // PR C1 — create the windowed renderer once per mount. The renderer
+  // owns the contents of the rows region (between two spacer <tr>s),
+  // so we hand it the buildRow + empty-state callbacks and let it
+  // decide which subset of state.lastResultRows to materialize. On
+  // datasets ≤ renderAllThreshold (default 100) every row is rendered,
+  // matching pre-C1 DOM behaviour — pagination + bulk-mode tests that
+  // rely on counting every row continue to pass.
+  state.virtualScroll = createVirtualScroll<BrowseCardRow>({
+    contentRoot: refs.rowsRegion,
+    spacerTag: 'tr',
+    // Spacer spans the maximum column count (with checkbox col) so a
+    // bulk-mode toggle doesn't leave a layout gap. Aria-hidden anyway.
+    spacerColSpan: 7,
+    items: [],
+    rowHeight: 52,
+    overscan: 6,
+    renderAllThreshold: 100,
+    getScrollContext: () => {
+      const rect = refs.rowsRegion.getBoundingClientRect();
+      return {
+        scrollTop: window.scrollY,
+        viewportHeight: window.innerHeight,
+        rowsTopOffset: window.scrollY + rect.top,
+      };
+    },
+    renderItem: (row) => buildRow(row, state),
+    renderEmpty: () => buildEmptyStateRow(state.bulkMode),
+  });
 
   const service = createBrowseService(
     createCardsRepo(getDb()),
@@ -238,6 +286,17 @@ export function mountBrowseView(
 
   void boot(refs, service, state);
   attachEventListeners(refs, service, state);
+  // PR C1 — scroll listener for windowed rendering. The router aborts
+  // `signal` on next route change so the listener is dropped on
+  // navigation away from Browse. AddEventListenerOptions.signal is
+  // omitted when no signal was passed (exactOptionalPropertyTypes).
+  const onWindowScroll = (): void => {
+    state.virtualScroll?.refresh();
+  };
+  const scrollOpts: AddEventListenerOptions =
+    signal !== undefined ? { passive: true, signal } : { passive: true };
+  window.addEventListener('scroll', onWindowScroll, scrollOpts);
+  window.addEventListener('resize', onWindowScroll, scrollOpts);
   // PR 15A — F-3: the router aborts `signal` on next route change, so
   // the listener is dropped automatically. The `isConnected` guard
   // remains as a belt-and-braces check for tests that don't pass a
@@ -486,24 +545,13 @@ async function rerenderRows(
       : {}),
   });
 
-  refs.rowsRegion.replaceChildren();
-  if (result.rows.length === 0) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    // PR 19 — column count grew by 1 (checkbox col is hidden when
-    // bulk-mode is off, but the colSpan still needs to match the
-    // actual <th> count to render the empty row across the full
-    // width when a filter has zero hits).
-    td.colSpan = state.bulkMode ? 7 : 6;
-    td.className = 'browse-table__empty-row';
-    td.textContent = 'Ingen kort matcher filtrene.';
-    tr.appendChild(td);
-    refs.rowsRegion.appendChild(tr);
-  } else {
-    for (const row of result.rows) {
-      refs.rowsRegion.appendChild(buildRow(row, state));
-    }
-  }
+  // PR C1 — windowed render. The virtual-scroll handle owns the rows
+  // region between its two spacer rows; it renders all items for
+  // datasets ≤ renderAllThreshold (default 100) and only the visible
+  // window for larger datasets. Empty results route through the
+  // renderEmpty callback so the colSpan still tracks bulk-mode.
+  state.lastResultRows = result.rows;
+  state.virtualScroll?.setItems(result.rows);
 
   const totalPages = Math.max(1, Math.ceil(result.total / state.pageSize));
   refs.pageSummary.textContent = `Side ${state.page + 1} av ${totalPages} — ${result.total} kort`;
@@ -676,6 +724,20 @@ async function runReceivePromptForHoldingSafe(
     // Non-fatal: holding already saved; user can still mark via the
     // Wishlist view.
   }
+}
+
+// PR C1 — Empty-state row builder. Called by the virtual-scroll
+// handle when result.rows is empty. The colSpan tracks the live
+// bulk-mode toggle so the row stretches the table width whether the
+// checkbox column is showing or not.
+function buildEmptyStateRow(bulkMode: boolean): HTMLTableRowElement {
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  td.colSpan = bulkMode ? 7 : 6;
+  td.className = 'browse-table__empty-row';
+  td.textContent = 'Ingen kort matcher filtrene.';
+  tr.appendChild(td);
+  return tr;
 }
 
 function buildRow(row: BrowseCardRow, state: BrowseState): HTMLTableRowElement {
@@ -1124,23 +1186,19 @@ async function runQuickAddRaw(
 
 /**
  * Updates the bulk-mode toolbar (count, select-all checkbox, action
- * button label) based on the current `state.selectedCardIds` and the
- * card ids currently rendered in the rows region. Read directly from
- * the DOM rather than re-fetching from the browse service so each
- * checkbox tick stays sub-millisecond.
+ * button label) for the current selection + filter context. Reads
+ * `state.lastResultRows` rather than the DOM — under PR C1's windowed
+ * rendering the DOM only holds ~30 rows for large datasets, but the
+ * user perceives every filtered row as "visible". The
+ * `selectedCardIds` prune that runs in `applyBulkModeUi` on each
+ * service rerender keeps the selection bounded by the filter set, so
+ * scrolling within a filter never silently drops a tick.
  */
 function refreshBulkUiFromDom(refs: ViewRefs, state: BrowseState): void {
   if (!state.bulkMode) return;
-  // Visible *eligible* card ids = rows that rendered an actual
-  // checkbox (ineligible rows render the "–" placeholder, see
-  // buildRow).
-  const eligibleVisible: string[] = [];
-  refs.rowsRegion
-    .querySelectorAll<HTMLInputElement>('input[data-action="bulk-select"]')
-    .forEach((cb) => {
-      const id = cb.dataset['cardId'];
-      if (id !== undefined && id.length > 0) eligibleVisible.push(id);
-    });
+  const eligibleVisible = state.lastResultRows
+    .filter((r) => decideQuickAdd(r.card).canQuickAdd)
+    .map((r) => r.card.id);
   refs.bulkSelectAll.checked =
     eligibleVisible.length > 0 &&
     eligibleVisible.every((id) => state.selectedCardIds.has(id));
@@ -1158,13 +1216,15 @@ async function handleBulkSelectAll(
   service: BrowseService,
   state: BrowseState,
 ): Promise<void> {
-  const visibleIds: string[] = [];
-  refs.rowsRegion
-    .querySelectorAll<HTMLInputElement>('input[data-action="bulk-select"]')
-    .forEach((cb) => {
-      const id = cb.dataset['cardId'];
-      if (id !== undefined && id.length > 0) visibleIds.push(id);
-    });
+  // PR C1 — "Velg alle synlige" now operates on the full filtered set
+  // (state.lastResultRows) rather than the DOM-rendered slice. With
+  // virtualization, the DOM has only ~30 rows for large datasets;
+  // selecting only that subset would surprise the user. The prune on
+  // filter change still keeps the selection bounded by what the user
+  // can currently scroll through.
+  const visibleIds = state.lastResultRows
+    .filter((r) => decideQuickAdd(r.card).canQuickAdd)
+    .map((r) => r.card.id);
   if (refs.bulkSelectAll.checked) {
     for (const id of visibleIds) state.selectedCardIds.add(id);
   } else {

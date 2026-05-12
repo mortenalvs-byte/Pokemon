@@ -211,4 +211,119 @@ describe('Browse view', () => {
     const rows = root.querySelectorAll<HTMLTableRowElement>('.browse-table__row');
     expect(rows.length).toBe(50);
   });
+
+  // PR C1 — Browse-table virtualization. Operator requirement #11:
+  // the user can scroll smoothly through thousands of cards instead
+  // of paging at 50/100. Selecting the new "Alle" page-size sends
+  // every filtered row to the windowed renderer. The renderer holds
+  // ~30 rows in the DOM regardless of dataset size (renderAllThreshold
+  // = 100), plus two aria-hidden spacer rows that absorb the scroll
+  // height for rows above/below the visible window.
+  it('C1: "Alle" page-size keeps DOM row count well below dataset size', async () => {
+    await seedManyCards(db, 1000);
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountBrowseView(root);
+    await settle();
+
+    const pageSizeSel = root.querySelector<HTMLSelectElement>(
+      '[data-region="page-size"]',
+    );
+    expect(pageSizeSel).not.toBeNull();
+    pageSizeSel!.value = '100000';
+    pageSizeSel!.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    const rows = root.querySelectorAll<HTMLTableRowElement>('.browse-table__row');
+    // Window: jsdom innerHeight ≈ 768, rowHeight 52 ⇒ ~15 rows + 12
+    // overscan ≈ 27. The exact number depends on jsdom defaults, but
+    // it must stay far below the dataset size.
+    expect(rows.length).toBeLessThan(50);
+    expect(rows.length).toBeGreaterThan(0);
+    // Pagination summary still reflects the full dataset.
+    expect(
+      root.querySelector('[data-region="page-summary"]')?.textContent ?? '',
+    ).toMatch(/1000 kort/);
+  });
+
+  it('C1: scrolling past the rows region shifts the windowed slice forward', async () => {
+    await seedManyCards(db, 500);
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountBrowseView(root);
+    await settle();
+
+    const pageSizeSel = root.querySelector<HTMLSelectElement>(
+      '[data-region="page-size"]',
+    );
+    pageSizeSel!.value = '100000';
+    pageSizeSel!.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    const firstRowsBefore = Array.from(
+      root.querySelectorAll<HTMLTableRowElement>('.browse-table__row'),
+    ).map((r) => r.dataset['cardId']);
+    expect(firstRowsBefore.length).toBeGreaterThan(0);
+    expect(firstRowsBefore[0]).toBeDefined();
+
+    // Mock the rows region's bounding rect so the window math thinks
+    // we've scrolled far past it. jsdom returns all-zero rects by
+    // default — overriding via a stub is the only path that exercises
+    // the windowing logic.
+    const rowsRegion = root.querySelector<HTMLElement>('[data-region="rows"]');
+    expect(rowsRegion).not.toBeNull();
+    const origRect = rowsRegion!.getBoundingClientRect.bind(rowsRegion!);
+    Object.defineProperty(window, 'scrollY', { value: 5000, configurable: true });
+    rowsRegion!.getBoundingClientRect = (): DOMRect => {
+      // rect.top = -5000 means rows start 5000px above viewport.
+      const original = origRect();
+      return {
+        ...original,
+        top: -5000,
+        bottom: original.bottom - 5000,
+        x: original.x,
+        y: -5000,
+        toJSON: () => ({}),
+      } as DOMRect;
+    };
+    window.dispatchEvent(new Event('scroll'));
+    await settle(10);
+
+    const firstRowsAfter = Array.from(
+      root.querySelectorAll<HTMLTableRowElement>('.browse-table__row'),
+    ).map((r) => r.dataset['cardId']);
+    expect(firstRowsAfter.length).toBeGreaterThan(0);
+    // After "scrolling 5000px", the first DOM row should be different
+    // from before — the windowing math has moved the slice forward.
+    expect(firstRowsAfter[0]).not.toBe(firstRowsBefore[0]);
+  });
+
+  it('C1: spacer rows are rendered and aria-hidden', async () => {
+    await seedManyCards(db, 300);
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountBrowseView(root);
+    await settle();
+
+    const pageSizeSel = root.querySelector<HTMLSelectElement>(
+      '[data-region="page-size"]',
+    );
+    pageSizeSel!.value = '100000';
+    pageSizeSel!.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    const topSpacer = root.querySelector<HTMLElement>(
+      '[data-region="vs-top-spacer"]',
+    );
+    const bottomSpacer = root.querySelector<HTMLElement>(
+      '[data-region="vs-bottom-spacer"]',
+    );
+    expect(topSpacer).not.toBeNull();
+    expect(bottomSpacer).not.toBeNull();
+    expect(topSpacer?.getAttribute('aria-hidden')).toBe('true');
+    expect(bottomSpacer?.getAttribute('aria-hidden')).toBe('true');
+    // Bottom spacer absorbs the rows BELOW the window — must be > 0.
+    const bottomPx = Number.parseInt(bottomSpacer?.style.height ?? '0', 10);
+    expect(bottomPx).toBeGreaterThan(0);
+  });
 });

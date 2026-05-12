@@ -8,6 +8,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR C1 — Browse-table virtualization) — operator requirement #11 part 1
+
+Adds a hand-rolled windowed renderer for the Browse view's `<tbody>` so
+the operator can scroll smoothly through thousands of filtered cards
+instead of paging at 50/100. The renderer holds ~30 rows in the DOM
+regardless of dataset size once a new **"Alle"** page-size option is
+selected; small page sizes (25/50/100) keep rendering every row in the
+slice so the existing pagination + bulk-mode UX and every PR 19 / PR 22
+test continues to pass unchanged.
+
+**Windowed list helper** [src/components/virtual-scroll.ts](src/components/virtual-scroll.ts):
+- Generic `createVirtualScroll<T>(opts)` with `setItems`, `refresh`,
+  `visibleRange`, `destroy`.
+- Top + bottom spacer rows (`<tr>` with colspan or `<div>`) carry the
+  cumulative height above and below the windowed slice so the browser's
+  native scroll position keeps tracking the user's location.
+- `renderAllThreshold` (default 100) bypasses the windowing math for
+  small datasets — every row renders in one pass. Existing tests
+  (default pageSize 50) see the same DOM count as before.
+- `overscan` (default 5) renders a few extra rows above/below the
+  viewport so fast scroll wheels never reveal a blank gap.
+- Hand-rolled with zero new dependencies. ~190 lines including comments.
+
+**Browse view integration** [src/views/browse.ts](src/views/browse.ts):
+- New "Alle" option (`value="100000"`) on the page-size select; chosen
+  values are cast to `BrowsePageSize` since the service slices a
+  preloaded in-memory array regardless of declared upper bound.
+- `state.lastResultRows` snapshots the service result on every
+  rerender so bulk-mode's "select all visible" + filter-change-prunes
+  selection logic operates on the full filtered set even though only
+  a windowed slice is in the DOM.
+- `refreshBulkUiFromDom` + `handleBulkSelectAll` now read from
+  `state.lastResultRows` instead of the DOM so they remain correct
+  under virtualization.
+- A passive `window` scroll + resize listener calls
+  `virtualScroll.refresh()`. The router's existing `AbortSignal`
+  cleans the listener up on route change.
+
+**Row-height + spacer styling** [src/styles/chips-and-views.css](src/styles/chips-and-views.css):
+- `.browse-table__row { height: 52px }` so the windowing math has a
+  single source of truth for row size.
+- `.browse-table__vs-spacer{,-cell}` zeroes padding and borders on the
+  aria-hidden spacer rows.
+
+**Tests** ([tests/virtual-scroll.test.ts](tests/virtual-scroll.test.ts) + [tests/browse-view.test.ts](tests/browse-view.test.ts)):
+- 12 unit tests for `createVirtualScroll`: renderAll fast path,
+  windowed slice, spacer-height math, empty-state, `setItems` replace,
+  scroll-driven slice shift, no-op refresh on same range, destroy,
+  `tr` + colSpan spacer shape, scroll-past-end clamping, shrink across
+  setItems.
+- 3 new browse-view tests: "Alle" keeps DOM row count well below
+  dataset size; scrolling shifts the windowed slice; spacer rows are
+  aria-hidden with non-zero bottom height.
+- All 11 existing browse-view + 21 browse-bulk-mode + browse-with-*
+  tests continue to pass unchanged.
+
 ### Added (PR B1 — Lot bulk-import via paste/CSV) — operator requirement #7
 
 Adds a "Importer mange" button to lot-detail that opens a two-step

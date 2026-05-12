@@ -525,6 +525,11 @@
 
 .browse-table__row {
   cursor: pointer;
+  /* PR C1 — fixed row height so the virtual-scroll spacer math has
+     a single source of truth. Browse rows render a 32×44px thumb plus
+     two lines of inline buttons; 52px accommodates both comfortably
+     without forcing a layout reflow when the windowed slice swaps. */
+  height: 52px;
 }
 
 .browse-table__row:hover {
@@ -534,6 +539,22 @@
 .browse-table__row:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: -2px;
+}
+
+/* PR C1 — virtual-scroll spacers. Aria-hidden, no padding, no
+   borders; only their inline height matters. The cell stretches
+   colspan=7 so a bulk-mode toggle doesn't leave a layout gap. */
+.browse-table__vs-spacer,
+.browse-table__vs-spacer:hover {
+  background: transparent;
+  cursor: default;
+  height: auto;
+  border: 0;
+}
+
+.browse-table__vs-spacer-cell {
+  padding: 0;
+  border: 0;
 }
 
 .browse-table__image-col {
