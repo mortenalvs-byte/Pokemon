@@ -112,11 +112,25 @@ export async function findAssignableHoldingsForSlot(
   const reverseTemplate = isReverseHoloTemplateSlot(slot.note);
   const assignedHoldingIds = await getAssignedHoldingIds(deps, slot.id);
 
+  // PR A2: when the binder is set-scoped (sourceSetId !== null),
+  // additionally exclude any holdings whose card belongs to a different
+  // set. Defence in depth on top of slot.targetCardId matching — a
+  // slot's targetCardId always belongs to one set, so card.setId will
+  // typically agree with the binder's sourceSetId anyway. The explicit
+  // filter here is what stops the assign-modal from surfacing a wrong-
+  // set holding when the binder's set has been re-bound or migrated.
+  const binder = await deps.bindersRepo.get(slot.binderId);
+  const requiredSetId =
+    binder !== undefined && binder.sourceSetId !== null
+      ? binder.sourceSetId
+      : null;
+
   const out: AssignableHolding[] = [];
   for (const holding of holdings) {
     if (holding.deletedAt !== null) continue;
     if (assignedHoldingIds.has(holding.id)) continue;
     if (reverseTemplate && holding.finish !== 'reverse_holo') continue;
+    if (requiredSetId !== null && card !== null && card.setId !== requiredSetId) continue;
     out.push({
       holding,
       card,
@@ -125,6 +139,40 @@ export async function findAssignableHoldingsForSlot(
     });
   }
   return out;
+}
+
+/**
+ * PR A2 — Cross-set guard for assignHoldingToSlot.
+ *
+ * Throws SlotAssignmentError when the holding's card belongs to a
+ * different set than the binder it's being placed into — but ONLY
+ * when the binder has a non-null `sourceSetId`. Legacy binders
+ * (`sourceSetId === null`, pre-A1) keep their previous lenient
+ * behaviour to preserve existing user data.
+ *
+ * Resolution failures (binder gone, card not in cache) fall through
+ * silently as "can't verify, allow" rather than blocking the user
+ * for a defensive read; the cardId-match check above already catches
+ * the common wrong-card case. This is consistent with PR 24's "single
+ * writer" being the authority on assignment correctness.
+ */
+async function assertSetMatchForAssignment(
+  deps: BinderAssignmentDeps,
+  slot: BinderSlotRecord,
+  holding: HoldingRecord,
+): Promise<void> {
+  const binder = await deps.bindersRepo.get(slot.binderId);
+  if (binder === undefined) return;
+  if (binder.sourceSetId === null) return;  // legacy binder — pre-A1 semantics
+
+  const card = await deps.cardsRepo.get(holding.cardId);
+  if (card === undefined) return;            // unknown card — defer to cardId match
+  if (card.setId === binder.sourceSetId) return;  // happy path
+
+  throw new SlotAssignmentError(
+    `Holdingen er fra sett ${card.setId}, men permen er bundet til sett ${binder.sourceSetId}. ` +
+    `Velg en holding fra riktig sett, eller plasser kortet i en annen perm.`,
+  );
 }
 
 /**
@@ -187,6 +235,13 @@ export async function assignHoldingToSlot(
       `Reverse-holo template-slot tar bare reverse_holo-finish (holding er ${holding.finish}).`,
     );
   }
+  // PR A2: cross-set assignment guard. When the binder is bound to a
+  // specific set (binder.sourceSetId !== null), reject any holding
+  // whose card belongs to a different set. Legacy binders with
+  // sourceSetId === null preserve their pre-A1 behaviour (no rejection)
+  // — the v1->v2 schema kept the field optional and existing user data
+  // must keep loading without forcing migration.
+  await assertSetMatchForAssignment(deps, slot, holding);
   // One-holding-one-slot enforcement. Pass `slot.id` as the exclude so
   // reassigning the same holding to its current slot stays a legal
   // no-op-style update (matches the existing assign-modal "Bytt

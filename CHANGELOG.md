@@ -8,6 +8,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (PR A2 — Assignment-service set-guard, v2-compatible)
+
+Stacks on top of A1: `assignHoldingToSlot` now rejects cross-set
+assignment **when the binder has a non-null `sourceSetId`**. Legacy
+binders with `sourceSetId === null` keep their pre-A1 lenient
+behaviour so existing user data continues to load + behave normally
+without any migration.
+
+`findAssignableHoldingsForSlot` mirrors the same conditional filter
+so the assign-holding modal does not surface wrong-set candidates
+for a set-scoped binder. The cardId-match check (PR 24 §3) still
+fires first; A2 is defence-in-depth on top of it.
+
+**v2-compatible — no schema change:**
+- `SCHEMA_VERSION` stays at 2.
+- `BACKUP_FORMAT.md` is unchanged.
+- `BinderAssignmentDeps` interface unchanged (preserves
+  `recommended-placement-service` and other consumers).
+- PR 24 single-writer invariant intact (`binderSlotsRepo.update`
+  still only called from this service).
+- PR 29 16-case action-audit test stays green.
+
+**Files touched:**
+- `src/services/binder-assignment-service.ts` — new
+  `assertSetMatchForAssignment` helper called in
+  `assignHoldingToSlot`; conditional set-filter added to
+  `findAssignableHoldingsForSlot`.
+- `tests/binder-assignment-service.test.ts` — 5 new cases covering
+  cross-set rejection (scoped binder), same-set happy path (scoped),
+  legacy null binder still lenient, findAssignable filter for
+  scoped, findAssignable unfiltered for legacy.
+
+**Deferred:** audit row `binder_legacy_unscoped` (so the operator
+can later identify which legacy binders should be back-filled with
+`sourceSetId`). Implementing this requires adding `appendAudit` to
+`BinderAssignmentDeps`, which would touch
+`recommended-placement-service.ts`'s deps construction — out of
+scope for the bounded A2 PR to avoid scope creep.
+
 ### Added (PR A1 — Manual-binder set picker required)
 
 The manual-binder creation form now requires the operator to pick a set
