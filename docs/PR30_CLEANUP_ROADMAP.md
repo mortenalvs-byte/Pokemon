@@ -8,9 +8,24 @@ proposes a follow-up PR derived from a concrete finding inside
 The numbering is a planning aid, not a strict order. Pull cleanup
 PRs in opportunistically; do not block feature work on them.
 
+## Status overview (as of 2026-05-12)
+
+| PR | Title | Status | Merge commit |
+| --- | --- | --- | --- |
+| PR 31 | Dev/QA runtime separation | ✅ Merged | a5cbe2e (#31) |
+| PR 32 | Event / localStorage registry | ✅ Merged | f7f0d52 (#33) |
+| PR 33 | Backup/restore validation hardening | ✅ Merged | b57b53e (#32) |
+| PR 34 | View file decomposition | ✅ Merged | b9b6c14 (#35) |
+| PR 35 | CSS modular cleanup | ✅ Merged | bundled with c70970a (PR #39) |
+| PR 36 | Test helper consolidation | ✅ Merged | 0ec707d (#34) |
+| PR 37 | Accessibility polish | 🟡 Pending (only with concrete finding) | — |
+| PR 38 | Performance cleanup + CSP tightening | 🟡 Pending | — |
+
+Discovery in `scripts/ai-supervisor/discover-tasks.mjs` looks for `^## PR N — ` headings. Merged PRs below are demoted to `### ✅ PR N — ` (h3) so auto-discovery does not re-propose them. Active PRs (`PR 37`, `PR 38`) keep their `## PR N — ` headings.
+
 ---
 
-## PR 31 — Dev/QA runtime separation
+### ✅ PR 31 — Dev/QA runtime separation (merged a5cbe2e)
 
 ```text
 PR: 31
@@ -51,7 +66,7 @@ Suggested tests:
 
 ---
 
-## PR 32 — Event / localStorage registry
+### ✅ PR 32 — Event / localStorage registry (merged f7f0d52)
 
 ```text
 PR: 32
@@ -96,7 +111,7 @@ Suggested tests:
 
 ---
 
-## PR 33 — Backup / restore validation hardening
+### ✅ PR 33 — Backup / restore validation hardening (merged b57b53e)
 
 ```text
 PR: 33
@@ -143,7 +158,7 @@ Suggested tests:
 
 ---
 
-## PR 34 — View file decomposition
+### ✅ PR 34 — View file decomposition (merged b9b6c14)
 
 ```text
 PR: 34
@@ -183,7 +198,7 @@ Suggested tests:
 
 ---
 
-## PR 35 — CSS modular cleanup
+### ✅ PR 35 — CSS modular cleanup (bundled into PR #39 — see c70970a)
 
 ```text
 PR: 35
@@ -225,7 +240,7 @@ Suggested tests:
 
 ---
 
-## PR 36 — Test helper consolidation
+### ✅ PR 36 — Test helper consolidation (merged 0ec707d)
 
 ```text
 PR: 36
