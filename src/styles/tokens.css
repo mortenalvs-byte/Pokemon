@@ -1,0 +1,78 @@
+/*
+ * PR 35 — split section: tokens
+ * Carved from src/styles.css (lines 1-72 of the pre-split file).
+ * Imported by src/styles.css in order; no class names or selectors changed.
+ */
+
+/*
+ * Pokemon TCG Tracker — base styles.
+ * Design tokens live in :root as CSS variables. The values match the
+ * principles described in UI_DESIGN_SPEC.md (desktop-first, table-heavy,
+ * minimal animation, status badges that always carry text).
+ */
+
+:root {
+  /* Surface and text */
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-fg: #15171c;
+  --color-fg-muted: #5e6473;
+  --color-border: #d8dbe1;
+
+  /* Semantic */
+  --color-accent: #2c5fa8;
+  --color-accent-fg: #ffffff;
+  --color-success: #1f7a3d;
+  --color-warning: #b06600;
+  --color-danger: #a02323;
+  --color-info: #4a5b78;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Radius */
+  --radius-1: 4px;
+  --radius-2: 8px;
+
+  /* Type */
+  --font-system: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-size-base: 14px;
+  --line-height-base: 1.45;
+
+  /* Layout */
+  --sidebar-width: 220px;
+  --topbar-height: 48px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-system);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+

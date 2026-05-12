@@ -8,6 +8,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Refactored (PR 35 — CSS modular cleanup)
+
+Stacked on the binder set-scoping foundation (A1+A2+A3). Split
+`src/styles.css` (4571 lines / 97 115 bytes) into six per-section
+files under `src/styles/`. The root `src/styles.css` is now a
+thin `@import` chain that Vite inlines at build time, producing
+byte-identical dist output:
+
+```
+src/styles/
+  tokens.css                — :root variables (1.5 kB)
+  layout.css                — topbar, sidebar, layout grid, content (7.9 kB)
+  chips-and-views.css       — status chips, backup, settings, browse, card detail, collection (22.3 kB)
+  forms-and-binders.css     — dialog wrapper, holding form, wishlist, binders, binder-detail (29.1 kB)
+  lots-and-dashboard.css    — lots, lot-detail, lot-form, dashboard, master gap (24.0 kB)
+  workspace-and-polish.css  — PR 26/27/28 desktop workspace + personal command center (12.2 kB)
+```
+
+**Acceptance criteria (all met):**
+- ✅ `dist/assets/index-*.css` size unchanged: 73.17 kB pre and
+  post-split (file hash `index-CoBL_SCm.css` is BYTE-IDENTICAL —
+  the chained `@import`s produce the exact same minified bundle).
+- ✅ Zero class-name changes (just file relocations).
+- ✅ Zero `data-region` selector changes.
+- ✅ Visual layout unchanged (no rule body modifications; only
+  rule grouping).
+- ✅ `vite.config.ts` unchanged (Vite's default `@import` handling
+  in CSS source is sufficient).
+
+**Why split:** The pre-split 73 kB file made ownership unclear and
+encouraged merge conflicts on any cross-cutting change. Splitting
+by feature lets future PRs touch one section without affecting
+the others — same goal the PR30 audit identified.
+
 ### Added (PR A3 — Per-card open-slot dropdown in card-detail)
 
 Closes operator requirement #9 from

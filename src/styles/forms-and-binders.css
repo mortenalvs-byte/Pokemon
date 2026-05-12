@@ -1,0 +1,1373 @@
+/*
+ * PR 35 — split section: forms-and-binders
+ * Carved from src/styles.css (lines 1508-2874 of the pre-split file).
+ * Imported by src/styles.css in order; no class names or selectors changed.
+ */
+
+/* App-level dialog wrapper */
+
+.app-dialog {
+  max-width: min(720px, calc(100vw - 24px));
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: 0;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.app-dialog::backdrop {
+  background: rgba(15, 17, 22, 0.45);
+}
+
+/* Holding form */
+
+.holding-form-wrap {
+  padding: var(--space-5);
+}
+
+.holding-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.holding-form__header h2 {
+  margin: 0 0 var(--space-1);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.holding-form__card {
+  margin: 0;
+  color: var(--color-fg-muted);
+  font-size: 13px;
+}
+
+.holding-form__section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  padding: var(--space-3);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.holding-form__section legend {
+  padding: 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-fg-muted);
+  grid-column: 1 / -1;
+}
+
+.holding-form__sub-section {
+  display: contents;
+}
+
+.holding-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.holding-form__field span {
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.holding-form__field input,
+.holding-form__field select,
+.holding-form__field textarea {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  font: inherit;
+}
+
+.holding-form__field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.holding-form__radio-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: var(--space-4);
+}
+
+.holding-form__hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.holding-form__error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 13px;
+  display: none;
+}
+
+.holding-form__error--visible {
+  display: block;
+}
+
+.holding-form__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.holding-form__footer button {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.holding-form__submit {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+.holding-form__submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .holding-form__section {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Wishlist view — reuses browse-table and collection-table look */
+
+.wishlist-view h1 {
+  margin: 0 0 var(--space-2);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.wishlist-view__counts {
+  margin: 0 0 var(--space-3);
+  color: var(--color-fg-muted);
+  font-size: 13px;
+}
+
+.wishlist-view__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.wishlist-table__row--deleted {
+  opacity: 0.55;
+}
+
+.wishlist-table__row--deleted td {
+  text-decoration: line-through;
+}
+
+/* Wishlist form (mirrors holding form structure) */
+
+.wishlist-form-wrap {
+  padding: var(--space-5);
+}
+
+.wishlist-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.wishlist-form__header h2 {
+  margin: 0 0 var(--space-1);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.wishlist-form__card {
+  margin: 0;
+  color: var(--color-fg-muted);
+  font-size: 13px;
+}
+
+.wishlist-form__section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  padding: var(--space-3);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.wishlist-form__section legend {
+  padding: 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-fg-muted);
+  grid-column: 1 / -1;
+}
+
+.wishlist-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.wishlist-form__field--full {
+  grid-column: 1 / -1;
+}
+
+.wishlist-form__field span {
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.wishlist-form__field input,
+.wishlist-form__field select,
+.wishlist-form__field textarea {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  font: inherit;
+}
+
+.wishlist-form__error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 13px;
+  display: none;
+}
+
+.wishlist-form__error--visible {
+  display: block;
+}
+
+.wishlist-form__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.wishlist-form__footer button {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wishlist-form__submit {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+.wishlist-form__submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .wishlist-form__section {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Card detail "Ønskeliste-status" section */
+
+.card-detail-view__wishlist {
+  margin-top: var(--space-5);
+}
+
+.card-detail-view__wishlist h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.card-detail-view__wishlist-empty {
+  color: var(--color-fg-muted);
+  margin: 0;
+}
+
+.card-detail-view__wishlist-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  overflow: hidden;
+}
+
+.card-detail-view__wishlist-table th,
+.card-detail-view__wishlist-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+.card-detail-view__wishlist-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Narrow viewports — usable, not optimized */
+
+@media (max-width: 720px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .sidebar__list {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .sidebar__link {
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+  }
+
+  .sidebar__link--active {
+    border-left-color: transparent;
+    border-bottom-color: var(--color-accent);
+  }
+}
+
+/* Binders list view */
+
+.binders-view {
+  max-width: 1200px;
+}
+
+.binders-view__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.binders-view__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.binders-view__add {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-1);
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.binders-view__add:hover {
+  filter: brightness(1.05);
+}
+
+.binders-view__counts {
+  color: var(--color-fg-muted);
+  margin: 0 0 var(--space-4);
+}
+
+.binders-view__empty {
+  color: var(--color-fg-muted);
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-5);
+  text-align: center;
+}
+
+.binders-view__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-4);
+}
+
+.binder-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.binder-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.binder-card__title {
+  flex-grow: 1;
+  background: none;
+  border: none;
+  text-align: left;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--color-accent);
+  cursor: pointer;
+  padding: 0;
+}
+
+.binder-card__title:hover {
+  text-decoration: underline;
+}
+
+.binder-card__edit,
+.binder-card__delete {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--color-fg);
+}
+
+.binder-card__delete {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.binder-card__type,
+.binder-card__description {
+  margin: 0;
+  color: var(--color-fg-muted);
+  font-size: 13px;
+}
+
+.binder-card__stats {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 2px var(--space-3);
+  margin: var(--space-2) 0 0;
+  font-size: 13px;
+}
+
+.binder-card__stats dt {
+  color: var(--color-fg-muted);
+}
+
+.binder-card__stats dd {
+  margin: 0;
+  font-weight: 500;
+}
+
+.binder-card__progress,
+.binder-detail-view__progress {
+  position: relative;
+  height: 6px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.binder-card__progress-fill,
+.binder-detail-view__progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-success);
+  transition: width 120ms linear;
+}
+
+/* Binder detail view */
+
+.binder-detail-view {
+  max-width: 1200px;
+}
+
+.binder-detail-view__header {
+  margin-bottom: var(--space-3);
+}
+
+.binder-detail-view__back {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.binder-detail-view__back:hover {
+  text-decoration: underline;
+}
+
+.binder-detail-view__summary {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.binder-detail-view__title {
+  margin: 0 0 var(--space-1);
+  font-size: 20px;
+}
+
+.binder-detail-view__type,
+.binder-detail-view__description {
+  margin: 0 0 var(--space-2);
+  color: var(--color-fg-muted);
+}
+
+.binder-detail-view__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-3) 0;
+  font-size: 13px;
+}
+
+.binder-detail-view__stats dt {
+  color: var(--color-fg-muted);
+}
+
+.binder-detail-view__stats dd {
+  margin: 0;
+  font-weight: 500;
+}
+
+.binder-detail-view__pages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.binder-detail-view__empty,
+.binder-detail-view__message {
+  color: var(--color-fg-muted);
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-5);
+  text-align: center;
+}
+
+.binder-page__heading {
+  margin: 0 0 var(--space-3);
+  font-size: 14px;
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.binder-page__grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.binder-page__grid--4 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.binder-page__grid--9 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.binder-page__grid--12 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.binder-page__grid--16 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.binder-page__grid--18 {
+  grid-template-columns: repeat(6, 1fr);
+}
+
+.binder-slot {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 200px;
+  position: relative;
+}
+
+.binder-slot--owned {
+  border-color: var(--color-success);
+}
+
+.binder-slot--missing {
+  border-color: var(--color-danger);
+}
+
+.binder-slot--ordered,
+.binder-slot--upgrade_needed {
+  border-color: var(--color-warning);
+}
+
+.binder-slot__index {
+  font-size: 11px;
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
+}
+
+.binder-slot__thumb {
+  margin: var(--space-1) 0;
+}
+
+.binder-slot__card-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.binder-slot__card-link:hover {
+  text-decoration: underline;
+}
+
+.binder-slot__meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-fg-muted);
+}
+
+.binder-slot__empty {
+  margin: var(--space-2) 0;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  font-style: italic;
+}
+
+.binder-slot__actions {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.binder-slot__action {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--color-fg);
+}
+
+.binder-slot__action:hover {
+  background: var(--color-bg);
+}
+
+/* Slot status colour cues. Always paired with the textual badge label
+   inside the chip — see UI_DESIGN_SPEC accessibility minimum. */
+
+.status-chip--empty {
+  color: var(--color-fg-muted);
+}
+
+.status-chip--wanted {
+  color: var(--color-info);
+  border-color: var(--color-info);
+}
+
+.status-chip--owned {
+  color: var(--color-success);
+  border-color: var(--color-success);
+  background: #ecf6ef;
+}
+
+.status-chip--missing {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+  background: #fbeaea;
+}
+
+.status-chip--ordered,
+.status-chip--upgrade_needed {
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+  background: #fdf3e2;
+}
+
+.status-chip--duplicate {
+  color: var(--color-info);
+  border-color: var(--color-info);
+}
+
+/* Binder forms (binder-form, slot-action-menu, assign-holding-modal) */
+
+.binder-form,
+.assign-holding-modal,
+.slot-action-menu-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 320px;
+  max-width: 520px;
+}
+
+.binder-form__header h2,
+.assign-holding-modal__header h2,
+.slot-action-menu__header h2 {
+  margin: 0 0 var(--space-1);
+  font-size: 16px;
+}
+
+.binder-form__section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.binder-form__section legend {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-fg-muted);
+  padding: 0 var(--space-1);
+}
+
+.binder-form__field,
+.assign-holding-modal__field {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.binder-form__field--full {
+  grid-column: 1 / -1;
+}
+
+.binder-form__field input,
+.binder-form__field select,
+.binder-form__field textarea,
+.assign-holding-modal__field input,
+.assign-holding-modal__field select {
+  font-size: 14px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+}
+
+.binder-form__field input:disabled,
+.binder-form__field select:disabled {
+  background: var(--color-bg);
+  color: var(--color-fg-muted);
+}
+
+.binder-form__hint,
+.slot-action-menu__hint {
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  margin: 0;
+}
+
+.binder-form__error,
+.assign-holding-modal__error,
+.slot-action-menu__error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+  min-height: 1em;
+}
+
+.binder-form__error--visible {
+  font-weight: 500;
+}
+
+.binder-form__footer,
+.assign-holding-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.binder-form__footer button,
+.assign-holding-modal__footer button,
+.slot-action-menu__cancel {
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: var(--radius-1);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-fg);
+}
+
+.binder-form__submit,
+.assign-holding-modal__submit {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border-color: var(--color-accent);
+}
+
+.binder-form__submit:disabled,
+.assign-holding-modal__submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.slot-action-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.slot-action-menu__option {
+  padding: 8px 12px;
+  text-align: left;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.slot-action-menu__option:hover {
+  background: var(--color-bg);
+}
+
+.slot-action-menu__cancel {
+  align-self: flex-end;
+}
+
+.assign-holding-modal__empty {
+  color: var(--color-fg-muted);
+  font-size: 13px;
+}
+
+/* Card detail "Binder-lokasjoner" section */
+
+.card-detail-view__binders {
+  margin-top: var(--space-4);
+}
+
+.card-detail-view__binders-empty {
+  color: var(--color-fg-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.card-detail-view__binders-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.card-detail-view__binders-table th,
+.card-detail-view__binders-table td {
+  text-align: left;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Binder detail toolbar (view toggle + filter + export) */
+
+.binder-detail-view__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+}
+
+.binder-detail-view__toggle {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  overflow: hidden;
+}
+
+.binder-detail-view__toggle-btn {
+  padding: 6px 12px;
+  background: var(--color-surface);
+  border: none;
+  border-right: 1px solid var(--color-border);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-fg);
+}
+
+.binder-detail-view__toggle-btn:last-child {
+  border-right: none;
+}
+
+.binder-detail-view__toggle-btn--active {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+.binder-detail-view__filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.binder-detail-view__filter select {
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  font-size: 13px;
+}
+
+/* PR 20 — page-at-a-time pagination for Sider and Sjekkliste modes
+   in binder detail. Renders only the current page's slots / 50 rows
+   so a 1088-slot Vault X 16-pocket binder stays cheap. */
+.binder-detail-view__pages-nav,
+.binder-detail-view__checklist-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+}
+
+.binder-detail-view__pages-nav button,
+.binder-detail-view__checklist-nav button {
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  cursor: pointer;
+  font: inherit;
+}
+
+.binder-detail-view__pages-nav button:disabled,
+.binder-detail-view__checklist-nav button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.binder-detail-view__filter-note {
+  margin: var(--space-2) 0;
+  padding: var(--space-2);
+  background: rgba(255, 167, 38, 0.08);
+  border-left: 3px solid var(--color-warning, #ef6c00);
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+/* PR 17 — search inside binder. */
+.binder-detail-view__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.binder-detail-view__search input {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  font-size: 13px;
+  min-width: 220px;
+}
+
+.binder-detail-view__export {
+  margin-left: auto;
+  padding: 6px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-fg);
+}
+
+.binder-detail-view__export:hover {
+  background: var(--color-bg);
+}
+
+/* PR 24 — Auto-plasser button. Same shape as the export button so the
+   toolbar layout stays balanced. The success colour keeps the action
+   visually distinct from "Eksporter sjekkliste". */
+.binder-detail-view__auto-assign {
+  padding: 6px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-success, #2e7d32);
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-success, #2e7d32);
+}
+
+.binder-detail-view__auto-assign:hover:not(:disabled) {
+  background: var(--color-success, #2e7d32);
+  color: var(--color-accent-fg);
+}
+
+.binder-detail-view__auto-assign:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  border-color: var(--color-border);
+  color: var(--color-fg-muted);
+}
+
+.binder-detail-view__auto-summary {
+  margin: var(--space-2) 0;
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-success, #2e7d32);
+  border-radius: var(--radius-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.binder-detail-view__auto-summary-headline {
+  margin: 0;
+  flex: 1 1 280px;
+  font-size: 13px;
+}
+
+.binder-detail-view__auto-summary-dismiss {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  padding: 4px 12px;
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+/* PR 24 — Kan plasseres badges (slot tile + checklist row). */
+.binder-slot__assignable-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-success, #2e7d32);
+  color: var(--color-accent-fg);
+}
+
+.checklist-table__assignable-badge {
+  display: inline-block;
+  margin-left: var(--space-2);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-success, #2e7d32);
+  color: var(--color-accent-fg);
+}
+
+/* PR 24 — success variant for slot/checklist Plasser action. */
+.binder-slot__action--success {
+  border-color: var(--color-success, #2e7d32);
+  color: var(--color-success, #2e7d32);
+}
+
+.binder-slot__action--success:hover:not(:disabled) {
+  background: var(--color-success, #2e7d32);
+  color: var(--color-accent-fg);
+}
+
+.checklist-table__action--success {
+  border-color: var(--color-success, #2e7d32);
+  color: var(--color-success, #2e7d32);
+}
+
+.checklist-table__action--success:hover:not(:disabled) {
+  background: var(--color-success, #2e7d32);
+  color: var(--color-accent-fg);
+}
+
+/* PR 24 — slot direct-add form reuses .holding-form styling. The
+   wrapper sits inside the dialog, same layout as the holding-form
+   wrapper. Define a thin alias so any future divergence stays
+   contained here. */
+.slot-direct-add-wrap {
+  padding: var(--space-3);
+  min-width: 360px;
+  max-width: 560px;
+}
+
+/* Filtered-out slot — preserves grid position, just visually muted.
+   Action buttons are not rendered at all when filtered (see
+   binder-detail.ts), so no pointer-events override is needed. */
+
+.binder-slot--filtered-out {
+  opacity: 0.25;
+  filter: saturate(0.4);
+}
+
+/* PR 17 — deep-link highlight. Pulses for ~3s after the user clicks
+   a "Gå til side X.Y" link in card-detail. */
+.binder-slot--focused {
+  outline: 3px solid var(--color-accent, #2e7d32);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px rgba(46, 125, 50, 0.18);
+  animation: binder-slot-pulse 1.5s ease-in-out 2;
+}
+
+@keyframes binder-slot-pulse {
+  0%, 100% { box-shadow: 0 0 0 6px rgba(46, 125, 50, 0.18); }
+  50% { box-shadow: 0 0 0 10px rgba(46, 125, 50, 0.04); }
+}
+
+.binder-slot__card-link--inert {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-fg-muted);
+}
+
+.binder-slot--reverse-template {
+  border-style: dashed;
+}
+
+.binder-slot__finish-badge {
+  font-size: 11px;
+  color: var(--color-fg-muted);
+  font-style: italic;
+}
+
+/* Checklist table */
+
+.binder-detail-view__checklist {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  overflow-x: auto;
+}
+
+.checklist-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.checklist-table thead th {
+  text-align: left;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+
+.checklist-table td {
+  text-align: left;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.checklist-table__row[data-status='owned'] {
+  background: rgba(31, 122, 61, 0.04);
+}
+
+.checklist-table__row[data-status='missing'] {
+  background: rgba(160, 35, 35, 0.04);
+}
+
+.checklist-table__actions {
+  display: flex;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.checklist-table__action {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+  cursor: pointer;
+  color: var(--color-fg);
+}
+
+.checklist-table__action:hover {
+  background: var(--color-bg);
+}
+
+/* From-set wizard */
+
+.binder-from-set-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 380px;
+  max-width: 560px;
+}
+
+.binder-from-set-wizard__header h2 {
+  margin: 0 0 var(--space-1);
+  font-size: 16px;
+}
+
+.binder-from-set-wizard__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.binder-from-set-wizard__section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.binder-from-set-wizard__section legend {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-fg-muted);
+  padding: 0 var(--space-1);
+}
+
+.binder-from-set-wizard__field {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.binder-from-set-wizard__field input,
+.binder-from-set-wizard__field select {
+  font-size: 14px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface);
+}
+
+.binder-from-set-wizard__field--checkbox {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.binder-from-set-wizard__field--checkbox input {
+  width: 16px;
+  height: 16px;
+}
+
+.binder-from-set-wizard__preview {
+  background: var(--color-bg);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+}
+
+.binder-from-set-wizard__preview h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-fg-muted);
+}
+
+.binder-from-set-wizard__preview dl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px var(--space-3);
+  margin: 0;
+  font-size: 13px;
+}
+
+.binder-from-set-wizard__preview dt {
+  color: var(--color-fg-muted);
+}
+
+.binder-from-set-wizard__preview dd {
+  margin: 0;
+  font-weight: 500;
+  text-align: right;
+}
+
+.binder-from-set-wizard__error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+  min-height: 1em;
+}
+
+.binder-from-set-wizard__error--visible {
+  font-weight: 500;
+}
+
+.binder-from-set-wizard__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.binder-from-set-wizard__footer button {
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: var(--radius-1);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-fg);
+}
+
+.binder-from-set-wizard__submit {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border-color: var(--color-accent);
+}
+
+.binder-from-set-wizard__submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
