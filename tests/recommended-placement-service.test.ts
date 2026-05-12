@@ -20,7 +20,7 @@ import type {
 } from '../src/domain/types';
 import type { HoldingInput } from '../src/domain/validators';
 import type { PokemonTrackerDB } from '../src/db/database';
-import type { MasterGapReport } from '../src/domain/master-set-gap';
+import type { MasterGapReport, MasterGapRow } from '../src/domain/master-set-gap';
 import * as binderAssignment from '../src/services/binder-assignment-service';
 
 const SLOTS_PER_PAGE: SlotsPerPage = 9;
@@ -150,6 +150,53 @@ function buildDeps(db: PokemonTrackerDB) {
     binderSlotsRepo: createBinderSlotsRepo(db),
     holdingsRepo: createHoldingsRepo(db),
     cardsRepo: createCardsRepo(db),
+  };
+}
+
+// PR 38a — synth ambiguous-owned row pointing at a specific holding.
+// Used by tests that hand-craft a `MasterGapReport` to exercise the
+// pre-loaded snapshot path; the real service never emits two rows
+// recommending the same holding, but the placement service must
+// defend against it via the maintained snapshot anyway.
+function makeAmbiguousRow(
+  binder: BinderRecord,
+  slotId: string,
+  slotNumber: number,
+  recommendedHoldingId: string,
+): MasterGapRow {
+  return {
+    binderId: binder.id,
+    binderName: binder.name,
+    slotId,
+    pageNumber: 1,
+    slotNumber,
+    cardId: 'base1-4',
+    cardName: 'Charizard',
+    setId: 'base1',
+    setName: 'Base',
+    cardNumber: '4',
+    required: {
+      finish: 'normal',
+      edition: 'unlimited',
+      verified: true,
+      reason: 'pre-loaded snapshot test',
+    },
+    status: 'ambiguous_owned',
+    severity: 'warning',
+    reason: 'pre-loaded snapshot test',
+    assignedHoldingId: null,
+    matchingUnplacedHoldingIds: [recommendedHoldingId],
+    activeWishlistIds: [],
+    orderedWishlistIds: [],
+    unmaterializedLotItemIds: [],
+    canPlaceDirectly: false,
+    bestCopyRecommendation: {
+      status: 'recommended',
+      recommendedHoldingId,
+      score: 1,
+      reasons: ['sole candidate'],
+      candidateCount: 1,
+    },
   };
 }
 
@@ -439,6 +486,131 @@ describe('placeRecommendedForReport (PR 28)', () => {
     expect(result.skippedManualRequired).toBe(1);
     expect(result.skippedNoRecommendation).toBe(0);
     expect(result.failed).toHaveLength(0);
+  });
+
+  // PR 38a — assigning the same holding to two slots in one batch:
+  // the maintained snapshot blocks the second placement. Without the
+  // pre-loaded set + post-call update the second assignHoldingToSlot
+  // would still pass the per-call listLive check (because the first
+  // update hasn't been re-read), and PR 24's one-holding-one-slot
+  // invariant would break inside a batch.
+  it('PR 38a: pre-loaded set blocks the same holding from landing in two slots in one batch', async () => {
+    await createSetsRepo(db).upsert({
+      id: 'base1',
+      name: 'Base',
+      series: 'Base',
+      printedTotal: 102,
+      total: 102,
+      releaseDate: '1999-01-09',
+      symbolUrl: null,
+      logoUrl: null,
+      updatedAt: '2026-05-06T00:00:00.000Z',
+    });
+    await createCardsRepo(db).upsert(makeCard('base1-4'));
+    const binder = await createBindersRepo(db).create({
+      name: 'Dupe',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: SLOTS_PER_PAGE,
+      binderPreset: 'custom',
+      completionMode: 'master',
+      sourceSetId: null,
+    });
+    const slotsRepo = createBinderSlotsRepo(db);
+    const holdingsRepo = createHoldingsRepo(db);
+    // One holding — but two empty slots that both want base1-4.
+    const onlyHolding = await holdingsRepo.create(holdingInput({ rawCondition: 'NM' }));
+    const slot1 = await slotsRepo.create(
+      {
+        binderId: binder.id,
+        pageNumber: 1,
+        slotNumber: 1,
+        targetCardId: 'base1-4',
+        holdingId: null,
+        status: 'wanted',
+        note: null,
+      },
+      SLOTS_PER_PAGE,
+    );
+    const slot2 = await slotsRepo.create(
+      {
+        binderId: binder.id,
+        pageNumber: 1,
+        slotNumber: 2,
+        targetCardId: 'base1-4',
+        holdingId: null,
+        status: 'wanted',
+        note: null,
+      },
+      SLOTS_PER_PAGE,
+    );
+
+    // Hand-crafted report: both slots recommend the same holding. The
+    // master-gap service would never emit this in practice (one
+    // recommendation per slot, and the same holding is `manual_required`
+    // on the second slot if it qualifies for both), but the placement
+    // service must defend against it regardless.
+    const dupeReport: MasterGapReport = {
+      generatedAt: '2026-05-12T00:00:00.000Z',
+      binder: {
+        binderId: binder.id,
+        binderName: binder.name,
+        totalTargetSlots: 2,
+        complete: 0,
+        missing: 0,
+        ownedUnplaced: 0,
+        wishlistWanted: 0,
+        wishlistOrdered: 0,
+        inLotUnmaterialized: 0,
+        ambiguousOwned: 2,
+        invalidAssignment: 0,
+        invalidVariant: 0,
+        unverifiedVariantData: 0,
+        completionPercent: 0,
+        actionableCount: 2,
+        canPlaceDirectlyCount: 0,
+        recommendedAmbiguousCount: 2,
+        manualAmbiguousCount: 0,
+      },
+      rows: [
+        makeAmbiguousRow(binder, slot1.id, 1, onlyHolding.id),
+        makeAmbiguousRow(binder, slot2.id, 2, onlyHolding.id),
+      ],
+    };
+
+    const result = await placeRecommendedForReport({
+      report: dupeReport,
+      deps: buildDeps(db),
+    });
+
+    expect(result.placed).toHaveLength(1);
+    expect(result.placed[0]?.holdingId).toBe(onlyHolding.id);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]?.reason).toMatch(/allerede plassert i en annen slot/);
+  });
+
+  // PR 38a — `binderSlotsRepo.listLive` is called once for the
+  // pre-loaded snapshot regardless of how many rows the batch
+  // processes. Pre-PR 38a it was called twice per placement
+  // (one for the assigned-id set; one for the legacy-binder set
+  // path was already shared). After PR 38a the per-call check uses
+  // the pre-loaded snapshot in O(1).
+  it('PR 38a: binderSlotsRepo.listLive is called once per batch (not once per placement)', async () => {
+    const { report } = await buildScenario(db, 'mixed');
+    const deps = buildDeps(db);
+    const spy = vi.spyOn(deps.binderSlotsRepo, 'listLive');
+    const result = await placeRecommendedForReport({
+      report,
+      deps,
+    });
+    expect(result.placed.length + result.failed.length).toBeGreaterThan(0);
+    // One call for the snapshot. The batch may still call listLive
+    // indirectly via other code paths (e.g. the audit-emission path
+    // for legacy binders runs its own queries via cardsRepo, not
+    // binderSlotsRepo) — assert the upper bound is 1 for the batch's
+    // own use, allowing a small buffer for setup/teardown.
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
   // 16 — empty report

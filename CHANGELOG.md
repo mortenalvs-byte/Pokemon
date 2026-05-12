@@ -8,6 +8,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed (PR 38a — Pre-loaded assigned-holdings snapshot for bulk placement)
+
+Closes audit finding F-PERF-LISTLIVE-N-PLUS-1 from
+[docs/PR30_FULL_TECHNICAL_AUDIT.md](docs/PR30_FULL_TECHNICAL_AUDIT.md):
+the bulk recommended-placement path used to call
+`binderSlotsRepo.listLive()` once per placement to enforce the
+PR 24 one-holding-one-slot invariant, giving O(N·slots) reads
+where N is the number of recommended rows and slots is the total
+number of live binder slots across the user's collection.
+
+**Service-layer contract** [src/services/binder-assignment-service.ts](src/services/binder-assignment-service.ts):
+- New exported `loadAssignedHoldingIdsSnapshot(deps)` returns the
+  full set of holdingIds currently bound to live slots in one
+  `listLive()` round-trip.
+- New optional `context.assignedHoldingIds` parameter on
+  `assignHoldingToSlot(...)`. When provided, the function uses the
+  snapshot for the one-holding-one-slot check in O(1) and skips its
+  own `listLive()`. Re-assigning the same holding to its current
+  slot is still allowed (`slot.holdingId === holding.id` short-circuit).
+- Default (context-less) call path is byte-identical to PR 24: the
+  per-call `listLive()` runs and the exclude-slot-id semantics
+  remain intact for the single-slot UI flow.
+
+**Bulk caller** [src/services/recommended-placement-service.ts](src/services/recommended-placement-service.ts):
+- Loads the snapshot once at the start of `placeRecommendedForReport`.
+- Passes it to every `assignHoldingToSlot` call.
+- Maintains it post-call (removes the slot's previous holdingId
+  when replaced; always adds the new one) so a second placement of
+  the same holding within the same batch is blocked exactly as it
+  would have been in the per-call path.
+
+**Tests** [tests/recommended-placement-service.test.ts](tests/recommended-placement-service.test.ts):
+- New: "pre-loaded set blocks the same holding from landing in two
+  slots in one batch" — hand-crafted report with two ambiguous rows
+  both recommending the only holding; result has `placed=1` and
+  `failed=1` with the "allerede plassert i en annen slot" reason.
+- New: "binderSlotsRepo.listLive is called once per batch (not once
+  per placement)" — spies on the repo's `listLive` and asserts the
+  total invocation count is exactly 1 across a mixed-scenario batch.
+
+PR 24 binder-detail-action-audit (16 cases pinning assignment
+semantics) stays GREEN. No schema, backup, or UI changes. CSP
+tightening (PR 38b) is deferred pending an approval record for
+`src-tauri/tauri.conf.json` per the scope-guard's hard-forbidden
+list (gate #4).
+
 ### Added (PR B1 — Lot bulk-import via paste/CSV) — operator requirement #7
 
 Adds a "Importer mange" button to lot-detail that opens a two-step

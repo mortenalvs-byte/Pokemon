@@ -12,7 +12,10 @@
 // skipped / failed counts so the user can see exactly what
 // happened.
 
-import { assignHoldingToSlot } from './binder-assignment-service';
+import {
+  assignHoldingToSlot,
+  loadAssignedHoldingIdsSnapshot,
+} from './binder-assignment-service';
 import type { BinderAssignmentDeps } from './binder-assignment-service';
 import type {
   MasterGapReport,
@@ -62,6 +65,17 @@ export async function placeRecommendedForReport(
   // Cache the binder.slotsPerPage so we don't re-read the binder for
   // every row in the same binder.
   const slotsPerPageByBinder = new Map<string, SlotsPerPage>();
+
+  // PR 38a — Pre-load the assigned-holdings snapshot ONCE. Each
+  // assignHoldingToSlot call below trusts this set via the
+  // `context.assignedHoldingIds` argument so it can skip its own
+  // `binderSlotsRepo.listLive()`. We maintain the set after each
+  // successful placement (replace previous slot.holdingId with the
+  // new holdingId) so the one-holding-one-slot invariant from PR 24
+  // stays correctly enforced inside the batch. Closes
+  // F-PERF-LISTLIVE-N-PLUS-1: bulk path drops from O(N · slots) to
+  // O(N + slots).
+  const assignedHoldingIds = await loadAssignedHoldingIdsSnapshot(input.deps);
 
   for (const row of input.report.rows) {
     const decision = classifyRowForBulk(row);
@@ -115,7 +129,17 @@ export async function placeRecommendedForReport(
         slotsPerPage = binder.slotsPerPage as SlotsPerPage;
         slotsPerPageByBinder.set(slot.binderId, slotsPerPage);
       }
-      await assignHoldingToSlot(input.deps, slot, holding, slotsPerPage);
+      await assignHoldingToSlot(input.deps, slot, holding, slotsPerPage, {
+        assignedHoldingIds,
+      });
+      // PR 38a — maintain the snapshot for the next iteration. If the
+      // slot already held a different holding, that holding is now
+      // free; if the slot was blank, nothing to remove. Always add the
+      // new holdingId.
+      if (slot.holdingId !== null && slot.holdingId !== holdingId) {
+        assignedHoldingIds.delete(slot.holdingId);
+      }
+      assignedHoldingIds.add(holdingId);
       placed.push({ slotId: row.slotId, holdingId });
     } catch (caught) {
       const message =

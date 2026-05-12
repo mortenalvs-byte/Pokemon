@@ -237,6 +237,39 @@ async function getAssignedHoldingIds(
   return out;
 }
 
+/**
+ * PR 38a — Pre-load a snapshot of every holdingId currently bound to a
+ * live binder slot. Callers running a bulk loop of `assignHoldingToSlot`
+ * (e.g. `placeRecommendedForReport`) pass this snapshot via the
+ * `context.assignedHoldingIds` argument so each call skips its own
+ * `binderSlotsRepo.listLive()` round-trip. The caller is responsible
+ * for keeping the snapshot current after each successful assignment:
+ * remove the slot's previous holdingId (if any, and not equal to the
+ * new one), then add the new holdingId. The one-holding-one-slot
+ * invariant from PR 24 stays enforced — the snapshot just moves the
+ * O(slots) walk from per-call to per-batch.
+ */
+export async function loadAssignedHoldingIdsSnapshot(
+  deps: BinderAssignmentDeps,
+): Promise<Set<string>> {
+  return getAssignedHoldingIds(deps, null);
+}
+
+/**
+ * PR 38a — Optional context for `assignHoldingToSlot`. When provided
+ * with a pre-loaded `assignedHoldingIds` snapshot, the function skips
+ * its own `listLive()` call and trusts the snapshot for the
+ * one-holding-one-slot check. See `loadAssignedHoldingIdsSnapshot`.
+ */
+export interface AssignHoldingContext {
+  /**
+   * FULL set of holdingIds bound to live slots (no slot-id exclusion).
+   * The function adapts the check to allow re-assigning the same
+   * holding back to its current slot.
+   */
+  readonly assignedHoldingIds: Set<string>;
+}
+
 // ---------------------------------------------------------------------
 // Single-slot assignment write
 
@@ -255,6 +288,7 @@ export async function assignHoldingToSlot(
   slot: BinderSlotRecord,
   holding: HoldingRecord,
   slotsPerPage: SlotsPerPage,
+  context?: AssignHoldingContext,
 ): Promise<BinderSlotRecord> {
   if (holding.deletedAt !== null) {
     throw new SlotAssignmentError('Holdingen er slettet.');
@@ -289,12 +323,24 @@ export async function assignHoldingToSlot(
   // one-holding-one-slot check below) rejects the assignment — the
   // audit log is append-only (DATA_MODEL §4) and cannot retract.
   const setGuard = await assertSetMatchForAssignment(deps, slot, holding);
-  // One-holding-one-slot enforcement. Pass `slot.id` as the exclude so
-  // reassigning the same holding to its current slot stays a legal
-  // no-op-style update (matches the existing assign-modal "Bytt
-  // holding" UX).
-  const otherAssignedHoldingIds = await getAssignedHoldingIds(deps, slot.id);
-  if (otherAssignedHoldingIds.has(holding.id)) {
+  // One-holding-one-slot enforcement. PR 38a: when the caller passes a
+  // pre-loaded `context.assignedHoldingIds` snapshot, skip the
+  // `listLive()` round-trip and check the snapshot in O(1). The
+  // snapshot is the FULL set (no slot-id exclusion), so a re-assignment
+  // of the same holding to its current slot — `slot.holdingId ===
+  // holding.id` — must still be allowed: in that case the holdingId is
+  // in the set, but it's not "elsewhere". Without context, the original
+  // per-call listLive() path (excluding slot.id) is preserved verbatim.
+  let isAssignedElsewhere: boolean;
+  if (context !== undefined) {
+    isAssignedElsewhere =
+      context.assignedHoldingIds.has(holding.id) &&
+      slot.holdingId !== holding.id;
+  } else {
+    const otherAssignedHoldingIds = await getAssignedHoldingIds(deps, slot.id);
+    isAssignedElsewhere = otherAssignedHoldingIds.has(holding.id);
+  }
+  if (isAssignedElsewhere) {
     throw new SlotAssignmentError(
       'Holdingen er allerede plassert i en annen slot.',
     );
