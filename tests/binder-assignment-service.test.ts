@@ -809,6 +809,44 @@ describe('binder-assignment-service (PR 24)', () => {
     expect(updated.status).toBe('owned');
   });
 
+  it('A2: legacy binder + failed one-holding-one-slot check emits ZERO audit rows (post-write-only)', async () => {
+    // Reproduces the supervisor verdict: the audit row must be appended
+    // ONLY after the slot update succeeds, never from inside the set
+    // guard. Setup: legacy null-sourceSetId binder; the same holding
+    // is already assigned to slotA; an attempt to assign it to slotB
+    // must fail with the one-holding-one-slot error AND emit no
+    // binder_legacy_unscoped row (the append-only audit log must not
+    // record an action that didn't happen).
+    const calls: Array<{ action: string }> = [];
+    const deps = {
+      ...buildDeps(db),
+      appendAudit: async (entry: { action: string }) => {
+        calls.push(entry);
+        return undefined;
+      },
+    };
+    const h = await deps.holdingsRepo.create(holdingInput({ cardId: 'base1-4' }));
+    const slotA = await makeSlot({ pageNumber: 1, slotNumber: 1, targetCardId: 'base1-4' });
+    await assignHoldingToSlot(deps, slotA, h, SLOTS_PER_PAGE);
+    // First assignment OK → emits one legacy audit row (sanity).
+    expect(calls.filter((c) => c.action === 'binder_legacy_unscoped')).toHaveLength(1);
+
+    // Now attempt to ALSO place the same holding into a different slot.
+    // The one-holding-one-slot check must reject. The set guard would
+    // have observed legacy state before this check — and if the audit
+    // emission lived inside the guard, this would falsely append a
+    // second row. With the post-write emission it must not.
+    const slotB = await makeSlot({ pageNumber: 1, slotNumber: 2, targetCardId: 'base1-4' });
+    const slotBRefreshed = (await deps.binderSlotsRepo.get(slotB.id)) ?? slotB;
+    await expect(
+      assignHoldingToSlot(deps, slotBRefreshed, h, SLOTS_PER_PAGE),
+    ).rejects.toThrow(/allerede plassert/);
+
+    // Audit log must still show exactly ONE legacy row from slotA's
+    // success, with zero false rows from the rejected slotB attempt.
+    expect(calls.filter((c) => c.action === 'binder_legacy_unscoped')).toHaveLength(1);
+  });
+
   // -- PR A2 per-holding card.setId filter --------------------------
 
   it('A2: findAssignableHoldingsForSlot filters by each holding card setId for scoped binder', async () => {
