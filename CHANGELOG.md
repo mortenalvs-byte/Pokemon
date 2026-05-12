@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (Phase-2 Plan C5 — backup view button + status tests)
+
+5 new test cases in [tests/backup-view.test.ts](tests/backup-view.test.ts). The existing 3 smoke tests covered panel mount + XSS-safe textContent + invalid-file rejection; C5 pins the success-path button + status + content contracts:
+
+- `C5: export button click renders a success feedback message` — clicks the export button and waits for the async `exportToBackupFile → downloadTextFile` chain to settle; asserts the feedback region shows "Eksport ferdig" with no error class.
+- `C5: a valid backup file enables the destructive restore button + shows preview` — feeds a minimal-but-valid backup JSON (12 top-level keys + `app: 'Pokemon TCG Tracker'` + `schemaVersion: 2`); asserts confirm-restore is enabled and the preview region renders content.
+- `C5: status panel renders the lastBackupAt timestamp when set` — seeds `appMeta.lastBackupAt` and asserts the status panel surfaces a recognizable date.
+- `C5: status panel renders an "aldri"/"ingen" message when never backed up` — opposite path: no seed; status panel shows the empty/placeholder text.
+- `C5: intro + export panel mention API-key preservation` — pins both copy strings (intro paragraph + export-panel hint) so a future copy-edit cannot silently drop the user-facing guarantee that the API key is excluded from standard backups.
+
+**Test-only change.** No production code touched. Brings backup-view from 3 → 8 tests, lifting it from "very thin" to "OK" in the Phase-2 audit baseline ranking.
+
+**Verification:** typecheck clean, 1399 tests pass (was 1394 on `origin/main`, +5), build green (CSS 73.17 KB / JS 483.59 KB — unchanged), audit clean.
+
 ### Added (PR B1 — Lot bulk-import via paste/CSV) — operator requirement #7
 
 Adds a "Importer mange" button to lot-detail that opens a two-step
