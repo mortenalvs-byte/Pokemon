@@ -611,3 +611,169 @@ describe('Lot detail — partial materialise (PR 18)', () => {
     ).toBe(false);
   });
 });
+
+// C3 — Phase-2 Plan C: lot-detail toolbar + per-row action wiring.
+// These pin uncovered button paths so a future refactor cannot
+// silently break the back, bulk-import (B1), add-item, open-card,
+// or soft-delete-item flows.
+describe('Lot detail view — toolbar + action wiring (C3)', () => {
+  let db: PokemonTrackerDB;
+
+  beforeEach(async () => {
+    document.body.innerHTML = '<div id="content"></div>';
+    _resetDbSingletonForTests();
+    db = getDb();
+    await initializeDataLayer({ db, skipPersistentStorage: true });
+    await createSetsRepo(db).upsert(sampleSet);
+    await createCardsRepo(db).upsertMany([makeCard(1), makeCard(2)]);
+    window.location.hash = '';
+  });
+
+  afterEach(async () => {
+    await settle(40);
+    document.body.innerHTML = '';
+    await closeAndDelete(db);
+    _resetDbSingletonForTests();
+    window.location.hash = '';
+  });
+
+  async function seedLotWithItems(): Promise<string> {
+    const lot = await createLotsRepo(db).create({
+      name: 'C3 test lot',
+      purchaseDate: '2026-05-12T00:00:00.000Z',
+      totalCost: 100,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+    await createLotItemsRepo(db).create(lotItem(lot.id, 'base1-1'));
+    await createLotItemsRepo(db).create(lotItem(lot.id, 'base1-2'));
+    window.location.hash = `lot/${encodeURIComponent(lot.id)}`;
+    return lot.id;
+  }
+
+  it('C3: back button navigates to #lots', async () => {
+    await seedLotWithItems();
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountLotDetailView(root);
+    await settle();
+
+    const back = root.querySelector<HTMLButtonElement>('[data-action="back"]');
+    expect(back).not.toBeNull();
+    back!.click();
+    expect(window.location.hash).toBe('#lots');
+  });
+
+  it('C3: open-card link navigates to #card/<encoded-id>', async () => {
+    await seedLotWithItems();
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountLotDetailView(root);
+    await settle();
+
+    const openCard = root.querySelector<HTMLButtonElement>(
+      '[data-action="open-card"]',
+    );
+    expect(openCard).not.toBeNull();
+    openCard!.click();
+    expect(window.location.hash.startsWith('#card/')).toBe(true);
+    // Row order in the detail view is not contractually specified
+    // here; assert the hash points at one of the two seeded cardIds.
+    const expectedHashes = ['base1-1', 'base1-2'].map(
+      (id) => `#card/${encodeURIComponent(id)}`,
+    );
+    expect(expectedHashes).toContain(window.location.hash);
+  });
+
+  it('C3: soft-delete-item button removes the row and soft-deletes the lot item', async () => {
+    const lotId = await seedLotWithItems();
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountLotDetailView(root);
+    await settle();
+    expect(root.querySelectorAll('.lot-items-table__row').length).toBe(2);
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const firstRow = root.querySelector<HTMLTableRowElement>(
+      '.lot-items-table__row',
+    );
+    const delBtn = firstRow!.querySelector<HTMLButtonElement>(
+      '[data-action="soft-delete-item"]',
+    );
+    expect(delBtn).not.toBeNull();
+    delBtn!.click();
+
+    await vi.waitFor(async () => {
+      expect(
+        root.querySelectorAll('.lot-items-table__row').length,
+      ).toBe(1);
+    });
+
+    // Live lot-items count drops; the soft-deleted item is still in the
+    // store with deletedAt set. listByLotId returns all (including soft-
+    // deleted), so filter to the live ones.
+    const all = await createLotItemsRepo(db).listByLotId(lotId);
+    const liveOnly = all.filter((i) => i.deletedAt === null);
+    expect(all.length).toBe(2);
+    expect(liveOnly.length).toBe(1);
+    confirmSpy.mockRestore();
+  });
+
+  it('C3: add-item button opens the lot-item form dialog', async () => {
+    await seedLotWithItems();
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountLotDetailView(root);
+    await settle();
+
+    const addBtn = root.querySelector<HTMLButtonElement>(
+      '[data-action="add-item"]',
+    );
+    expect(addBtn).not.toBeNull();
+    addBtn!.click();
+    await settle();
+
+    const openDialog = document.querySelector('dialog.app-dialog');
+    expect(openDialog).not.toBeNull();
+    // Cleanup
+    document
+      .querySelector<HTMLButtonElement>(
+        'dialog.app-dialog [data-action="cancel"]',
+      )
+      ?.click();
+    await settle();
+  });
+
+  it('C3: bulk-import button (B1) opens the bulk-import dialog', async () => {
+    await seedLotWithItems();
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountLotDetailView(root);
+    await settle();
+
+    const bulkBtn = root.querySelector<HTMLButtonElement>(
+      '[data-action="bulk-import"]',
+    );
+    expect(bulkBtn).not.toBeNull();
+    bulkBtn!.click();
+    await settle();
+
+    const dialog = document.querySelector('dialog.app-dialog');
+    expect(dialog).not.toBeNull();
+    // The bulk-import dialog renders the textarea + file picker.
+    expect(
+      document.querySelector('textarea[name="csv"]'),
+    ).not.toBeNull();
+    expect(
+      document.querySelector<HTMLInputElement>('input[type="file"]'),
+    ).not.toBeNull();
+    // Cleanup
+    document
+      .querySelector<HTMLButtonElement>(
+        'dialog.app-dialog [data-action="cancel"]',
+      )
+      ?.click();
+    await settle();
+  });
+});

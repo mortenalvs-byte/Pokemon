@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (Phase-2 Plan C3 — lot-detail view toolbar + action wiring tests)
+
+5 new test cases in [tests/lot-detail-view.test.ts](tests/lot-detail-view.test.ts) under a dedicated "Lot detail view — toolbar + action wiring (C3)" describe block. Pins button paths that the existing 13 tests didn't cover:
+
+- `C3: back button navigates to #lots` — toolbar back button → router contract.
+- `C3: open-card link navigates to #card/<encoded-id>` — per-row card-detail navigation; order-agnostic (asserts the hash matches one of the seeded cardIds).
+- `C3: soft-delete-item button removes the row and soft-deletes the lot item` — confirms `confirm()` flow + DOM removal + repo `deletedAt` state.
+- `C3: add-item button opens the lot-item form dialog` — toolbar add → modal open contract.
+- `C3: bulk-import button (B1) opens the bulk-import dialog` — newly-landed PR B1 toolbar button now has a view-level test; asserts the dialog renders its textarea + file picker.
+
+**Test-only change.** No production code touched. Brings lot-detail-view from 13 → 18 tests. Pre-existing tests (allocation, materialise-all/selected/per-row, pagination flows) unchanged.
+
+**Verification:** typecheck clean, 1399 tests pass (was 1394 on `origin/main`, +5), build green (CSS 73.17 KB / JS 483.59 KB — unchanged), audit clean.
+
 ### Added (PR B1 — Lot bulk-import via paste/CSV) — operator requirement #7
 
 Adds a "Importer mange" button to lot-detail that opens a two-step
