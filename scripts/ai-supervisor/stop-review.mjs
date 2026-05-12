@@ -450,10 +450,16 @@ async function main() {
       output = {};
     }
   } finally {
-    await release();
+    // CRITICAL: writeOutput MUST run inside finally so that early
+    // `return` statements inside the try block (scope-guard fail,
+    // git pre-check fail, dedup quarantine, OpenAI failure, verdict
+    // validation failure, etc.) still flush stdout to Claude Code.
+    // Putting it AFTER try/finally caused 0-byte hook output and a
+    // silently-stuck loop. Lock release happens first so the lock is
+    // freed even if writeOutput throws.
+    try { await release(); } catch { /* best-effort */ }
+    try { await writeOutput(output); } catch { /* best-effort */ }
   }
-  // Lock is released; safe to emit and exit
-  await writeOutput(output);
   process.exit(0);
 }
 
