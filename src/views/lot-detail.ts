@@ -12,6 +12,7 @@
 import { openDialog } from '../components/dialog';
 import { USER_DATA_CHANGED_EVENT, onUserDataChanged } from '../components/events';
 import { buildLotItemForm } from '../components/lot-item-form';
+import { buildLotBulkImportDialog } from '../components/lot-bulk-import-dialog';
 import { openWishlistReceivePrompt } from '../components/wishlist-receive-prompt';
 import { getDb } from '../db/database';
 import { getCurrentLotId, navigate, navigateToCard } from '../router';
@@ -663,6 +664,17 @@ function buildBottomActions(detail: LotDetail): HTMLElement {
     void openDialog(buildLotItemForm({ mode: 'add', lotId: detail.lot.id }));
   });
   wrap.appendChild(addBtn);
+  // PR B1: bulk-import button (operator requirement #7 — lot-kjøp i bulk).
+  // Pastes/loads N cards from CSV in one shot instead of N×single-form clicks.
+  const bulkBtn = document.createElement('button');
+  bulkBtn.type = 'button';
+  bulkBtn.className = 'lot-detail-view__add-item';
+  bulkBtn.dataset['action'] = 'bulk-import';
+  bulkBtn.textContent = 'Importer mange';
+  bulkBtn.addEventListener('click', () => {
+    void openDialog(buildLotBulkImportDialog({ lotId: detail.lot.id }));
+  });
+  wrap.appendChild(bulkBtn);
   return wrap;
 }
 
