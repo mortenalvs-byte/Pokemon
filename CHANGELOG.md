@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (Phase-2 Plan C4 — wishlist view toolbar filter tests)
+
+5 new test cases in [tests/wishlist-view.test.ts](tests/wishlist-view.test.ts) under the existing "Wishlist view" describe block. Pins the status / priority / set / search / page-size filter wiring that the existing 8 tests didn't cover:
+
+- `C4: status-filter narrows rows by wishlist status` — three statuses seeded (wanted, ordered, received); selecting "wanted" or "ordered" leaves the one matching row.
+- `C4: priority-filter narrows rows by priority` — three priorities seeded (grail, high, low); selecting "grail" leaves only that row.
+- `C4: search input narrows rows after debounce` — Charizard + Pikachu wishlist entries; "PIKA" search leaves only Pikachu.
+- `C4: set-filter narrows rows by setId` — base1 + jungle entries; selecting "jungle" leaves only the jungle entry.
+- `C4: page-size 25 paginates the rows + next-page advances` — 30 entries, page-size 25 → 25 rows + "Side 1 av 2" summary; next-page yields the remaining 5.
+
+**Test-only change.** No production code touched. Brings wishlist-view from 8 → 13 tests. Existing PR 22 receive-flow tests unchanged.
+
+**Verification:** typecheck clean, 1399 tests pass (was 1394 on `origin/main`, +5), build green (CSS 73.17 KB / JS 483.59 KB — unchanged), audit clean.
+
 ### Added (PR B1 — Lot bulk-import via paste/CSV) — operator requirement #7
 
 Adds a "Importer mange" button to lot-detail that opens a two-step

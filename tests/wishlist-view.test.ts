@@ -277,4 +277,169 @@ describe('Wishlist view', () => {
     expect(counts).toContain('Aktive: 0');
     expect(counts).toContain('Mottatt: 1');
   });
+
+  // C4 — Phase-2 Plan C: wishlist toolbar filter wiring.
+  // Pins the status / priority / set / search / page-size filters
+  // so a future refactor cannot silently drop one.
+
+  it('C4: status-filter narrows rows by wishlist status', async () => {
+    const repo = createWishlistRepo(db);
+    const wantedA = await repo.create({ ...baseInput, status: 'wanted' });
+    const orderedB = await repo.create({ ...baseInput, status: 'ordered' });
+    await repo.create({ ...baseInput, status: 'received' });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountWishlistView(root);
+    await settle();
+    // Default filter is empty (Alle); all 3 visible.
+    expect(root.querySelectorAll('.wishlist-table__row').length).toBe(3);
+
+    const statusFilter = root.querySelector<HTMLSelectElement>(
+      '[data-region="status-filter"]',
+    );
+    expect(statusFilter).not.toBeNull();
+    statusFilter!.value = 'wanted';
+    statusFilter!.dispatchEvent(new Event('change'));
+    await settle();
+    expect(root.querySelectorAll('.wishlist-table__row').length).toBe(1);
+
+    statusFilter!.value = 'ordered';
+    statusFilter!.dispatchEvent(new Event('change'));
+    await settle();
+    expect(root.querySelectorAll('.wishlist-table__row').length).toBe(1);
+    expect(
+      root
+        .querySelector<HTMLTableRowElement>('.wishlist-table__row')
+        ?.dataset['wishlistId'],
+    ).toBe(orderedB.id);
+    void wantedA;
+  });
+
+  it('C4: priority-filter narrows rows by priority', async () => {
+    await seedThree(); // grail, high, low
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountWishlistView(root);
+    await settle();
+    expect(root.querySelectorAll('.wishlist-table__row').length).toBe(3);
+
+    const priorityFilter = root.querySelector<HTMLSelectElement>(
+      '[data-region="priority-filter"]',
+    );
+    expect(priorityFilter).not.toBeNull();
+    priorityFilter!.value = 'grail';
+    priorityFilter!.dispatchEvent(new Event('change'));
+    await settle();
+    expect(root.querySelectorAll('.wishlist-table__row').length).toBe(1);
+  });
+
+  it('C4: search input narrows rows after debounce', async () => {
+    // Two different cards, two wishlist entries.
+    const other: CardRecord = {
+      ...sampleCard,
+      id: 'base1-58',
+      name: 'Pikachu',
+      number: '58',
+    };
+    await createCardsRepo(db).upsert(other);
+    const repo = createWishlistRepo(db);
+    await repo.create(baseInput);
+    await repo.create({ ...baseInput, cardId: 'base1-58' });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountWishlistView(root);
+    await settle();
+    expect(root.querySelectorAll('.wishlist-table__row').length).toBe(2);
+
+    const search = root.querySelector<HTMLInputElement>(
+      '[data-region="search"]',
+    );
+    expect(search).not.toBeNull();
+    search!.value = 'PIKA';
+    search!.dispatchEvent(new Event('input'));
+
+    await vi.waitFor(() => {
+      expect(root.querySelectorAll('.wishlist-table__row').length).toBe(1);
+    });
+  });
+
+  it('C4: set-filter narrows rows by setId', async () => {
+    const secondSet: SetRecord = {
+      ...sampleSet,
+      id: 'jungle',
+      name: 'Jungle',
+    };
+    const secondCard: CardRecord = {
+      ...sampleCard,
+      id: 'jungle-15',
+      setId: 'jungle',
+      name: 'Scyther',
+      number: '15',
+    };
+    await createSetsRepo(db).upsert(secondSet);
+    await createCardsRepo(db).upsert(secondCard);
+    const repo = createWishlistRepo(db);
+    await repo.create(baseInput);
+    await repo.create({ ...baseInput, cardId: 'jungle-15' });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountWishlistView(root);
+    await settle();
+    expect(root.querySelectorAll('.wishlist-table__row').length).toBe(2);
+
+    const setFilter = root.querySelector<HTMLSelectElement>(
+      '[data-region="set-filter"]',
+    );
+    expect(setFilter).not.toBeNull();
+    setFilter!.value = 'jungle';
+    setFilter!.dispatchEvent(new Event('change'));
+    await settle();
+    expect(root.querySelectorAll('.wishlist-table__row').length).toBe(1);
+  });
+
+  it('C4: page-size 25 paginates the rows + next-page advances', async () => {
+    const repo = createWishlistRepo(db);
+    // 30 entries (same card, varying priority/finish to satisfy
+    // any uniqueness constraint).
+    const priorities = ['grail', 'high', 'medium', 'low'] as const;
+    // Only finishes the seeded card actually supports (tcgplayer.prices
+    // exposes normal + holofoil + reverseHolofoil). The wishlist repo
+    // validates each create against the card's variants and would
+    // reject e.g. `non_holo` for this card.
+    const finishes = ['normal', 'holo', 'reverse_holo'] as const;
+    for (let i = 0; i < 30; i += 1) {
+      await repo.create({
+        ...baseInput,
+        priority: priorities[i % priorities.length]!,
+        finish: finishes[i % finishes.length]!,
+        note: `entry-${i}`,
+      });
+    }
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountWishlistView(root);
+    await settle();
+
+    const pageSize = root.querySelector<HTMLSelectElement>(
+      '[data-region="page-size"]',
+    );
+    expect(pageSize).not.toBeNull();
+    pageSize!.value = '25';
+    pageSize!.dispatchEvent(new Event('change'));
+    await settle();
+
+    expect(root.querySelectorAll('.wishlist-table__row').length).toBe(25);
+    const summary = root.querySelector('[data-region="page-summary"]');
+    expect(summary?.textContent ?? '').toMatch(/Side 1 av 2/);
+
+    root
+      .querySelector<HTMLButtonElement>('[data-action="next-page"]')
+      ?.click();
+    await settle();
+    expect(root.querySelectorAll('.wishlist-table__row').length).toBe(5);
+  });
 });
