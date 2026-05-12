@@ -18,7 +18,8 @@ Hard data collected from `git ls-files src tests` on `origin/main`:
 | Stale fixtures (`tests/fixtures/**`) | **0** (directory absent) |
 | Dead files (no import found, dynamic or static) | **1** — [`src/utils/money.ts`](../src/utils/money.ts) (19 lines, exports `SUPPORTED_CURRENCIES` referenced only in docs/CHANGELOG) |
 | Views with ≥1 test file referencing them | **13/13** user views (3 internal modules from PR 34 decomp covered transitively) |
-| Unit-test count on PR 38a branch (current tip) | **1397 / 121 files** |
+| Unit-test count on `origin/main` (current verification baseline) | **1394 / 121 files** |
+| Unit-test count on `feat/PR38a-perf-bulk-batch` (branch-specific, +3 PR 38a tests pending merge) | 1397 / 121 files |
 | `qa:browser` count | **92 / 11 files** (~240s wall-clock, see PR 38a diagnostic) |
 
 **Translation:** the repo is in remarkably good cleanup shape after Phase 1 (PR 31–36 + A1/A2/A3 + B1 + C1 + PR 38a). The remaining surface area is small and concentrated.
@@ -88,13 +89,13 @@ Today's behavior:
 - `BACKUP_FORMAT.md` (the new appMeta key is backwards-compatible per existing rules)
 - `auditLog` append-only contract
 - User-owned store contents (sync still never reads/writes them)
-- Existing 1397 tests
+- Existing 1394 tests on `origin/main` (acceptance is measured against whichever branch Plan B lands against — if PR 38a has merged first, baseline is 1397)
 
 **Acceptance:**
 - New test: seed 5 holdings, sync with 2 of their cardIds dropped → assert orphan count = 2, audit row appended, appMeta updated, no user-data store changed
 - New test: orphan-card path in `card-detail` renders fallback instead of crashing
 - Dashboard test asserts orphan chip appears + links correctly
-- All 1397 existing tests still pass
+- All existing tests still pass (1394 on `origin/main`; +3 if PR 38a has merged first → 1397)
 - `npm run build` size delta < +3 KB gzip
 
 **Risk:** MEDIUM — touches sync, several views, and adds a new view. Backwards-compatible by design (additive appMeta key); legacy data without `lastSyncOrphans` falls through cleanly.
