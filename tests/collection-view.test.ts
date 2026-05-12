@@ -211,4 +211,172 @@ describe('Collection view', () => {
     const emptyRow = root.querySelector('.browse-table__empty-row');
     expect(emptyRow?.textContent ?? '').toMatch(/Ingen holdings/i);
   });
+
+  // C2 — Phase-2 Plan C: filter/sort/pagination interactions.
+  // These tests pin the toolbar control wiring so a future refactor
+  // can't silently drop a filter without a test catching it.
+
+  it('C2: raw-condition filter narrows visible rows', async () => {
+    await seedThreeHoldings(); // NM, LP, MP
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCollectionView(root);
+    await settle();
+    expect(root.querySelectorAll('.collection-table__row').length).toBe(3);
+
+    const condFilter = root.querySelector<HTMLSelectElement>(
+      '[data-region="raw-condition"]',
+    );
+    expect(condFilter).not.toBeNull();
+    condFilter!.value = 'NM';
+    condFilter!.dispatchEvent(new Event('change'));
+    await settle();
+
+    const rows = root.querySelectorAll<HTMLTableRowElement>(
+      '.collection-table__row',
+    );
+    expect(rows.length).toBe(1);
+  });
+
+  it('C2: search input narrows rows after debounce (case-insensitive)', async () => {
+    // Two different cards so search has something to filter against.
+    const otherCard: CardRecord = {
+      ...sampleCard,
+      id: 'base1-58',
+      name: 'Pikachu',
+      number: '58',
+    };
+    await createCardsRepo(db).upsert(otherCard);
+    const repo = createHoldingsRepo(db);
+    await repo.create(baseHolding);
+    await repo.create({ ...baseHolding, cardId: 'base1-58' });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCollectionView(root);
+    await settle();
+    expect(root.querySelectorAll('.collection-table__row').length).toBe(2);
+
+    const search = root.querySelector<HTMLInputElement>(
+      '[data-region="search"]',
+    );
+    expect(search).not.toBeNull();
+    search!.value = 'PIKA';
+    search!.dispatchEvent(new Event('input'));
+
+    await vi.waitFor(() => {
+      const rows = root.querySelectorAll<HTMLTableRowElement>(
+        '.collection-table__row',
+      );
+      expect(rows.length).toBe(1);
+    });
+  });
+
+  it('C2: set-filter narrows rows by setId', async () => {
+    // Add a second set + a card in it + a holding for that card.
+    const secondSet: SetRecord = { ...sampleSet, id: 'jungle', name: 'Jungle' };
+    const secondCard: CardRecord = {
+      ...sampleCard,
+      id: 'jungle-15',
+      setId: 'jungle',
+      name: 'Scyther',
+      number: '15',
+    };
+    await createSetsRepo(db).upsert(secondSet);
+    await createCardsRepo(db).upsert(secondCard);
+    const repo = createHoldingsRepo(db);
+    await repo.create(baseHolding); // base1-4
+    await repo.create({ ...baseHolding, cardId: 'jungle-15' });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCollectionView(root);
+    await settle();
+    expect(root.querySelectorAll('.collection-table__row').length).toBe(2);
+
+    const setFilter = root.querySelector<HTMLSelectElement>(
+      '[data-region="set-filter"]',
+    );
+    expect(setFilter).not.toBeNull();
+    setFilter!.value = 'jungle';
+    setFilter!.dispatchEvent(new Event('change'));
+    await settle();
+
+    const rows = root.querySelectorAll<HTMLTableRowElement>(
+      '.collection-table__row',
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.dataset['holdingId']).toBeDefined();
+  });
+
+  it('C2: missing-condition checkbox filters holdings without raw condition', async () => {
+    const repo = createHoldingsRepo(db);
+    await repo.create(baseHolding); // has rawCondition NM
+    // Create a holding with UNKNOWN condition (missing).
+    await repo.create({ ...baseHolding, rawCondition: 'UNKNOWN' });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCollectionView(root);
+    await settle();
+    expect(root.querySelectorAll('.collection-table__row').length).toBe(2);
+
+    const missingCondition = root.querySelector<HTMLInputElement>(
+      '[data-region="missing-condition"]',
+    );
+    expect(missingCondition).not.toBeNull();
+    missingCondition!.checked = true;
+    missingCondition!.dispatchEvent(new Event('change'));
+    await settle();
+
+    const rows = root.querySelectorAll<HTMLTableRowElement>(
+      '.collection-table__row',
+    );
+    // Only the UNKNOWN-condition row should remain.
+    expect(rows.length).toBe(1);
+  });
+
+  it('C2: page-size 25 caps DOM rows at 25 with many holdings', async () => {
+    const repo = createHoldingsRepo(db);
+    // 30 holdings of the same card (different conditions cycled).
+    const conds = ['NM', 'LP', 'MP', 'HP', 'DMG'] as const;
+    for (let i = 0; i < 30; i += 1) {
+      await repo.create({
+        ...baseHolding,
+        rawCondition: conds[i % conds.length]!,
+      });
+    }
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountCollectionView(root);
+    await settle();
+
+    const pageSize = root.querySelector<HTMLSelectElement>(
+      '[data-region="page-size"]',
+    );
+    expect(pageSize).not.toBeNull();
+    pageSize!.value = '25';
+    pageSize!.dispatchEvent(new Event('change'));
+    await settle();
+
+    const rows = root.querySelectorAll<HTMLTableRowElement>(
+      '.collection-table__row',
+    );
+    expect(rows.length).toBe(25);
+
+    const summary = root.querySelector('[data-region="page-summary"]');
+    expect(summary?.textContent ?? '').toMatch(/Side 1 av 2/);
+
+    // Next-page advances to the remaining 5 rows.
+    const next = root.querySelector<HTMLButtonElement>(
+      '[data-action="next-page"]',
+    );
+    next?.click();
+    await settle();
+    expect(
+      root.querySelectorAll<HTMLTableRowElement>('.collection-table__row')
+        .length,
+    ).toBe(5);
+  });
 });

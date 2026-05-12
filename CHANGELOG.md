@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (Phase-2 Plan C2 — collection-view filter/sort/pagination tests)
+
+5 new test cases in [tests/collection-view.test.ts](tests/collection-view.test.ts) pinning toolbar control wiring so a future refactor cannot silently drop a filter or pagination control:
+
+- `C2: raw-condition filter narrows visible rows` — seeds 3 holdings with NM/LP/MP and asserts only the NM row remains after the select-change event.
+- `C2: search input narrows rows after debounce (case-insensitive)` — two cards (Charizard + Pikachu); search "PIKA" → only Pikachu row remains.
+- `C2: set-filter narrows rows by setId` — two sets (base1 + jungle), one holding each; selecting "jungle" leaves only the jungle holding visible.
+- `C2: missing-condition checkbox filters holdings without raw condition` — one NM + one UNKNOWN; checkbox filters down to the UNKNOWN row.
+- `C2: page-size 25 caps DOM rows at 25 with many holdings` — 30 holdings, page-size 25 → page 1 has 25 rows + "Side 1 av 2" summary; next-page yields the remaining 5 rows.
+
+**Test-only change.** No production code touched. Brings collection-view from 6 → 11 tests, matching the coverage density of `binder-detail` (7) and `settings` (7). Existing 6 tests unchanged.
+
+**Verification:** typecheck clean, 1399 tests pass (was 1394, +5), build green (CSS 73.17 KB / JS 483.59 KB — unchanged), audit clean.
+
 ### Added (PR B1 — Lot bulk-import via paste/CSV) — operator requirement #7
 
 Adds a "Importer mange" button to lot-detail that opens a two-step
