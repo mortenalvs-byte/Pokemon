@@ -221,4 +221,89 @@ describe('Binders list view', () => {
     // No "Permtype" stat should be emitted for a null preset.
     expect(cards[0]?.textContent ?? '').not.toContain('Permtype');
   });
+
+  // C6 — Phase-2 Plan C: binders list-view row action wiring.
+  // Existing 5 tests cover empty/render/Ny-perm/read-only/null-preset.
+  // C6 pins the per-row open + soft-delete buttons that the existing
+  // tests didn't exercise.
+
+  it('C6: clicking the binder title opens the binder detail (#binder/<id>)', async () => {
+    const { binder } = await createBinderService(db).createManualBinder({
+      name: 'Open me',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 9,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: null,
+    });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountBindersView(root);
+    await settle();
+
+    const openBtn = root.querySelector<HTMLButtonElement>(
+      '[data-action="open"]',
+    );
+    expect(openBtn).not.toBeNull();
+    openBtn!.click();
+    expect(window.location.hash).toBe(
+      `#binder/${encodeURIComponent(binder.id)}`,
+    );
+  });
+
+  it('C6: row Slett button confirms, soft-deletes the binder, and removes the card', async () => {
+    const { binder } = await createBinderService(db).createManualBinder({
+      name: 'Delete me',
+      description: null,
+      binderType: null,
+      totalPages: 1,
+      slotsPerPage: 9,
+      binderPreset: null,
+      completionMode: 'standard',
+      sourceSetId: null,
+    });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountBindersView(root);
+    await settle();
+    expect(root.querySelectorAll('.binder-card').length).toBe(1);
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const deleteBtn = root.querySelector<HTMLButtonElement>(
+      '[data-action="soft-delete"]',
+    );
+    expect(deleteBtn).not.toBeNull();
+    deleteBtn!.click();
+
+    await vi.waitFor(async () => {
+      expect(root.querySelectorAll('.binder-card').length).toBe(0);
+    });
+
+    const stored = await db.binders.get(binder.id);
+    expect(stored?.deletedAt).not.toBeNull();
+    confirmSpy.mockRestore();
+  });
+
+  it('C6: "Ny perm fra sett" button is present alongside "Ny perm"', async () => {
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountBindersView(root);
+    await settle();
+
+    const newBinder = root.querySelector<HTMLButtonElement>(
+      '[data-action="new-binder"]',
+    );
+    const newFromSet = root.querySelector<HTMLButtonElement>(
+      '[data-action="new-from-set"]',
+    );
+    expect(newBinder).not.toBeNull();
+    expect(newFromSet).not.toBeNull();
+    // Both buttons render their visible label.
+    expect(newBinder!.textContent?.trim().length).toBeGreaterThan(0);
+    expect(newFromSet!.textContent?.trim().length).toBeGreaterThan(0);
+  });
 });

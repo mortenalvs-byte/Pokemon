@@ -116,4 +116,65 @@ describe('Lots list view', () => {
     expect(await db.lots.toArray()).toEqual(beforeLots);
     expect(await db.auditLog.toArray()).toEqual(beforeAudits);
   });
+
+  // C6 — Phase-2 Plan C: lots list-view row action wiring.
+  // Existing 4 tests cover empty/render/Ny-lot/read-only. C6 pins the
+  // per-row open + soft-delete buttons.
+
+  it('C6: clicking the lot name opens the lot detail (#lot/<id>)', async () => {
+    const lot = await createLotsRepo(db).create({
+      name: 'Open me',
+      purchaseDate: '2026-05-12T00:00:00.000Z',
+      totalCost: 50,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountLotsView(root);
+    await settle();
+
+    const openBtn = root.querySelector<HTMLButtonElement>(
+      '[data-action="open"]',
+    );
+    expect(openBtn).not.toBeNull();
+    openBtn!.click();
+    expect(window.location.hash).toBe(
+      `#lot/${encodeURIComponent(lot.id)}`,
+    );
+  });
+
+  it('C6: row Slett button confirms, soft-deletes the lot, and removes the row', async () => {
+    const lot = await createLotsRepo(db).create({
+      name: 'Delete me',
+      purchaseDate: '2026-05-12T00:00:00.000Z',
+      totalCost: 50,
+      currency: 'NOK',
+      allocationMethod: 'equal',
+      notes: null,
+    });
+
+    const root = document.getElementById('content');
+    if (!root) throw new Error('test bootstrap failed');
+    mountLotsView(root);
+    await settle();
+    expect(root.querySelectorAll('.lots-table__row').length).toBe(1);
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const delBtn = root.querySelector<HTMLButtonElement>(
+      '[data-action="soft-delete"]',
+    );
+    expect(delBtn).not.toBeNull();
+    delBtn!.click();
+
+    await vi.waitFor(async () => {
+      expect(root.querySelectorAll('.lots-table__row').length).toBe(0);
+    });
+
+    const stored = await db.lots.get(lot.id);
+    expect(stored?.deletedAt).not.toBeNull();
+    confirmSpy.mockRestore();
+  });
 });

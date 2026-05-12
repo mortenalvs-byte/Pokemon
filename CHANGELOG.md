@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (Phase-2 Plan C6 — binders + lots list-view row action tests)
+
+5 new test cases across two files pinning the per-row action wiring on the list views that the existing tests didn't exercise.
+
+**[tests/binders-view.test.ts](tests/binders-view.test.ts) — 5 → 8 tests:**
+- `C6: clicking the binder title opens the binder detail (#binder/<id>)`
+- `C6: row Slett button confirms, soft-deletes the binder, and removes the card`
+- `C6: "Ny perm fra sett" button is present alongside "Ny perm"`
+
+**[tests/lots-view.test.ts](tests/lots-view.test.ts) — 4 → 6 tests:**
+- `C6: clicking the lot name opens the lot detail (#lot/<id>)`
+- `C6: row Slett button confirms, soft-deletes the lot, and removes the row`
+
+**Test-only change.** No production code touched. Brings both views from "thin" to "OK" coverage per the Phase-2 audit baseline ranking. Existing 9 tests across the two files unchanged.
+
+**Verification:** typecheck clean, 1399 tests pass (was 1394 on `origin/main`, +5), build green (CSS 73.17 KB / JS 483.59 KB — unchanged), audit clean.
+
 ### Added (PR B1 — Lot bulk-import via paste/CSV) — operator requirement #7
 
 Adds a "Importer mange" button to lot-detail that opens a two-step
