@@ -310,9 +310,32 @@ export const APP_META_KEYS = {
   // Not a schema migration: adding a documented reserved key does
   // not change the IndexedDB index spec for the appMeta store.
   lastSyncSource: 'lastSyncSource',
+  // Phase-2 Plan B — orphan-card safety net. After each successful
+  // sync, the orchestrator scans user-data references for cardIds
+  // that disappeared from upstream and stores a summary here so the
+  // dashboard can surface the situation to the operator. Value shape:
+  // `SyncOrphansSnapshot` (see below). Absent / `null` = no detection
+  // has run yet OR the last sync had no orphans.
+  lastSyncOrphans: 'lastSyncOrphans',
 } as const;
 
 export type AppMetaKey = (typeof APP_META_KEYS)[keyof typeof APP_META_KEYS];
+
+/**
+ * Phase-2 Plan B — snapshot of orphan cardId references detected after
+ * a successful sync. Stored under `appMeta.lastSyncOrphans`. The
+ * operator-facing dashboard chip reads this; the orphan ids themselves
+ * remain in the user-data stores untouched (the sync orchestrator
+ * NEVER writes user-owned data per the existing sync contract).
+ */
+export interface SyncOrphansSnapshot {
+  /** When the orphan scan ran (typically right after the cache rewrite). */
+  readonly detectedAt: IsoTimestamp;
+  /** Total distinct orphan cardIds across all live user-data stores. */
+  readonly count: number;
+  /** First 10 orphan cardIds (sorted alphabetically) for quick display. */
+  readonly sampleIds: readonly string[];
+}
 
 export type SyncStatus = 'ok' | 'failed';
 

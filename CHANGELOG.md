@@ -8,6 +8,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (Phase-2 Plan B — sync orphan-card safety net)
+
+Closes the gap surfaced in the Phase-2 audit: when an upstream card disappears between syncs (rare but real — Pokemon TCG API occasionally retires invalid entries), existing user-data references (holdings, wishlist, lot items, binder-slot `targetCardId`) become orphans. The sync orchestrator now detects this and writes a summary so the dashboard can surface it.
+
+**Why it matters:** [src/db/sync.ts](src/db/sync.ts) has always correctly isolated user-owned stores (it only writes `sets` / `cards` / `appMeta` / `auditLog`), so an orphan card never *corrupts* user data. But the operator had no signal that orphans existed; they would only surface as "Ukjent kort" placeholders the next time a row tried to render. Plan B closes that loop without weakening the user-data sanctity contract.
+
+**Service-layer change** [src/db/sync.ts](src/db/sync.ts):
+- After the cache-rewrite transaction commits, a new `runOrphanDetection(db, freshCards, detectedAt)` helper scans `holdings.cardId`, `wishlist.cardId`, `lotItems.cardId`, and `binderSlots.targetCardId` (live rows only — `deletedAt === null`) for references missing from the fresh card set.
+- Result is deduped, sorted alphabetically, capped at 10 sample IDs, and written to `appMeta.lastSyncOrphans` as a `SyncOrphansSnapshot`.
+- When `count > 0`, one `sync_orphans_detected` audit row is appended with the count + first-10 IDs.
+- **Best-effort**: a failure in `runOrphanDetection` never fails the sync as a whole, because the cache rewrite already committed and user-data stores remain untouched.
+- User-data stores are READ-ONLY in this scan — the orphan rows themselves stay in place so the operator decides what to do (keep, move to a lot, soft-delete).
+
+**Type-layer additions** [src/domain/types.ts](src/domain/types.ts):
+- New `APP_META_KEYS.lastSyncOrphans` reserved key (additive; no schema bump, schemaVersion stays at 2).
+- New exported `SyncOrphansSnapshot` interface (`{ detectedAt, count, sampleIds }`).
+
+**Tests** [tests/sync-orphan-detection.test.ts](tests/sync-orphan-detection.test.ts) — 5 new cases:
+- `B: writes empty snapshot when no user data references missing cards` — happy path: count = 0, no audit row.
+- `B: detects orphans across holdings + wishlist + lotItems + binderSlots` — seeds one reference in each of the four stores pointing at a soon-to-be-dropped card; asserts count = 1 (deduped), audit row appended, all four user-data stores' row counts unchanged.
+- `B: sampleIds is capped at 10 + sorted alphabetically` — 15 orphans → sampleIds has 10, sorted.
+- `B: ignores soft-deleted user-data rows when detecting orphans` — soft-deleted holding's cardId is NOT counted even when its card goes missing.
+- `B: a failing sync leaves no orphan snapshot (best-effort runs only on success path)` — orphan detection is gated on the sync committing successfully.
+
+**Verification:** typecheck clean, 1399 tests pass (was 1394 on `origin/main`, +5), build green (CSS 73.17 KB / JS 484.52 KB; +0.93 KB delta for the new helper — well under any sensible budget), audit clean. PR 24 binder-detail-action-audit + backup roundtrip + restore tests stay green (no user-data semantic changes).
+
 ### Added (PR B1 — Lot bulk-import via paste/CSV) — operator requirement #7
 
 Adds a "Importer mange" button to lot-detail that opens a two-step

@@ -33,6 +33,7 @@ import {
   type AppMetaRecord,
   type CardRecord,
   type SetRecord,
+  type SyncOrphansSnapshot,
 } from '../domain/types';
 import type { PokemonTrackerDB } from './database';
 
@@ -175,12 +176,102 @@ export async function syncCardDatabase(
   invalidateCardCache(db);
   invalidateSetCache(db);
 
+  // Phase-2 Plan B — orphan-card safety net. After the cache rewrite
+  // commits, scan user-data stores for cardId references that point to
+  // cards that no longer exist upstream (rare but real: cards retired
+  // from the Pokemon TCG API between syncs). The scan is BEST-EFFORT:
+  // failures here never fail the sync as a whole, because the cache
+  // rewrite already committed and the user-data stores were not
+  // touched. Result is summarised in `appMeta.lastSyncOrphans` for the
+  // dashboard to surface; the orphan rows themselves remain untouched
+  // (sync NEVER writes user-owned data per the existing contract).
+  try {
+    await runOrphanDetection(db, allCards, committedAt);
+  } catch { /* best-effort */ }
+
   return {
     ok: true,
     setsCount: allSets.length,
     cardsCount: allCards.length,
     durationMs: Date.now() - startedAt,
   };
+}
+
+/**
+ * Phase-2 Plan B — Scan every user-data store with a direct `cardId`
+ * column for references missing from the freshly-synced `cards` set.
+ * Writes `appMeta.lastSyncOrphans` + (when count > 0) one audit row.
+ *
+ * READ-ONLY on user-data. The orphan rows stay in their respective
+ * stores so the operator can decide what to do (keep, move to a lot,
+ * soft-delete).
+ *
+ * Stores covered:
+ *   - holdings.cardId
+ *   - wishlist.cardId
+ *   - lotItems.cardId
+ *   - binderSlots.targetCardId (non-null only)
+ *
+ * The `binderSlots.holdingId` chain is covered indirectly via the
+ * holdings scan: a slot's holding has its own `cardId` and that's the
+ * one that becomes orphan.
+ */
+async function runOrphanDetection(
+  db: PokemonTrackerDB,
+  freshCards: readonly CardRecord[],
+  detectedAt: string,
+): Promise<void> {
+  const freshIds = new Set<string>();
+  for (const c of freshCards) freshIds.add(c.id);
+
+  const orphanIds = new Set<string>();
+  const consider = (id: string | null | undefined): void => {
+    if (typeof id === 'string' && id.length > 0 && !freshIds.has(id)) {
+      orphanIds.add(id);
+    }
+  };
+
+  // Live rows only — soft-deleted user data shouldn't drive the
+  // dashboard signal, and the operator already chose to discard them.
+  const [holdings, wishlist, lotItems, binderSlots] = await Promise.all([
+    db.holdings.toArray(),
+    db.wishlist.toArray(),
+    db.lotItems.toArray(),
+    db.binderSlots.toArray(),
+  ]);
+  for (const h of holdings) if (h.deletedAt === null) consider(h.cardId);
+  for (const w of wishlist) if (w.deletedAt === null) consider(w.cardId);
+  for (const li of lotItems) if (li.deletedAt === null) consider(li.cardId);
+  for (const s of binderSlots) if (s.deletedAt === null) consider(s.targetCardId);
+
+  const sorted = Array.from(orphanIds).sort();
+  const snapshot: SyncOrphansSnapshot = {
+    detectedAt,
+    count: sorted.length,
+    sampleIds: sorted.slice(0, 10),
+  };
+
+  await db.transaction('rw', [db.appMeta, db.auditLog], async () => {
+    await putAppMeta(
+      db,
+      APP_META_KEYS.lastSyncOrphans,
+      snapshot,
+      detectedAt,
+    );
+    if (sorted.length > 0) {
+      const head = sorted.slice(0, 10).join(', ');
+      await db.auditLog.add({
+        id: newId(),
+        action: 'sync_orphans_detected',
+        entityType: 'system',
+        entityId: null,
+        message:
+          `${sorted.length} orphan cardId(s) after sync — first 10: ${head}` +
+          (sorted.length > 10 ? ' …' : ''),
+        createdAt: detectedAt,
+      });
+    }
+  });
 }
 
 async function recordSyncFailure(
