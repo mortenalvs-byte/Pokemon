@@ -132,9 +132,46 @@ describe('buildMasterSetPlan', () => {
     expect(sectionB.endSlot).toBe(9);
 
     expect(binder.usedSlotCount).toBe(45);
-    // 1088 - (cursor at 3*16 + 9 = 57). Empty trailing slots on pages 2
-    // (12) and 4..68 (≈) are all "unused".
-    expect(binder.unusedSlotCount).toBe(1088 - 57);
+    // unusedSlotCount is the FULL empty count: every position in the
+    // 1088-grid not occupied by a target slot, including the 12-slot
+    // gap on page 2 between section A's end and section B's start.
+    // 1088 - 45 = 1043.
+    expect(binder.unusedSlotCount).toBe(1088 - 45);
+    expect(binder.usedSlotCount + binder.unusedSlotCount).toBe(binder.capacity);
+  });
+
+  it('unusedSlotCount counts mid-page gaps between sections, not only trailing empties', () => {
+    // Three sets sized to force two mid-page gaps:
+    // Set A: 20 slots → ends at page 2, slot 4. Gap on page 2 slots 5–16 (12 slots).
+    // Set B: 25 slots → starts page 3 slot 1, ends page 4 slot 9. Gap on page 4 slots 10–16 (7 slots).
+    // Set C: 17 slots → starts page 5 slot 1, ends page 6 slot 1. Trailing empties: rest.
+    // Total used = 62. Total empty = 1088 - 62 = 1026.
+    // If unusedSlotCount missed the two mid-page gaps it would report 1026 - 12 - 7 = 1007.
+    const sets = [
+      makeSet('a', { releaseDate: '2020-01-01' }),
+      makeSet('b', { releaseDate: '2020-02-01' }),
+      makeSet('c', { releaseDate: '2020-03-01' }),
+    ];
+    const cards = mapBySet(
+      ['a', makeCards('a', 20)],
+      ['b', makeCards('b', 25)],
+      ['c', makeCards('c', 17)],
+    );
+    const plan = buildMasterSetPlan({ sets, cardsBySetId: cards });
+    expect(plan.binders).toHaveLength(1);
+    const binder = plan.binders[0];
+    if (binder === undefined) return;
+    expect(binder.usedSlotCount).toBe(62);
+    expect(binder.unusedSlotCount).toBe(1088 - 62);
+    expect(binder.usedSlotCount + binder.unusedSlotCount).toBe(binder.capacity);
+    // The two named mid-page gaps are real and counted.
+    const sectionA = binder.sections[0];
+    const sectionB = binder.sections[1];
+    if (sectionA === undefined || sectionB === undefined) return;
+    expect(sectionA.endPage).toBe(2);
+    expect(sectionA.endSlot).toBe(4);
+    expect(sectionB.startPage).toBe(3);
+    expect(sectionB.startSlot).toBe(1);
   });
 
   it('opens a new binder when the next set will not fit in the current one', () => {

@@ -96,7 +96,12 @@ export interface MasterSetBinderPlan {
   readonly sections: readonly MasterSetSectionPlan[];
   /** Slots actually occupied by target cards (no empties). */
   readonly usedSlotCount: number;
-  /** Slots that will be empty in the physical binder. */
+  /**
+   * Every empty slot in the 1088-grid, including mid-page gaps left
+   * by the page-boundary rule between sections — not just trailing
+   * empties after the last section. Always equals
+   * `capacity - usedSlotCount`.
+   */
   readonly unusedSlotCount: number;
 }
 
@@ -218,7 +223,7 @@ function packSectionsIntoBinders(
 
   const openNewBinder = (): void => {
     if (currentBinderSections.length > 0) {
-      binders.push(finishBinder(binders.length + 1, currentBinderSections, currentCursor));
+      binders.push(finishBinder(binders.length + 1, currentBinderSections));
     }
     currentBinderSections = [];
     currentCursor = 0;
@@ -293,7 +298,7 @@ function packSectionsIntoBinders(
 
   if (currentBinderSections.length > 0) {
     binders.push(
-      finishBinder(binders.length + 1, currentBinderSections, currentCursor),
+      finishBinder(binders.length + 1, currentBinderSections),
     );
   }
 
@@ -353,8 +358,11 @@ function buildSection(
 function finishBinder(
   binderIndex: number,
   sections: readonly MasterSetSectionPlan[],
-  cursorAtClose: number,
 ): MasterSetBinderPlan {
+  // `usedSlotCount` counts every section's target slots; the rest of
+  // the 1088-grid is physically empty in the binder we will write —
+  // including the mid-page gaps the page-boundary rule leaves between
+  // sections. The earlier cursor-based count missed those gaps.
   const usedSlotCount = sections.reduce((s, sec) => s + sec.totalSlotCount, 0);
   return {
     binderIndex,
@@ -364,6 +372,6 @@ function finishBinder(
     totalPages: TOTAL_PAGES,
     sections,
     usedSlotCount,
-    unusedSlotCount: CAPACITY - cursorAtClose,
+    unusedSlotCount: CAPACITY - usedSlotCount,
   };
 }
