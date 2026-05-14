@@ -7,6 +7,7 @@
 
 import { openDialog } from '../components/dialog';
 import { USER_DATA_CHANGED_EVENT, onUserDataChanged } from '../components/events';
+import { buildBulkAddHoldingsDialog } from '../components/bulk-add-holdings-dialog';
 import { buildHoldingForm } from '../components/holding-form';
 import { getDb } from '../db/database';
 import { formatTags } from '../domain/tags';
@@ -75,7 +76,12 @@ export function mountCollectionView(
 ): void {
   container.innerHTML = `
     <section class="collection-view" aria-labelledby="collection-heading">
-      <h1 id="collection-heading">Min samling</h1>
+      <header class="collection-view__header">
+        <h1 id="collection-heading">Min samling</h1>
+        <button type="button" class="collection-view__bulk-add" data-action="bulk-add-holdings">
+          Bulk-importer kort
+        </button>
+      </header>
       <p class="collection-view__counts" data-region="counts"></p>
       <div class="collection-view__toolbar" data-region="toolbar">
         <label class="browse-view__field">
@@ -170,6 +176,13 @@ export function mountCollectionView(
 
   const refs = collectRefs(container);
   if (refs === null) return;
+
+  const bulkAddBtn = container.querySelector<HTMLButtonElement>(
+    '[data-action="bulk-add-holdings"]',
+  );
+  bulkAddBtn?.addEventListener('click', () => {
+    void openDialog(buildBulkAddHoldingsDialog());
+  });
 
   populateRawConditionOptions(refs.rawConditionFilter);
   populateStatusOptions(refs.statusFilter);
