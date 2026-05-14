@@ -16,11 +16,18 @@ import { buildLotBulkImportDialog } from '../components/lot-bulk-import-dialog';
 import { openWishlistReceivePrompt } from '../components/wishlist-receive-prompt';
 import { getDb } from '../db/database';
 import { getCurrentLotId, navigate, navigateToCard } from '../router';
+import { createBindersRepo } from '../repositories/binders-repo';
+import { createBinderSlotsRepo } from '../repositories/binder-slots-repo';
 import { createCardsRepo } from '../repositories/cards-repo';
 import { createHoldingsRepo } from '../repositories/holdings-repo';
 import { createLotItemsRepo } from '../repositories/lot-items-repo';
 import { createLotsRepo } from '../repositories/lots-repo';
 import { createWishlistRepo } from '../repositories/wishlist-repo';
+import { appendAudit } from '../db/audit';
+import {
+  assignHoldingToSlot,
+  SlotAssignmentError,
+} from '../services/binder-assignment-service';
 import { findReceiveCandidatesForHoldings } from '../services/wishlist-receive-service';
 import {
   createLotDetailService,
@@ -550,6 +557,24 @@ function buildItemRow(
     });
     actions.appendChild(addOne);
 
+    // "Plasser i perm" — materialise + auto-place into the first
+    // matching empty binder slot. Skips the manual binder visit when
+    // a target slot is waiting for this card.
+    const placeBtn = document.createElement('button');
+    placeBtn.type = 'button';
+    placeBtn.className = 'lot-items-table__action lot-items-table__action--primary';
+    placeBtn.dataset['action'] = 'materialize-and-place';
+    placeBtn.textContent = 'Plasser i perm';
+    if (item.allocatedCost === null) {
+      placeBtn.disabled = true;
+      placeBtn.title =
+        'Mangler allokert kostnad. Trykk "Beregn allokering på nytt" først.';
+    }
+    placeBtn.addEventListener('click', () => {
+      void handleMaterializeAndPlace(detail, item);
+    });
+    actions.appendChild(placeBtn);
+
     const edit = document.createElement('button');
     edit.type = 'button';
     edit.className = 'lot-items-table__action';
@@ -827,6 +852,99 @@ async function runReceivePromptForLotMaterialize(
   } catch {
     // Non-fatal: holdings are already in the collection.
   }
+}
+
+async function handleMaterializeAndPlace(
+  detail: LotDetail,
+  item: LotItemRecord,
+): Promise<void> {
+  if (item.allocatedCost === null) return;
+  const db = getDb();
+  let createdHolding: HoldingRecord | null = null;
+  try {
+    const result = await createLotService(db).materializeHoldings(
+      detail.lot.id,
+      { itemIds: [item.id] },
+    );
+    if (result.noop || result.created.length === 0) {
+      window.alert('Itemet kunne ikke materialiseres.');
+      return;
+    }
+    createdHolding = result.created[0] ?? null;
+  } catch (caught) {
+    window.alert(
+      `Materialisering feilet: ${caught instanceof Error ? caught.message : 'ukjent feil'}`,
+    );
+    return;
+  }
+  if (createdHolding === null) return;
+
+  const slotsRepo = createBinderSlotsRepo(db);
+  const bindersRepo = createBindersRepo(db);
+  const allLiveSlots = await slotsRepo.listLive();
+  const candidates = allLiveSlots.filter(
+    (s) =>
+      s.targetCardId === createdHolding!.cardId &&
+      s.holdingId === null &&
+      s.deletedAt === null,
+  );
+  candidates.sort((a, b) => {
+    if (a.binderId !== b.binderId) return a.binderId.localeCompare(b.binderId);
+    if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+    return a.slotNumber - b.slotNumber;
+  });
+
+  window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
+
+  if (candidates.length === 0) {
+    window.alert(
+      `Lagt til i samling. Ingen ledige perm-slots venter på dette kortet.`,
+    );
+    return;
+  }
+
+  const slot = candidates[0];
+  if (slot === undefined) return;
+  const binder = await bindersRepo.get(slot.binderId);
+  if (binder === undefined) {
+    window.alert('Lagt til i samling. Fant ikke perm for plassering.');
+    return;
+  }
+
+  try {
+    await assignHoldingToSlot(
+      {
+        bindersRepo,
+        binderSlotsRepo: slotsRepo,
+        holdingsRepo: createHoldingsRepo(db),
+        cardsRepo: createCardsRepo(db),
+        appendAudit: (entry) => appendAudit(db, entry),
+      },
+      slot,
+      createdHolding,
+      binder.slotsPerPage,
+    );
+  } catch (caught) {
+    const msg =
+      caught instanceof SlotAssignmentError
+        ? caught.message
+        : caught instanceof Error
+          ? caught.message
+          : 'ukjent feil';
+    window.alert(
+      `Lagt til i samling. Auto-plassering feilet: ${msg}`,
+    );
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
+  const tail =
+    candidates.length > 1
+      ? ` (${candidates.length - 1} andre ledige slot${candidates.length - 1 === 1 ? '' : 's'} for dette kortet)`
+      : '';
+  window.alert(
+    `Lagt til i samling og plassert i "${binder.name}" side ${slot.pageNumber}.${slot.slotNumber}.${tail}`,
+  );
 }
 
 async function handleSoftDeleteItem(item: LotItemRecord): Promise<void> {
