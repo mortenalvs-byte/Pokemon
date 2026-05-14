@@ -151,11 +151,24 @@ async function doApply(
   window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
 
   if (result.failed.length > 0) {
+    const partialWrite = result.created.length > 0 || result.merged.length > 0;
     errorRegion.textContent =
       `${result.created.length} opprettet, ${result.merged.length} merget, ` +
       `${result.failed.length} feilet. Første feil: linje ${result.failed[0]?.line} ` +
-      `(${result.failed[0]?.cardId}): ${result.failed[0]?.error}`;
-    restoreControls();
+      `(${result.failed[0]?.cardId}): ${result.failed[0]?.error}.` +
+      (partialWrite
+        ? ` Lukk dialogen og åpne på nytt for å fortsette — replay vil duplisere kvantitet på de ${result.created.length + result.merged.length} kortene som allerede er skrevet.`
+        : '');
+    if (partialWrite) {
+      // CodeRabbit finding: replay via the same `summary` would re-run
+      // upsertByVariant on rows we already wrote, doubling their
+      // quantity (the parser produces additive imports, not idempotent
+      // sets). Lock submit + back; cancel remains so the user can
+      // dismiss the dialog. They must reopen with adjusted input.
+      cancel.disabled = false;
+    } else {
+      restoreControls();
+    }
     return;
   }
 
