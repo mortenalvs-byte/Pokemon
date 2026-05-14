@@ -237,7 +237,7 @@ export function mountBrowseView(
   );
 
   void boot(refs, service, state);
-  attachEventListeners(refs, service, state);
+  attachEventListeners(refs, service, state, signal);
   // PR 15A — F-3: the router aborts `signal` on next route change, so
   // the listener is dropped automatically. The `isConnected` guard
   // remains as a belt-and-braces check for tests that don't pass a
@@ -820,8 +820,13 @@ function attachEventListeners(
   refs: ViewRefs,
   service: BrowseService,
   state: BrowseState,
+  signal?: AbortSignal,
 ): void {
   let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Clear pending search-debounce when the router unmounts the view.
+  signal?.addEventListener('abort', () => {
+    if (searchTimeout !== null) clearTimeout(searchTimeout);
+  });
 
   refs.searchInput.addEventListener('input', () => {
     if (searchTimeout !== null) {

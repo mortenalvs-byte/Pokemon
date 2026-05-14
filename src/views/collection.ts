@@ -211,7 +211,7 @@ export function mountCollectionView(
   );
 
   void initialize(refs, service, state, signal);
-  attachEventListeners(refs, service, state);
+  attachEventListeners(refs, service, state, signal);
 }
 
 interface ViewRefs {
@@ -571,8 +571,13 @@ function attachEventListeners(
   refs: ViewRefs,
   service: CollectionService,
   state: CollectionState,
+  signal?: AbortSignal,
 ): void {
   let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Clear pending search-debounce when the router unmounts the view.
+  signal?.addEventListener('abort', () => {
+    if (searchTimeout !== null) clearTimeout(searchTimeout);
+  });
 
   refs.searchInput.addEventListener('input', () => {
     if (searchTimeout !== null) clearTimeout(searchTimeout);

@@ -176,7 +176,7 @@ export function mountWishlistView(
   );
 
   void initialize(refs, service, state, signal);
-  attachEventListeners(refs, service, state);
+  attachEventListeners(refs, service, state, signal);
 }
 
 interface ViewRefs {
@@ -478,8 +478,16 @@ function attachEventListeners(
   refs: ViewRefs,
   service: WishlistService,
   state: WishlistState,
+  signal?: AbortSignal,
 ): void {
   let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Repo-wide audit fix: clear the pending search-debounce when the
+  // router unmounts the view. Without this, the queued setTimeout
+  // fires after the view's DOM is gone and the state object is stale,
+  // accumulating one orphan timer per navigation.
+  signal?.addEventListener('abort', () => {
+    if (searchTimeout !== null) clearTimeout(searchTimeout);
+  });
 
   refs.searchInput.addEventListener('input', () => {
     if (searchTimeout !== null) clearTimeout(searchTimeout);
