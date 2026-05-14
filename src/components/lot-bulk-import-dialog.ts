@@ -48,6 +48,12 @@ function mount(
 ): void {
   // State lives in closures; the dialog is short-lived.
   let summary: ParseSummary | null = null;
+  // In-flight guard for the parse stage. Without it, rapid repeat-
+  // submits used to launch overlapping doParse runs (the submit
+  // button isn't disabled during parse — only during the second-
+  // stage doImport, which manages its own disable). Class fix
+  // mirrored from bulk-add-holdings-dialog.
+  let parsing = false;
 
   host.appendChild(buildSkeleton());
   const form = host.querySelector<HTMLFormElement>('form.lot-bulk-import-form');
@@ -63,9 +69,13 @@ function mount(
     event.preventDefault();
     // Two-stage submit: first stage = parse + preview; second = import.
     if (summary === null) {
+      if (parsing) return;
+      parsing = true;
       void doParse(form, options.lotId, (s) => {
         summary = s;
         renderSummaryStep(form, s);
+      }).finally(() => {
+        parsing = false;
       });
     } else {
       void doImport(form, host, summary);

@@ -23,6 +23,9 @@ export function buildBulkAddHoldingsDialog(): DialogContent {
 
 function mount(host: HTMLElement, close: () => void): void {
   let summary: BulkAddHoldingsParseSummary | null = null;
+  // In-flight guard for the parse stage. Apply doesn't need its own
+  // flag because doApply disables submit/cancel/back as its first step.
+  let parsing = false;
 
   host.appendChild(buildSkeleton());
   const form = host.querySelector<HTMLFormElement>('form.bulk-add-form');
@@ -64,9 +67,17 @@ function mount(host: HTMLElement, close: () => void): void {
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     if (summary === null) {
+      // Rapid repeat-submits used to launch overlapping doParse runs
+      // because doParse is async and the submit button isn't disabled
+      // during the parse stage. The flag is reset in .finally() so
+      // both the success path and any rejection clear it.
+      if (parsing) return;
+      parsing = true;
       void doParse(form, (s) => {
         summary = s;
         renderSummaryStep(form, s);
+      }).finally(() => {
+        parsing = false;
       });
     } else {
       void doApply(form, summary, host, close);
