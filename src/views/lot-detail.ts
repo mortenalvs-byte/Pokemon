@@ -39,6 +39,7 @@ import { createLotService } from '../services/lot-service';
 import { downloadTextFile } from '../utils/download';
 import type {
   AllocationMethod,
+  BinderRecord,
   CardRecord,
   HoldingRecord,
   LotItemRecord,
@@ -881,15 +882,37 @@ async function handleMaterializeAndPlace(
 
   const slotsRepo = createBinderSlotsRepo(db);
   const bindersRepo = createBindersRepo(db);
+
+  // Pre-fetch live binders into a map so we can both sort by binder
+  // creation order (intuitive: "Master 1/36" wins over "Master 36/36")
+  // AND filter out slots whose binder is soft-deleted in one pass.
+  const liveBinders = await bindersRepo.listLive();
+  const liveBinderById = new Map<string, BinderRecord>();
+  for (const b of liveBinders) liveBinderById.set(b.id, b);
+
   const allLiveSlots = await slotsRepo.listLive();
   const candidates = allLiveSlots.filter(
     (s) =>
       s.targetCardId === createdHolding!.cardId &&
       s.holdingId === null &&
-      s.deletedAt === null,
+      s.deletedAt === null &&
+      liveBinderById.has(s.binderId),
   );
   candidates.sort((a, b) => {
-    if (a.binderId !== b.binderId) return a.binderId.localeCompare(b.binderId);
+    if (a.binderId !== b.binderId) {
+      const ba = liveBinderById.get(a.binderId);
+      const bb = liveBinderById.get(b.binderId);
+      const aCreated = ba?.createdAt ?? '';
+      const bCreated = bb?.createdAt ?? '';
+      if (aCreated !== bCreated) return aCreated < bCreated ? -1 : 1;
+      // Same createdAt is rare but possible (batch apply with one
+      // nowIso() per binder is unique by ms; fall back to name then id
+      // for total ordering determinism).
+      const aName = ba?.name ?? '';
+      const bName = bb?.name ?? '';
+      if (aName !== bName) return aName < bName ? -1 : 1;
+      return a.binderId < b.binderId ? -1 : 1;
+    }
     if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
     return a.slotNumber - b.slotNumber;
   });
@@ -900,14 +923,19 @@ async function handleMaterializeAndPlace(
     window.alert(
       `Lagt til i samling. Ingen ledige perm-slots venter på dette kortet.`,
     );
+    // PR D1 fix: the regular materialize-one path runs the wishlist
+    // receive prompt; "Plasser i perm" must do the same so a card on
+    // the wishlist isn't silently left as `wanted` after acquisition.
+    void runReceivePromptForLotMaterialize([createdHolding]);
     return;
   }
 
   const slot = candidates[0];
   if (slot === undefined) return;
-  const binder = await bindersRepo.get(slot.binderId);
+  const binder = liveBinderById.get(slot.binderId);
   if (binder === undefined) {
     window.alert('Lagt til i samling. Fant ikke perm for plassering.');
+    void runReceivePromptForLotMaterialize([createdHolding]);
     return;
   }
 
@@ -934,6 +962,7 @@ async function handleMaterializeAndPlace(
     window.alert(
       `Lagt til i samling. Auto-plassering feilet: ${msg}`,
     );
+    void runReceivePromptForLotMaterialize([createdHolding]);
     return;
   }
 
@@ -945,6 +974,7 @@ async function handleMaterializeAndPlace(
   window.alert(
     `Lagt til i samling og plassert i "${binder.name}" side ${slot.pageNumber}.${slot.slotNumber}.${tail}`,
   );
+  void runReceivePromptForLotMaterialize([createdHolding]);
 }
 
 async function handleSoftDeleteItem(item: LotItemRecord): Promise<void> {
