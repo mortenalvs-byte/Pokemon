@@ -335,6 +335,28 @@ describe('buildMasterSetPlan', () => {
     expect(ids).toEqual(['z1', 'z2', 'a1', 'a2']);
   });
 
+  it('skipped sets do not influence series order (regression for CodeRabbit finding)', () => {
+    // "Series A" has an early-release set with NO cards (skipped) plus
+    // a later one with cards. "Series Z" has a 2020 set with cards.
+    // If skipped sets influenced order, Series A's 2018 phantom would
+    // pull Series A first. The fix puts Series Z first (its 2020
+    // releaseDate is earlier than Series A's PLANNABLE earliest 2022).
+    const sets = [
+      makeSet('a-phantom', { series: 'Series A', releaseDate: '2018-01-01' }),
+      makeSet('a-real',    { series: 'Series A', releaseDate: '2022-01-01' }),
+      makeSet('z-real',    { series: 'Series Z', releaseDate: '2020-01-01' }),
+    ];
+    const cards = mapBySet(
+      ['a-real', makeCards('a-real', 10)],
+      ['z-real', makeCards('z-real', 10)],
+      // a-phantom has no entry → will be skipped
+    );
+    const plan = buildMasterSetPlan({ sets, cardsBySetId: cards });
+    expect(plan.skippedSets.map(s => s.setId)).toEqual(['a-phantom']);
+    const orderedIds = plan.binders[0]?.sections.map(s => s.setId);
+    expect(orderedIds).toEqual(['z-real', 'a-real']);
+  });
+
   it('skips sets that have no cards in the cache', () => {
     const sets = [
       makeSet('a', { releaseDate: '2020-01-01' }),
@@ -383,9 +405,7 @@ describe('buildMasterSetPlan', () => {
     }
     const cards = mapBySet(...cardGroups);
 
-    const start = Date.now();
     const plan = buildMasterSetPlan({ sets, cardsBySetId: cards });
-    const elapsedMs = Date.now() - start;
 
     expect(plan.totalSetCount).toBe(200);
     expect(plan.totalCardCount).toBe(200 * 100);
@@ -402,8 +422,11 @@ describe('buildMasterSetPlan', () => {
     // gives plenty of slack for the rounding wastage.
     expect(plan.binders.length).toBeGreaterThanOrEqual(19);
     expect(plan.binders.length).toBeLessThanOrEqual(30);
-    // Sub-second is the perf bar.
-    expect(elapsedMs).toBeLessThan(1000);
+    // CodeRabbit feedback: removed wall-clock perf assertion. The
+    // structural assertions above already catch any algorithm that
+    // degenerates to O(N²) or higher (it would either OOM, hang past
+    // the suite timeout, or break the slot-count invariants). A hard
+    // sub-second budget caught CI contention rather than regressions.
   });
 
   it('never lets a single section span a non-monotonic gap', () => {

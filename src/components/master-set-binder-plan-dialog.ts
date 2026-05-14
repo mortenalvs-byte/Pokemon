@@ -134,41 +134,57 @@ async function runApply(
   cancelBtn.disabled = true;
   errorRegion.textContent = '';
 
-  const service = createBinderService(getDb());
-  const bindersRepo = createBindersRepo(getDb());
-  const existing = await bindersRepo.listLive();
-  const existingNames = new Set(existing.map((b) => b.name));
+  const restoreControls = (): void => {
+    applyBtn.disabled = false;
+    cancelBtn.disabled = false;
+  };
 
-  // Generate unique names containing each binder's set IDs.
-  const total = plan.binders.length;
-  const names: string[] = [];
-  for (let i = 0; i < total; i += 1) {
-    const binderPlan = plan.binders[i];
-    if (binderPlan === undefined) continue;
-    const base = buildBinderName(binderPlan, i + 1, total);
-    let candidate = base;
-    let suffix = 0;
-    while (existingNames.has(candidate)) {
-      suffix += 1;
-      candidate = `${base} (#${suffix})`;
+  // CodeRabbit feedback: an unhandled rejection here used to leave both
+  // buttons disabled forever. Wrap setup + apply in one catch so any
+  // failure (repo list, service init, the apply loop) restores controls
+  // and surfaces the message.
+  let result: Awaited<ReturnType<typeof applyMasterSetPlan>>;
+  try {
+    const service = createBinderService(getDb());
+    const bindersRepo = createBindersRepo(getDb());
+    const existing = await bindersRepo.listLive();
+    const existingNames = new Set(existing.map((b) => b.name));
+
+    // Generate unique names containing each binder's set IDs.
+    const total = plan.binders.length;
+    const names: string[] = [];
+    for (let i = 0; i < total; i += 1) {
+      const binderPlan = plan.binders[i];
+      if (binderPlan === undefined) continue;
+      const base = buildBinderName(binderPlan, i + 1, total);
+      let candidate = base;
+      let suffix = 0;
+      while (existingNames.has(candidate)) {
+        suffix += 1;
+        candidate = `${base} (#${suffix})`;
+      }
+      existingNames.add(candidate);
+      names.push(candidate);
     }
-    existingNames.add(candidate);
-    names.push(candidate);
-  }
 
-  const result = await applyMasterSetPlan(service, plan, {
-    binderNames: names,
-    onProgress: (e) => {
-      status.textContent = `Oppretter perm ${e.index} av ${e.total}: ${e.binderName}`;
-    },
-  });
+    result = await applyMasterSetPlan(service, plan, {
+      binderNames: names,
+      onProgress: (e) => {
+        status.textContent = `Oppretter perm ${e.index} av ${e.total}: ${e.binderName}`;
+      },
+    });
+  } catch (caught) {
+    errorRegion.textContent =
+      `Oppretting feilet før noen permer ble skrevet: ${caught instanceof Error ? caught.message : 'ukjent feil'}`;
+    restoreControls();
+    return;
+  }
 
   if (result.failedAt !== null) {
     errorRegion.textContent =
       `Stoppet ved perm ${result.failedAt.index} ("${result.failedAt.attemptedName}"): ${result.failedAt.error}. ` +
       `${result.created.length} permer ble opprettet før feilen.`;
-    applyBtn.disabled = false;
-    cancelBtn.disabled = false;
+    restoreControls();
     window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
     return;
   }

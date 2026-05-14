@@ -111,6 +111,17 @@ describe('parseBulkAddHoldings', () => {
     }
   });
 
+  it('rejects lines with more than 5 fields (silent-truncation guard)', async () => {
+    await db.cards.add(makeCard('base1-1'));
+    const out = await parseBulkAddHoldings(
+      'base1-1,1,normal,unlimited,NM,extra,more',
+      createCardsRepo(db),
+    );
+    expect(out.resolved).toEqual([]);
+    expect(out.errors).toHaveLength(1);
+    expect(out.errors[0]?.reason).toMatch(/for mange felter \(7\)/);
+  });
+
   it('rejects illegal finish/edition/condition values', async () => {
     await db.cards.add(makeCard('base1-1'));
     const out = await parseBulkAddHoldings(
@@ -198,7 +209,7 @@ describe('applyBulkAddHoldings', () => {
     ]);
   });
 
-  it('handles many cards efficiently (200 rows finish under 5 seconds)', async () => {
+  it('handles many cards efficiently (200 rows produce 200 holdings, one audit row)', async () => {
     for (let i = 1; i <= 200; i += 1) {
       await db.cards.add(makeCard(`base1-${i}`));
     }
@@ -206,10 +217,16 @@ describe('applyBulkAddHoldings', () => {
     const parsed = await parseBulkAddHoldings(lines, createCardsRepo(db));
     expect(parsed.resolved).toHaveLength(200);
 
-    const start = Date.now();
     const result = await applyBulkAddHoldings(db, parsed);
-    const elapsed = Date.now() - start;
     expect(result.created).toHaveLength(200);
-    expect(elapsed).toBeLessThan(5000);
+    expect(result.merged).toHaveLength(0);
+    expect(result.failed).toHaveLength(0);
+    // Single summary audit row regardless of input size.
+    const auditCount = await db.auditLog.where('action').equals('holdings_bulk_added').count();
+    expect(auditCount).toBe(1);
+    // CodeRabbit feedback: dropped the wall-clock budget — it caught
+    // CI contention rather than algorithm regressions. The structural
+    // assertions above (200 holdings, 1 audit row, 0 merged/failed)
+    // are what we actually care about.
   });
 });

@@ -142,18 +142,34 @@ export function buildMasterSetPlan(
 ): MasterSetPlanResult {
   const includeReverseHolos = input.includeReverseHolos ?? true;
 
-  const orderedSets = orderSetsForPlanning(input.sets);
-
-  const sectionSpecs: SectionSpec[] = [];
+  // CodeRabbit feedback: filter skipped sets BEFORE ordering by series.
+  // Previously, `orderSetsForPlanning(input.sets)` computed series-earliest
+  // releaseDate from EVERY set, including those with no cards in cache.
+  // A skipped early-release set could pull the rest of its series earlier
+  // in the plan and shift binder packing + names — even though that set
+  // never reached `sectionSpecs`. Split into two passes: collect skips
+  // first, then order only the plannable subset.
   const skippedSets: MasterSetSkippedSet[] = [];
-  let totalCardCount = 0;
-
-  for (const set of orderedSets) {
+  const plannable: SetRecord[] = [];
+  for (const set of input.sets) {
     const cards = input.cardsBySetId.get(set.id);
     if (cards === undefined || cards.length === 0) {
       skippedSets.push({ setId: set.id, reason: 'no_cards_in_cache' });
       continue;
     }
+    plannable.push(set);
+  }
+
+  const orderedSets = orderSetsForPlanning(plannable);
+
+  const sectionSpecs: SectionSpec[] = [];
+  let totalCardCount = 0;
+
+  for (const set of orderedSets) {
+    // Re-fetch — `plannable` guaranteed non-empty cards, but typecheck
+    // can't carry that across the boundary.
+    const cards = input.cardsBySetId.get(set.id);
+    if (cards === undefined || cards.length === 0) continue;
     totalCardCount += cards.length;
     const template = generateFromSetSlots(cards, {
       slotsPerPage: SLOTS_PER_PAGE,

@@ -46,10 +46,19 @@ function mount(host: HTMLElement, close: () => void): void {
     ?.addEventListener('change', (event) => {
       const file = (event.target as HTMLInputElement).files?.[0];
       if (file === undefined) return;
-      void file.text().then((content) => {
-        const ta = form.querySelector<HTMLTextAreaElement>('textarea[name="csv"]');
-        if (ta !== null) ta.value = content;
-      });
+      void file.text().then(
+        (content) => {
+          const ta = form.querySelector<HTMLTextAreaElement>('textarea[name="csv"]');
+          if (ta !== null) ta.value = content;
+        },
+        (err) => {
+          const errorRegion = form.querySelector<HTMLElement>('[data-region="form-error"]');
+          if (errorRegion !== null) {
+            errorRegion.textContent =
+              `Kunne ikke lese fil: ${err instanceof Error ? err.message : 'ukjent feil'}`;
+          }
+        },
+      );
     });
 
   form.addEventListener('submit', (event) => {
@@ -77,9 +86,16 @@ async function doParse(
     if (errorRegion !== null) errorRegion.textContent = 'Tom input — lim inn minst én linje.';
     return;
   }
-  const cardsRepo = createCardsRepo(getDb());
-  const summary = await parseBulkAddHoldings(text, cardsRepo);
-  onDone(summary);
+  try {
+    const cardsRepo = createCardsRepo(getDb());
+    const summary = await parseBulkAddHoldings(text, cardsRepo);
+    onDone(summary);
+  } catch (caught) {
+    if (errorRegion !== null) {
+      errorRegion.textContent =
+        `Kunne ikke parse input: ${caught instanceof Error ? caught.message : 'ukjent feil'}`;
+    }
+  }
 }
 
 async function doApply(
@@ -97,12 +113,29 @@ async function doApply(
   if (errorRegion !== null) errorRegion.textContent = '';
   submit.disabled = true; cancel.disabled = true; back.disabled = true;
 
-  const db = getDb();
-  const result = await applyBulkAddHoldings(db, summary, {
-    onProgress: (e) => {
-      status.textContent = `Skriver kort ${e.index} av ${e.total} (${e.action === 'merged' ? 'merger' : 'oppretter'}) …`;
-    },
-  });
+  const restoreControls = (): void => {
+    submit.disabled = false;
+    cancel.disabled = false;
+    back.disabled = false;
+  };
+
+  let result: Awaited<ReturnType<typeof applyBulkAddHoldings>>;
+  try {
+    const db = getDb();
+    result = await applyBulkAddHoldings(db, summary, {
+      onProgress: (e) => {
+        status.textContent = `Skriver kort ${e.index} av ${e.total} (${e.action === 'merged' ? 'merger' : 'oppretter'}) …`;
+      },
+    });
+  } catch (caught) {
+    // CodeRabbit feedback: an unhandled rejection here used to leave
+    // the dialog disabled with no visible error. Restore controls + show
+    // the message so the user can adjust input and retry.
+    errorRegion.textContent =
+      `Bulk-import feilet før noen kort ble skrevet: ${caught instanceof Error ? caught.message : 'ukjent feil'}`;
+    restoreControls();
+    return;
+  }
 
   window.dispatchEvent(new CustomEvent(USER_DATA_CHANGED_EVENT));
 
@@ -111,7 +144,7 @@ async function doApply(
       `${result.created.length} opprettet, ${result.merged.length} merget, ` +
       `${result.failed.length} feilet. Første feil: linje ${result.failed[0]?.line} ` +
       `(${result.failed[0]?.cardId}): ${result.failed[0]?.error}`;
-    submit.disabled = false; cancel.disabled = false; back.disabled = false;
+    restoreControls();
     return;
   }
 

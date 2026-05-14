@@ -120,6 +120,15 @@ export async function parseBulkAddHoldings(
     if (trimmed.startsWith('#')) { skippedComment += 1; continue; }
 
     const parts = trimmed.split(',').map((p) => p.trim());
+    // CodeRabbit feedback: reject 6+ fields explicitly so a malformed
+    // line cannot silently import truncated/wrong data.
+    if (parts.length > 5) {
+      errors.push({
+        line: lineNo, raw,
+        reason: `for mange felter (${parts.length}); forventet maks 5 (cardId,quantity,finish,edition,condition)`,
+      });
+      continue;
+    }
     const cardId = parts[0] ?? '';
     if (cardId.length === 0) {
       errors.push({ line: lineNo, raw, reason: 'tom cardId' });
