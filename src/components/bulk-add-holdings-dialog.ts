@@ -110,7 +110,7 @@ async function doApply(
   const cancel = form.querySelector<HTMLButtonElement>('[data-action="cancel"]');
   const back = form.querySelector<HTMLButtonElement>('[data-action="back"]');
   if (errorRegion === null || status === null || submit === null || cancel === null || back === null) return;
-  if (errorRegion !== null) errorRegion.textContent = '';
+  errorRegion.textContent = '';
   submit.disabled = true; cancel.disabled = true; back.disabled = true;
 
   const restoreControls = (): void => {
