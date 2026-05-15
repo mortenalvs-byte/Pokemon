@@ -71,6 +71,7 @@ The app shell is in place but no database, sync, or features yet. Each navigatio
 - [USER_FLOWS.md](USER_FLOWS.md) — 14 end-to-end user flows
 - [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md) — what "v1 done" means
 - [CHANGELOG.md](CHANGELOG.md) — release log
+- [docs/DESKTOP_APP.md](docs/DESKTOP_APP.md) — Tauri v2 desktop shell: prerequisites, `desktop:dev` / `desktop:build` / `desktop:check`, Windows notes
 
 ## Technical stack
 
