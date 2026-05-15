@@ -5,6 +5,15 @@
 // TS already enforces strict + noUncheckedIndexedAccess +
 // noUnusedLocals + noUnusedParameters via tsconfig.json.
 //
+// Globals are scoped per runtime so `no-undef` keeps full signal —
+// Node-only globals (process, __dirname, Buffer, ...) must not be
+// reachable from browser code, and vice versa. The split:
+//   - `src/**`              : browser globals only (Vite-bundled app)
+//   - `tests/**`            : browser + node + vitest (tests use fs +
+//                             jsdom + vitest's globals)
+//   - root config TS/JS     : node globals (vite.config.ts,
+//                             vitest.config.ts, eslint.config.js)
+//
 // Targeted, justified test overrides only — no blanket disables.
 //
 // Out of scope on purpose:
@@ -35,13 +44,12 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    // Defaults applied to every linted file. Globals are intentionally
+    // empty here; per-runtime overrides below add only what each
+    // surface actually needs so `no-undef` keeps full signal.
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
-      globals: {
-        ...globals.browser,
-        ...globals.node,
-      },
     },
     rules: {
       // TS compiler already enforces noUnusedLocals / noUnusedParameters
@@ -52,10 +60,37 @@ export default tseslint.config(
     },
   },
   {
-    // Vitest globals — matches `"types": ["vitest/globals"]` in tsconfig.
+    // Browser runtime — Vite-bundled app code shipped to the browser.
+    files: ['src/**/*.ts'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+    },
+  },
+  {
+    // Node runtime — root-level config files loaded by tooling.
+    files: [
+      'eslint.config.js',
+      'vite.config.ts',
+      'vitest.config.ts',
+    ],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+  {
+    // Vitest tests run under jsdom + node; they touch both APIs (DOM
+    // mocks AND fs/path/crypto in fixtures), and vitest exposes
+    // describe/it/expect/etc. as globals via `"types": ["vitest/globals"]`
+    // in tsconfig.json. Mirror that here so ESLint sees them too.
     files: ['tests/**/*.ts'],
     languageOptions: {
       globals: {
+        ...globals.browser,
+        ...globals.node,
         describe: 'readonly',
         it: 'readonly',
         test: 'readonly',
