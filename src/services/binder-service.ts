@@ -42,6 +42,7 @@ import type {
 } from '../domain/types';
 import type { SlotDraft } from '../domain/binder-template';
 import { getBinderPresetDefinition } from '../domain/binder-presets';
+import type { MasterSetBinderPlan } from './master-set-binder-planner';
 
 export interface FromSetBinderInput {
   /**
@@ -55,6 +56,21 @@ export interface FromSetBinderInput {
     readonly sourceSetId: string;
   };
   readonly slots: readonly SlotDraft[];
+}
+
+/**
+ * Multi-set "standard physical master binder" input. One call writes
+ * ONE 1088-slot Vault X XXL binder containing N set sections.
+ *
+ * `sourceSetId` is null by design: a physical multi-set binder cannot
+ * truthfully claim a single source set. Sections are derived from the
+ * slot rows' `targetCardId → card.setId` relationship at read time;
+ * see `binder-assignment-service` for the legacy-unscoped audit path.
+ */
+export interface MultiSetMasterBinderInput {
+  readonly name: string;
+  readonly description: string | null;
+  readonly plan: MasterSetBinderPlan;
 }
 
 export interface BinderService {
@@ -74,6 +90,18 @@ export interface BinderService {
    * Dexie transaction.
    */
   createBinderFromSet(input: FromSetBinderInput): Promise<{
+    binder: BinderRecord;
+    slots: BinderSlotRecord[];
+  }>;
+
+  /**
+   * Create ONE standardised multi-set master binder from a planner
+   * output. Always `vaultx_16xxl_1088` / `completionMode='master'` /
+   * `sourceSetId=null`. The plan's per-section slots are written into
+   * the 1088-slot grid at their pre-computed (page, slot) coordinates,
+   * with empty slots filling the remainder. Atomic transaction.
+   */
+  createMultiSetMasterBinder(input: MultiSetMasterBinderInput): Promise<{
     binder: BinderRecord;
     slots: BinderSlotRecord[];
   }>;
@@ -292,6 +320,157 @@ export function createBinderService(db: PokemonTrackerDB): BinderService {
               `set=${fromSetInput.binder.sourceSetId}, ` +
               `preset=${preset ?? 'custom'}) ` +
               `with ${slots.length} slots, ${targetCount} targets`,
+          });
+        },
+      );
+
+      return { binder, slots };
+    },
+
+    async createMultiSetMasterBinder(input) {
+      // Standardised physical binder: always Vault X XXL 1088, master
+      // mode, multi-set (sourceSetId=null). The planner has already
+      // checked capacity and uniqueness; we still re-validate here so
+      // an untrusted caller cannot bypass invariants.
+      const PRESET = 'vaultx_16xxl_1088' as const;
+      const def = getBinderPresetDefinition(PRESET);
+      const slotsPerPage = def.slotsPerPage as SlotsPerPage;
+      const totalPages = def.totalPages;
+      const capacity = def.capacity;
+
+      if (input.plan.preset !== PRESET) {
+        throw new ValidationError(
+          'plan.preset',
+          `plan.preset must be ${PRESET}, got ${input.plan.preset}`,
+        );
+      }
+      if (input.plan.capacity !== capacity || input.plan.slotsPerPage !== slotsPerPage) {
+        throw new ValidationError(
+          'plan',
+          `plan must match preset capacity=${capacity} slotsPerPage=${slotsPerPage}`,
+        );
+      }
+
+      // Flatten every section's slots and detect any cross-section
+      // collision before the transaction opens.
+      const drafts: SlotDraft[] = [];
+      const seenPositions = new Set<string>();
+      for (const section of input.plan.sections) {
+        for (const s of section.slots) {
+          if (
+            !Number.isInteger(s.pageNumber) ||
+            s.pageNumber < 1 ||
+            s.pageNumber > totalPages ||
+            !Number.isInteger(s.slotNumber) ||
+            s.slotNumber < 1 ||
+            s.slotNumber > slotsPerPage
+          ) {
+            throw new ValidationError(
+              'plan.slots',
+              `slot at page=${s.pageNumber} slot=${s.slotNumber} is outside the ${totalPages}×${slotsPerPage} grid`,
+            );
+          }
+          const key = `${s.pageNumber}:${s.slotNumber}`;
+          if (seenPositions.has(key)) {
+            throw new ValidationError(
+              'plan.slots',
+              `duplicate slot at page=${s.pageNumber} slot=${s.slotNumber} across sections`,
+            );
+          }
+          seenPositions.add(key);
+          drafts.push({
+            pageNumber: s.pageNumber,
+            slotNumber: s.slotNumber,
+            targetCardId: s.targetCardId,
+            note: s.note,
+          });
+        }
+      }
+      if (drafts.length === 0) {
+        throw new ValidationError(
+          'plan.sections',
+          'plan must contain at least one section with slots',
+        );
+      }
+      if (drafts.length > capacity) {
+        throw new ValidationError(
+          'plan.slots',
+          `plan slot count (${drafts.length}) exceeds binder capacity (${capacity})`,
+        );
+      }
+
+      const binderInput: BinderInput = {
+        name: input.name,
+        description: input.description,
+        binderType: null,
+        totalPages,
+        slotsPerPage,
+        binderPreset: PRESET,
+        completionMode: 'master',
+        sourceSetId: null,
+      };
+      validateBinderInput(binderInput);
+
+      const now = nowIso();
+      const binder: BinderRecord = {
+        ...binderInput,
+        id: newId(),
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      };
+
+      const draftByPosition = new Map<string, SlotDraft>();
+      for (const draft of drafts) {
+        draftByPosition.set(`${draft.pageNumber}:${draft.slotNumber}`, draft);
+      }
+
+      const slots: BinderSlotRecord[] = [];
+      let targetCount = 0;
+      for (let page = 1; page <= totalPages; page += 1) {
+        for (let slot = 1; slot <= slotsPerPage; slot += 1) {
+          const draft = draftByPosition.get(`${page}:${slot}`) ?? null;
+          const slotInput = {
+            binderId: binder.id,
+            pageNumber: page,
+            slotNumber: slot,
+            targetCardId: draft?.targetCardId ?? null,
+            holdingId: null,
+            status: (draft !== null ? 'wanted' : 'empty') as 'wanted' | 'empty',
+            note: draft?.note ?? null,
+          };
+          validateBinderSlotInput(slotInput, slotsPerPage);
+          if (draft !== null) targetCount += 1;
+          slots.push({
+            ...slotInput,
+            id: newId(),
+            createdAt: now,
+            updatedAt: now,
+            deletedAt: null,
+          });
+        }
+      }
+
+      const sectionSummary = input.plan.sections
+        .map((s) => `${s.setId}=${s.totalSlotCount}`)
+        .join(',');
+
+      await db.transaction(
+        'rw',
+        db.binders,
+        db.binderSlots,
+        db.auditLog,
+        async () => {
+          await db.binders.add(binder);
+          await db.binderSlots.bulkAdd(slots);
+          await appendAudit(db, {
+            action: 'binder_created',
+            entityType: 'binder',
+            entityId: binder.id,
+            message:
+              `created multi-set master binder "${binder.name}" ` +
+              `(preset=${PRESET}, sections=${input.plan.sections.length}, ` +
+              `targets=${targetCount}, sectionSummary=${sectionSummary})`,
           });
         },
       );

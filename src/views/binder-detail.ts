@@ -194,6 +194,11 @@ async function renderInto(
   container: HTMLElement,
   state: ViewState,
 ): Promise<void> {
+  // Guard against the pending-search-debounce-fires-after-unmount case:
+  // the input handler's setTimeout captures `state` and `container` in
+  // a closure and may fire after the router has unmounted the view.
+  // Without this check it would re-render into a detached container.
+  if (!container.isConnected) return;
   container.innerHTML = '';
   const binderId = getCurrentBinderId();
 

@@ -48,6 +48,12 @@ function mount(
 ): void {
   // State lives in closures; the dialog is short-lived.
   let summary: ParseSummary | null = null;
+  // In-flight guard for the parse stage. Without it, rapid repeat-
+  // submits used to launch overlapping doParse runs (the submit
+  // button isn't disabled during parse — only during the second-
+  // stage doImport, which manages its own disable). Class fix
+  // mirrored from bulk-add-holdings-dialog.
+  let parsing = false;
 
   host.appendChild(buildSkeleton());
   const form = host.querySelector<HTMLFormElement>('form.lot-bulk-import-form');
@@ -63,9 +69,13 @@ function mount(
     event.preventDefault();
     // Two-stage submit: first stage = parse + preview; second = import.
     if (summary === null) {
+      if (parsing) return;
+      parsing = true;
       void doParse(form, options.lotId, (s) => {
         summary = s;
         renderSummaryStep(form, s);
+      }).finally(() => {
+        parsing = false;
       });
     } else {
       void doImport(form, host, summary);
@@ -223,11 +233,21 @@ async function doImport(
       written++;
     } catch (caught) {
       if (errorRegion !== null) {
+        // CodeRabbit-class finding: replay via the same `summary` would
+        // call lotItemsRepo.create on rows we already wrote, creating
+        // duplicate lot items (create adds new IDs, it doesn't merge).
+        // When at least one row was written, lock submit so the user
+        // must close + reopen with adjusted input.
         errorRegion.textContent =
           `Stoppet ved linje ${r.line}: ${(caught as Error).message}. ` +
-          `${written} kort ble skrevet før feilen.`;
+          `${written} kort ble skrevet før feilen.` +
+          (written > 0
+            ? ` Lukk dialogen og åpne på nytt — replay vil duplisere de ${written} kortene som allerede er skrevet.`
+            : '');
       }
-      if (submit !== null) submit.disabled = false;
+      // When nothing was written yet, re-enable submit so the user can
+      // adjust input and retry safely. Otherwise leave submit disabled.
+      if (written === 0 && submit !== null) submit.disabled = false;
       return;
     }
   }

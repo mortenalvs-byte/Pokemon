@@ -10,6 +10,7 @@ import { openDialog } from '../components/dialog';
 import { USER_DATA_CHANGED_EVENT, onUserDataChanged } from '../components/events';
 import { buildBinderForm } from '../components/binder-form';
 import { buildBinderFromSetWizard } from '../components/binder-from-set-wizard';
+import { buildMasterSetBinderPlanDialog } from '../components/master-set-binder-plan-dialog';
 import { getDb } from '../db/database';
 import { getBinderPresetDefinition } from '../domain/binder-presets';
 import { navigateToBinder } from '../router';
@@ -44,6 +45,9 @@ export function mountBindersView(
           <button type="button" class="binders-view__add" data-action="new-from-set">
             Ny perm fra sett
           </button>
+          <button type="button" class="binders-view__add" data-action="plan-master-set">
+            Planlegg master-permer
+          </button>
         </div>
       </header>
       <p class="binders-view__counts" data-region="counts"></p>
@@ -59,11 +63,15 @@ export function mountBindersView(
   const fromSetButton = container.querySelector<HTMLButtonElement>(
     '[data-action="new-from-set"]',
   );
+  const planButton = container.querySelector<HTMLButtonElement>(
+    '[data-action="plan-master-set"]',
+  );
   if (
     listRegion === null ||
     countsRegion === null ||
     newButton === null ||
-    fromSetButton === null
+    fromSetButton === null ||
+    planButton === null
   ) {
     return;
   }
@@ -74,6 +82,10 @@ export function mountBindersView(
 
   fromSetButton.addEventListener('click', () => {
     void handleNewFromSet(container);
+  });
+
+  planButton.addEventListener('click', () => {
+    void openDialog(buildMasterSetBinderPlanDialog());
   });
 
   void rerender(container);
