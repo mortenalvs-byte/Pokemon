@@ -47,7 +47,7 @@ describe('qa route — production gating', () => {
     if (bundle === null) {
       // Skip the rest of the suite when the bundle is missing —
       // CI environments without a build step shouldn't fail this.
-      // eslint-disable-next-line no-console -- debug only on miss
+      // Debug-only on miss: surfaces in CI logs without failing the test.
       console.warn(
         'No production bundle in dist/assets — skipping #qa gating runtime checks',
       );

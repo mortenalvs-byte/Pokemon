@@ -94,7 +94,7 @@ export async function quickAddRawCard(
   });
   // PR 22 — surface receive candidates so the caller can offer the
   // standard receive prompt without re-implementing the lookup.
-  let receiveCandidates: WishlistReceiveCandidate[] = [];
+  let receiveCandidates: WishlistReceiveCandidate[];
   try {
     receiveCandidates = await findWishlistReceiveCandidates(
       deps.wishlistRepo,

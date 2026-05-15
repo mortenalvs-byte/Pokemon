@@ -142,7 +142,6 @@ describe('generateFromSetSlots', () => {
     expect(() =>
       generateFromSetSlots([makeCard('1')], {
         slotsPerPage: 9,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         completionMode: 'grand_master' as any,
         includeReverseHolos: false,
       }),
@@ -152,7 +151,6 @@ describe('generateFromSetSlots', () => {
   it('rejects an invalid slotsPerPage', () => {
     expect(() =>
       generateFromSetSlots([makeCard('1')], {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         slotsPerPage: 7 as any,
         completionMode: 'standard',
         includeReverseHolos: false,

@@ -133,7 +133,9 @@ export function createApiClient(options: ApiClientOptions = {}): PokemonTcgApi {
     } catch (caught) {
       // Re-throw with a sanitized message so any header echo or fetch
       // implementation chatter cannot bubble the API key into the UI.
-      throw new Error(sanitizeErrorMessage(caught, apiKey));
+      // `cause` preserves the original for stack-trace diagnostics
+      // without leaking sensitive details into the public message.
+      throw new Error(sanitizeErrorMessage(caught, apiKey), { cause: caught });
     }
   }
 
@@ -142,7 +144,10 @@ export function createApiClient(options: ApiClientOptions = {}): PokemonTcgApi {
   ): Promise<SetRecord[]> {
     const records: SetRecord[] = [];
     let page = 1;
-    let total = 0;
+    // `total` is set on the first iteration before the while-condition
+    // is checked; declared with a definite-assignment assertion to
+    // avoid a useless initial-value assignment.
+    let total!: number;
     do {
       const response = await getJson<PokemonTcgPaginatedResponse<PokemonTcgSetDto>>(
         `/sets?page=${page}&pageSize=${pageSize}`,
@@ -167,7 +172,9 @@ export function createApiClient(options: ApiClientOptions = {}): PokemonTcgApi {
     const encodedQuery = encodeURIComponent(`set.id:${setId}`);
     const records: CardRecord[] = [];
     let page = 1;
-    let total = 0;
+    // Same pattern as fetchAllSets — do-while body assigns before the
+    // condition check, so a separate initial value is dead.
+    let total!: number;
     do {
       const response = await getJson<PokemonTcgPaginatedResponse<PokemonTcgCardDto>>(
         `/cards?q=${encodedQuery}&page=${page}&pageSize=${pageSize}`,

@@ -633,7 +633,11 @@ async function handleSyncNow(refs: SyncRefs): Promise<void> {
     ? 'public API mode (no key, ~28 req/min)'
     : 'authenticated';
 
-  let result: SyncResult | null = null;
+  // Assigned by syncCardDatabase below; the inner catch returns
+  // unconditionally so reads of `result` after the inner try-catch are
+  // unreachable when the call fails. Definite-assignment matches the
+  // actual control flow and avoids a useless `null` seed.
+  let result!: SyncResult;
   try {
     try {
       result = await syncCardDatabase({

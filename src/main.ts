@@ -37,7 +37,7 @@ initializeDataLayer()
     }
   })
   .catch((error: unknown) => {
-    // eslint-disable-next-line no-console -- intentional: surface init
-    // failures during development. UI escalation comes in a later PR.
+    // Intentional: surface init failures during development. UI
+    // escalation comes in a later PR.
     console.error('[data-layer] initialization failed', error);
   });

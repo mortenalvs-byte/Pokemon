@@ -1,7 +1,6 @@
-// @ts-ignore — supervisor scripts are .mjs without .d.mts in V1
 import { describe, expect, it } from 'vitest';
 
-// @ts-ignore
+// @ts-expect-error — supervisor scripts are .mjs without .d.mts in V1
 import { scrubSecretPatterns, isSensitiveFile, scrubLongTokens, redactFile, redactText, redactDiff } from '../scripts/ai-supervisor/redact.mjs';
 
 describe('redact.mjs — scrubSecretPatterns', () => {

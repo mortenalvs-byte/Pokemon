@@ -1,7 +1,6 @@
-// @ts-ignore — supervisor .mjs imports
 import { describe, expect, it } from 'vitest';
 
-// @ts-ignore
+// @ts-expect-error — supervisor .mjs imports
 import { runScopeGuard } from '../scripts/ai-supervisor/scope-guard.mjs';
 
 function makeDiff(filePath: string, body: string): string {

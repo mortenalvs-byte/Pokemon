@@ -808,7 +808,7 @@ async function runPanelReceive(
   state: SearchState,
   cardId: string,
 ): Promise<void> {
-  let candidates: WishlistReceiveCandidate[] = [];
+  let candidates: WishlistReceiveCandidate[];
   try {
     const status = await loadStatus(cardId);
     candidates = await findReceiveCandidatesForHoldings(

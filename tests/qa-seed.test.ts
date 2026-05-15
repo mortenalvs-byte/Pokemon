@@ -90,7 +90,8 @@ describe('qa-seed (PR 28 review patch)', () => {
     const deps = buildQaDeps(db);
     await seedStressData(deps);
     const summary = await createMasterSetGapService(deps).buildDashboardSummary();
-    // eslint-disable-next-line no-console -- debug while shaping the seed
+    // Debug output retained from initial seed-shaping work; useful when
+    // re-baselining the deterministic seed counts.
     console.log('master-gap summary after seed:', {
       ambiguousOwned: summary.ambiguousOwned,
       recommendedAmbiguousCount: summary.recommendedAmbiguousCount,

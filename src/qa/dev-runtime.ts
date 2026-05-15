@@ -231,7 +231,7 @@ async function runDevAutoFixtureImport(): Promise<void> {
   } catch {
     // best-effort
   }
-  // eslint-disable-next-line no-console -- dev-only diagnostic
+  // dev-only diagnostic — intentional console use
   console.log('[dev-auto-fixture] importing fixture from', fixturePath);
   const fxStart = Date.now();
   try {
@@ -260,7 +260,7 @@ async function runDevAutoFixtureImport(): Promise<void> {
     } catch {
       // best-effort
     }
-    // eslint-disable-next-line no-console -- dev-only diagnostic
+    // dev-only diagnostic — intentional console use
     console.log('[dev-auto-fixture] done', payload);
     // The fixture import bypasses `handleSyncNow`, so the
     // dashboard / topbar listeners that fire on
@@ -284,7 +284,7 @@ async function runDevAutoFixtureImport(): Promise<void> {
     } catch {
       // best-effort
     }
-    // eslint-disable-next-line no-console -- dev-only diagnostic
+    // dev-only diagnostic — intentional console use
     console.error('[dev-auto-fixture] failed', failure);
   }
 }
@@ -305,7 +305,7 @@ async function runDevAutoImageAudit(): Promise<void> {
   } catch {
     // best-effort
   }
-  // eslint-disable-next-line no-console -- dev-only diagnostic
+  // dev-only diagnostic — intentional console use
   console.log('[dev-auto-image-audit] running …');
   const iaStart = Date.now();
   try {
@@ -328,10 +328,10 @@ async function runDevAutoImageAudit(): Promise<void> {
     } catch {
       // best-effort
     }
-    // eslint-disable-next-line no-console -- dev-only diagnostic
+    // dev-only diagnostic — intentional console use
     console.log('[dev-auto-image-audit] done', payload);
   } catch (caught) {
-    // eslint-disable-next-line no-console -- dev-only diagnostic
+    // dev-only diagnostic — intentional console use
     console.error('[dev-auto-image-audit] failed', caught);
   }
 }
@@ -357,7 +357,7 @@ async function runDevAutoPublicSync(): Promise<void> {
   } catch {
     // best-effort
   }
-  // eslint-disable-next-line no-console -- dev-only diagnostic
+  // dev-only diagnostic — intentional console use
   console.log('[dev-auto-sync] starting public-tier sync …');
   const startedAt = Date.now();
   const { syncCardDatabase } = await import('../db/sync');
@@ -383,7 +383,7 @@ async function runDevAutoPublicSync(): Promise<void> {
   } catch {
     // best-effort
   }
-  // eslint-disable-next-line no-console -- dev-only diagnostic
+  // dev-only diagnostic — intentional console use
   console.log('[dev-auto-sync] done', summary);
 }
 
@@ -404,7 +404,7 @@ async function runDevAutoMaxStress(): Promise<void> {
   } catch {
     // best-effort
   }
-  // eslint-disable-next-line no-console -- dev-only diagnostic
+  // dev-only diagnostic — intentional console use
   console.log('[dev-auto-stress] starting max-stress …');
   const stressStart = Date.now();
   const { seedMaxStressData } = await import('./qa-max-stress');
@@ -424,7 +424,7 @@ async function runDevAutoMaxStress(): Promise<void> {
   } catch {
     // best-effort
   }
-  // eslint-disable-next-line no-console -- dev-only diagnostic
+  // dev-only diagnostic — intentional console use
   console.log('[dev-auto-stress] done', stressPayload);
 }
 
@@ -463,10 +463,10 @@ export async function runBootTimePersistenceAudit(): Promise<void> {
     });
     while (history.length > BOOT_AUDIT_HISTORY_LIMIT) history.shift();
     writeBootAuditHistory(history);
-    // eslint-disable-next-line no-console -- dev-only diagnostic
+    // dev-only diagnostic — intentional console use
     console.log('[boot-audit]', diagnostic);
   } catch (caught) {
-    // eslint-disable-next-line no-console -- dev-only diagnostic
+    // dev-only diagnostic — intentional console use
     console.error('[boot-audit] failed', caught);
   }
 }
