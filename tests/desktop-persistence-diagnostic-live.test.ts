@@ -81,9 +81,7 @@ describe('buildPersistenceDiagnostic (live)', () => {
   it('reports holdings from a populated table', async () => {
     await db.holdings.bulkPut([
       // bare-bones rows, the diagnostic only counts and lists primaryKeys
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ({ id: 'h-1' } as any),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ({ id: 'h-2' } as any),
     ]);
     const d = await buildPersistenceDiagnostic(db);

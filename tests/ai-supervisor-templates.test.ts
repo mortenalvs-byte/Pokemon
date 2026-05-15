@@ -1,7 +1,6 @@
-// @ts-ignore — supervisor .mjs imports
 import { describe, expect, it } from 'vitest';
 
-// @ts-ignore
+// @ts-expect-error — supervisor .mjs imports
 import { renderString, renderTemplate } from '../scripts/ai-supervisor/templates.mjs';
 
 describe('templates.mjs — variable substitution', () => {

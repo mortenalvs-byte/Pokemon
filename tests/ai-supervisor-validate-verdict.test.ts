@@ -1,7 +1,6 @@
-// @ts-ignore — supervisor .mjs imports
 import { describe, expect, it } from 'vitest';
 
-// @ts-ignore
+// @ts-expect-error — supervisor .mjs imports
 import { validateVerdict, isRefusalPattern, parseAndValidateVerdict } from '../scripts/ai-supervisor/validate-verdict.mjs';
 
 const VERIFICATION_ALL_PASS = {

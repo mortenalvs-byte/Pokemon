@@ -1,7 +1,6 @@
-// @ts-ignore — supervisor .mjs imports
 import { describe, expect, it } from 'vitest';
 
-// @ts-ignore
+// @ts-expect-error — supervisor .mjs imports
 import { routeVerdict } from '../scripts/ai-supervisor/verdict-router.mjs';
 
 const VERIFICATION_PASS = {

@@ -1,10 +1,9 @@
-// @ts-ignore — supervisor .mjs imports
 import { describe, expect, it, beforeEach } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-// @ts-ignore
+// @ts-expect-error — supervisor .mjs imports
 import { parseApprovalFile, validateApproval, loadActiveApprovals, isPathCoveredByApproval } from '../scripts/ai-supervisor/parse-approval.mjs';
 
 let testDir: string;

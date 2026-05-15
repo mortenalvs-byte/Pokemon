@@ -165,9 +165,7 @@ describe('importLocalSyncFixture (live)', () => {
 
   it('does not touch user-owned stores (holdings/binders/lots/wishlist/settings)', async () => {
     // Pre-populate the user-owned stores so we can prove they survive.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await db.holdings.put({ id: 'user-holding-1' } as any);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await db.binders.put({ id: 'user-binder-1', name: 'Mine' } as any);
     await db.settings.put({
       key: 'preferredCurrency',
