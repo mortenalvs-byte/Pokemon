@@ -45,8 +45,8 @@ For each file the audit captured:
 | `docs/PR30_CLEANUP_ROADMAP.md` | 2026-05-09 (812516a) | Referenced in IMPROVEMENT_ROADMAP header | KEEP_HISTORICAL | Cleanup roadmap (PR 31–38); superseded by IMPROVEMENT_ROADMAP. | Move to `docs/archive/`. |
 | `docs/PR30_FULL_TECHNICAL_AUDIT.md` | 2026-05-09 (812516a) | Companion to PR30_FULL_TECHNICAL_REPORT | KEEP_HISTORICAL | Repo audit evidence base (file paths, 18 risk lanes); closed. | Move to `docs/archive/`. |
 | `docs/PR30_FULL_TECHNICAL_REPORT.md` | 2026-05-09 (812516a) | Companion to PR30_FULL_TECHNICAL_AUDIT | KEEP_HISTORICAL | Human-readable system-health rollup (GREEN with minor YELLOW). | Move to `docs/archive/`. |
-| `docs/DESKTOP_APP.md` | 2026-05-09 (762f105) | **No inbound refs** | NEEDS_DECISION | Tauri v2 prerequisites + commands. Active reference or PR #29 artefact? | Operator: confirm whether desktop docs are first-class. |
-| `docs/QA_DESKTOP.md` | 2026-05-09 (762f105) | **No inbound refs** | NEEDS_DECISION | L1–L4 QA harness (seed determinism, report). Process doc or one-off? | Operator: confirm whether L1–L4 is run regularly. |
+| `docs/DESKTOP_APP.md` | 2026-05-09 (762f105) | CHANGELOG; linked from `docs/QA_DESKTOP.md`; **new in this PR:** linked from `README.md` "Project documents" | KEEP_CURRENT | Tauri v2 desktop shell prerequisites + `desktop:dev` / `desktop:build` / `desktop:check` commands. `src-tauri/` is a live surface; npm scripts reference the desktop runtime. The original audit missed this because the only existing inbound refs were in CHANGELOG (historical) and a relative link inside QA_DESKTOP. README now exposes it as a first-class doc. | Keep as the canonical desktop runbook. |
+| `docs/QA_DESKTOP.md` | 2026-05-09 (762f105) | `package.json` (`qa:desktop:manual` script) + CHANGELOG + cross-link from inside the file | KEEP_CURRENT | L1–L4 QA harness (seed determinism, report, persistence diagnostic). The `qa:desktop:manual` npm script prints "See docs/QA_DESKTOP.md — run …" — the doc IS the runbook the script delegates to. Original audit's "zero inbound refs" was wrong because grep scanned `*.md`/`*.ts`/`*.json` independently but the ref inside `package.json` is a JSON string the simple grep missed. | Keep as live runbook. |
 | `docs/governance/AI_SUPERVISOR_APPROVAL.md` | 2026-05-11 (3684168) | Referenced in tests + AI_SUPERVISOR_OVERVIEW | KEEP_CURRENT | Approval record (local dev tooling carve-out). | Keep. |
 | `docs/governance/AI_SUPERVISOR_OPERATIONS.md` | 2026-05-11 (e609a93) | Referenced from AI_SUPERVISOR_OVERVIEW | KEEP_CURRENT | Runbook: setup, smoke test, daily ops, Stop-hook loop. | Keep. |
 | `docs/governance/AI_SUPERVISOR_OVERVIEW.md` | 2026-05-11 (e609a93) | Referenced from APPROVAL + OPERATIONS + VERDICTS | KEEP_CURRENT | Supervisor mental model + verdict routing. | Keep. |
@@ -69,9 +69,14 @@ Archive together as historical record.
 IMPROVEMENT_ROADMAP (2026-05-11) is the live source consumed by the AI
 supervisor automation. PR29 and PR30 docs are historical context.
 
-**DESKTOP_APP + QA_DESKTOP** — Both PR #29 feature docs with zero
-inbound refs. **Ambiguous status:** unclear if they are kept as
-process docs or one-time artefacts. Operator decision required.
+**DESKTOP_APP + QA_DESKTOP** — Both are live process docs for the
+Tauri desktop surface. `package.json`'s `qa:desktop:manual` script
+delegates to `docs/QA_DESKTOP.md`, and `docs/DESKTOP_APP.md` is the
+prerequisites runbook for `desktop:dev` / `desktop:build` /
+`desktop:check`. The initial pass over-trusted a `grep` that didn't
+detect refs embedded in JSON strings; both are reclassified
+KEEP_CURRENT and `docs/DESKTOP_APP.md` now has an explicit inbound
+link from `README.md`.
 
 **AI_SUPERVISOR subsystem (4 docs)** — Intentional layering:
 APPROVAL → OVERVIEW → OPERATIONS + VERDICTS. All active, tightly
@@ -81,9 +86,9 @@ coupled. No overlap.
 
 | Category | Count |
 |---|---:|
-| KEEP_CURRENT | 16 |
+| KEEP_CURRENT | 18 |
 | KEEP_HISTORICAL | 4 |
-| NEEDS_DECISION | 2 |
+| NEEDS_DECISION | 0 |
 | MERGE_INTO_README_OR_SPEC | 0 |
 | DELETE_STALE | 0 |
 
@@ -98,24 +103,23 @@ coupled. No overlap.
 3. `docs/PR30_FULL_TECHNICAL_AUDIT.md` + `docs/PR30_FULL_TECHNICAL_REPORT.md`
    — Closed-PR companion docs. Archive as a pair. → `docs/archive/`.
 
-**NEEDS_DECISION (2 items):**
-
-- `docs/DESKTOP_APP.md` — keep if desktop is actively supported and
-  this is the reference doc; archive otherwise.
-- `docs/QA_DESKTOP.md` — keep if the L1–L4 QA process is run on
-  demand; archive if it was a one-off PR #28 artefact.
+**NEEDS_DECISION:** none after the desktop reclassification.
 
 ## What happens next
 
-This PR only adds this audit document. No files are moved or deleted.
+This PR adds the audit document and a single README link to surface
+`docs/DESKTOP_APP.md` as a first-class project document. No other
+files are moved or deleted.
 
-Once you (the operator) approve the categories above, a follow-up PR
-can:
+Once these classifications are approved, a follow-up PR can:
 
-1. Create `docs/archive/` and move the 4 KEEP_HISTORICAL files there.
+1. Create `docs/archive/` and move the 4 KEEP_HISTORICAL files there:
+   - `docs/PR29_SCOPE_AUDIT.md`
+   - `docs/PR30_CLEANUP_ROADMAP.md`
+   - `docs/PR30_FULL_TECHNICAL_AUDIT.md`
+   - `docs/PR30_FULL_TECHNICAL_REPORT.md`
 2. Update inbound references in `docs/IMPROVEMENT_ROADMAP.md` so
    archived paths still resolve.
-3. Resolve the 2 NEEDS_DECISION items based on your call.
-4. Run `npm run qa:static` (now includes `lint` per PR #42) to confirm
+3. Run `npm run qa:static` (now includes `lint` per PR #42) to confirm
    nothing broke; nothing in `src/**` or `tests/**` should be affected
    by doc moves.
